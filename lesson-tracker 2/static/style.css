@@ -69,3 +69,5 @@
 .color-choice span{display:block;border-radius:18px;padding:7px 12px;background:var(--event-bg);color:var(--event-ink);border:2px solid transparent;font-size:13px}
 .color-choice input:checked+span{border-color:var(--event-edge);box-shadow:0 0 0 2px white inset;font-weight:700}
 .color-choice input:focus-visible+span{outline:2px solid var(--event-ink);outline-offset:3px}
+
+.repeat-scope{border:1px solid var(--line);border-radius:10px;padding:14px;margin:0 0 20px}.repeat-scope legend{font-weight:650}.repeat-scope label{display:flex;align-items:center;gap:10px;margin-bottom:12px}.repeat-scope input{width:18px;height:18px;accent-color:#285b46}.repeat-scope small{display:block;color:var(--muted)}.owner-week-grid [draggable=true]{cursor:grab;touch-action:pan-y}.owner-week-grid [draggable=true]:active{cursor:grabbing}.calendar-drop-target{background:#dcece4;outline:2px dashed #387358;outline-offset:-3px}.calendar-dragging{opacity:.55}
