@@ -1,6 +1,18 @@
 /* Translate interface nodes only. Authored content is marked data-user-content. */
 (() => {
  const messages = {
+"删除并归档":"Archive student",
+"删除并归档学生":"Archive student profile",
+"已归档学生":"Archived students",
+"恢复档案":"Restore profile",
+"恢复学生档案":"Restore student profile",
+"确认归档":"Confirm archive",
+"暂无已归档学生。":"No archived students.",
+"学生档案已恢复。":"Student profile restored.",
+"学生已归档，可在已归档学生中恢复。":"Student archived. You can restore the profile from Archived students.",
+"归档后从日常学生列表和新排课选项中移除。所有科目的课时、赠送课时和历史记录保留，已有排课不会自动取消。":"Archiving removes the student from active lists and new lesson choices. All subject balances, gift credits and records are retained. Existing lessons are not automatically cancelled.",
+"老板可在已归档学生中恢复。":"The owner can restore the profile from Archived students.",
+"恢复后重新显示在学生列表中，可以排课和充值；原余额及记录保留。":"Restoring returns the student to active lists for scheduling and top-ups. Existing balances and records are retained.",
 "删除档案":"Delete profile",
 "删除学生档案":"Delete student profile",
 "删除老师档案":"Delete teacher profile",
