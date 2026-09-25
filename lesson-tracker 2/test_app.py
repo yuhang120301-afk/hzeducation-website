@@ -371,6 +371,91 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.lesson(l['id'])['color'],'blue')
         self.assertEqual(self.schedule(tid,[sid],day='2026-02-01',color='invalid')[0],400)
 
+    def test_recurrence_legacy_link_migration(self):
+        import sqlite3,recurrence
+        tid,_=self.new_teacher();sid=self.new_student()
+        _,r=self.schedule(tid,[sid],day='2026-11-02',repeat='weekly',repeat_count=3)
+        before=[self.lesson(i) for i in r['lesson_ids']]
+        with sqlite3.connect(self.tmp.name+'/test.sqlite3') as c:
+            c.row_factory=sqlite3.Row
+            c.execute('UPDATE lessons SET series_id=NULL,occurrence_index=NULL WHERE series_id=?',(before[0]['series_id'],))
+            c.execute('DELETE FROM lesson_series WHERE id=?',(before[0]['series_id'],))
+            c.execute("DELETE FROM app_meta WHERE key='series_links_v1'")
+            recurrence.schema(c)
+            recurrence.schema(c)
+        after=[self.lesson(i) for i in r['lesson_ids']]
+        self.assertEqual(len({l['series_id'] for l in after}),1)
+        self.assertIsNotNone(after[0]['series_id'])
+        self.assertEqual([l['occurrence_index'] for l in after],[0,1,2])
+        self.assertEqual([l['starts_at'] for l in before],[l['starts_at'] for l in after])
+
+    def test_forever_future_conflict_is_visible_and_resumes(self):
+        tid,_=self.new_teacher();sid=self.new_student()
+        _,conflict=self.schedule(tid,[sid],day='2028-01-03')
+        code,r=self.schedule(tid,[sid],day='2026-11-02',repeat='weekly',repeat_end='forever')
+        self.assertEqual(code,200,r)
+        state=self.admin.request('state?through=2028-02-01')[1]
+        self.assertTrue(any('2028-01-03' in w for w in state['recurrence_warnings']))
+        l=self.lesson(conflict['lesson_id'])
+        self.assertEqual(self.admin.request('lessons/cancel',{'lesson_id':l['id'],'version':l['version'],'reason':'Remove conflict'})[0],200)
+        state=self.admin.request('state?through=2028-02-01')[1]
+        self.assertFalse(any('2028-01-03' in w for w in state['recurrence_warnings']))
+        self.assertTrue(any(l['teacher_id']==tid and l['starts_at']=='2028-01-03T10:00' and l['status']=='scheduled' for l in state['lessons']))
+
+    def test_recurring_move_scope_conflicts_and_permissions(self):
+        tid,tutor=self.new_teacher();sid=self.new_student()
+        code,r=self.schedule(tid,[sid],day='2026-11-02',repeat='weekly',repeat_count=3)
+        self.assertEqual(code,200,r)
+        ids=r['lesson_ids'];second=self.lesson(ids[1])
+        change={'lesson_id':second['id'],'version':second['version'],'series_version':second['series_version'],'scope':'future'}
+        # Moving the whole future set one week must not conflict with its old slots.
+        code,r=self.schedule(tid,[sid],day='2026-11-16',**change)
+        self.assertEqual(code,200,r)
+        self.assertEqual(self.lesson(ids[0])['starts_at'],'2026-11-02T10:00')
+        self.assertEqual(self.lesson(ids[1])['starts_at'],'2026-11-16T10:00')
+        self.assertEqual(self.lesson(ids[2])['starts_at'],'2026-11-23T10:00')
+        # A later conflict rolls back every occurrence, including the first update.
+        self.assertEqual(self.schedule(tid,[sid],day='2026-11-24')[0],200)
+        second=self.lesson(ids[1]);change.update(version=second['version'],series_version=second['series_version'])
+        before=[self.lesson(i) for i in ids]
+        self.assertEqual(self.schedule(tid,[sid],day='2026-11-17',**change)[0],400)
+        self.assertEqual([self.lesson(i) for i in ids],before)
+        bad={**change,'teacher_id':tid,'student_ids':[sid],'title':'Math','starts_at':'2026-11-17T10:00','ends_at':'2026-11-17T11:00','amount':1}
+        for client in (self.parent,tutor):self.assertEqual(client.request('lessons',bad)[0],403)
+        # Single-instance exceptions leave the rest of the series untouched.
+        change['scope']='single'
+        self.assertEqual(self.schedule(tid,[sid],day='2026-11-17',**change)[0],200)
+        self.assertEqual(self.lesson(ids[2])['starts_at'],'2026-11-23T10:00')
+        change.update(scope='future',version=self.lesson(ids[1])['version'])
+        self.assertEqual(self.schedule(tid,[sid],day='2026-11-18',**change)[0],400)
+
+    def test_forever_expands_preserves_exceptions_and_stops(self):
+        tid,_=self.new_teacher();sid=self.new_student();key=str(uuid.uuid4())
+        code,r=self.schedule(tid,[sid],day='2026-11-02',repeat='weekly',repeat_end='forever',request_id=key)
+        self.assertEqual(code,200,r)
+        self.assertEqual(r['created_count'],53)
+        self.assertTrue(self.schedule(tid,[sid],day='2026-11-02',repeat='weekly',repeat_end='forever',request_id=key)[1]['duplicate'])
+        ids=r['lesson_ids'];second=self.lesson(ids[1])
+        self.assertEqual(self.schedule(tid,[sid],day='2026-11-10',lesson_id=second['id'],version=second['version'])[0],200)
+        state=self.admin.request('state?through=2028-12-01')[1]
+        lessons=[l for l in state['lessons'] if l['teacher_id']==tid]
+        self.assertGreater(len(lessons),100)
+        self.assertEqual(self.lesson(ids[1])['starts_at'],'2026-11-10T10:00')
+        count=len(lessons)
+        self.assertEqual(len([l for l in self.admin.request('state?through=2028-12-01')[1]['lessons'] if l['teacher_id']==tid]),count)
+        third=self.lesson(ids[2])
+        self.assertEqual(self.schedule(tid,[sid],day='2026-11-18',lesson_id=third['id'],version=third['version'],series_version=third['series_version'],scope='future',color='purple')[0],200)
+        future=[l for l in self.admin.request('state?through=2029-12-01')[1]['lessons'] if l['teacher_id']==tid and l['occurrence_index']>=2]
+        self.assertTrue(all(l['color']=='purple' and date.fromisoformat(l['starts_at'][:10]).weekday()==2 for l in future))
+        self.assertEqual(self.lesson(ids[1])['starts_at'],'2026-11-10T10:00')
+        third=self.lesson(ids[2])
+        code,_=self.admin.request('lessons/cancel',{'lesson_id':third['id'],'version':third['version'],'series_version':third['series_version'],'scope':'future','reason':'Stop repeat'})
+        self.assertEqual(code,200)
+        after=[l for l in self.admin.request('state?through=2030-12-01')[1]['lessons'] if l['teacher_id']==tid]
+        self.assertEqual(len(after),len(future)+2)
+        self.assertTrue(all(l['status']=='cancelled' for l in after if l['occurrence_index']>=2))
+        self.assertEqual(self.balance(sid),0)
+
     def test_schedule_conflicts_and_cancel_no_debit(self):
         tid,_=self.new_teacher();tid2,_=self.new_teacher();s1=self.new_student();s2=self.new_student()
         status,r=self.schedule(tid,[s1]);self.assertEqual(status,200,r);lid=r['lesson_id']

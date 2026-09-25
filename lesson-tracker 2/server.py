@@ -169,6 +169,13 @@ class Handler(BaseHTTPRequestHandler):
                 user = self.current(c)
                 if not user:
                     return self.response(200, {'user':None,'demo':DEMO,'organization':ORG_NAME})
+                try:
+                    requested=parse_qs(urlsplit(self.path).query).get('through',[teaching.now_local().date().isoformat()])[0]
+                    horizon=max(teaching.now_local().date()+teaching.dt.timedelta(days=366),teaching.dt.date.fromisoformat(requested)+teaching.dt.timedelta(days=30))
+                except (ValueError,OverflowError):return self.response(400,{'error':'日期无效。'})
+                c.execute('BEGIN IMMEDIATE')
+                teaching.recurrence.extend(c,horizon.isoformat(),units,text_value)
+                c.commit()
                 condition = '' if user['role'] in ('owner','admin') else ' WHERE s.parent_id=?'
                 params = () if user['role'] in ('owner','admin') else (user['id'],)
                 if user['role']=='teacher':
@@ -254,6 +261,10 @@ class Handler(BaseHTTPRequestHandler):
                     elif self.path=='/api/teachers':
                         result=teaching.create_teacher(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/lessons':
+                        teaching.require_scheduler(c,user,data)
+                        if not data.get('lesson_id'):
+                            horizon=teaching.datetime_value(data.get('ends_at')).date().isoformat()
+                            teaching.recurrence.extend(c,horizon,units,text_value)
                         result=teaching.save_schedule(c,user,data,units,text_value)
                     elif self.path=='/api/lessons/cancel':
                         result=teaching.cancel_lesson(c,user,data,text_value)

@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import hashlib
 import credit_batches
+import recurrence
 import os
 import re
 from zoneinfo import ZoneInfo
@@ -68,6 +69,7 @@ def schema(c):
             c.executemany('INSERT OR IGNORE INTO schedule_options(kind,name) VALUES(?,?)',[(kind,n) for n in names])
         c.execute("INSERT INTO app_meta VALUES('schedule_options_v1','1')")
 
+    recurrence.schema(c)
 
 def staff_or_admin(user):
     if user['role'] not in ('owner','admin','teacher'):
@@ -103,7 +105,7 @@ def state_for(c,user):
         where,params=(' WHERE t.user_id=?',(user['id'],))
     elif role=='parent':
         where,params=(' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=l.id AND s.parent_id=?)',(user['id'],))
-    lessons=[dict(x) for x in c.execute('SELECT l.*,u.name teacher_name FROM lessons l JOIN teachers t ON l.teacher_id=t.id JOIN users u ON t.user_id=u.id'+where+' ORDER BY l.starts_at,l.id',params)]
+    lessons=[dict(x) for x in c.execute('SELECT l.*,(SELECT version FROM lesson_series WHERE id=l.series_id) series_version,(SELECT endless FROM lesson_series WHERE id=l.series_id) repeats_forever,u.name teacher_name FROM lessons l JOIN teachers t ON l.teacher_id=t.id JOIN users u ON t.user_id=u.id'+where+' ORDER BY l.starts_at,l.id',params)]
     for lesson in lessons:
         member_where=' AND s.parent_id=?' if role=='parent' else ''
         member_params=(lesson['id'],user['id']) if role=='parent' else (lesson['id'],)
@@ -119,7 +121,7 @@ def state_for(c,user):
         teachers=[dict(x) for x in c.execute("SELECT t.id,t.subject,t.subjects,u.name,u.phone,u.active,u.id user_id,CASE WHEN EXISTS(SELECT 1 FROM organization_owners o WHERE o.user_id=u.id) THEN 'owner' WHEN u.role='admin' THEN 'admin' ELSE 'teacher' END account_role FROM teachers t JOIN users u ON t.user_id=u.id"+tw+' ORDER BY t.id',tp)]
     for t in teachers:
         t['subjects']=json.loads(t['subjects']) or [t['subject']]
-    return {'schedule_options':[dict(x) for x in c.execute('SELECT * FROM schedule_options ORDER BY kind,id')] if role in ('owner','admin','teacher') else [],'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
+    return {'recurrence_warnings':[r['error'] for r in c.execute("SELECT error FROM lesson_series WHERE error!=''")] if role in ('owner','admin') else [],'schedule_options':[dict(x) for x in c.execute('SELECT * FROM schedule_options ORDER BY kind,id')] if role in ('owner','admin','teacher') else [],'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
 
 def create_teacher(c,user,data,phone_value,password_hash,text_value):
     if user['role'] not in ('owner','admin'):
@@ -159,13 +161,18 @@ def save_schedule(c,user,data,units,text_value):
     if repeat not in ('none','weekly','fortnightly'):
         raise ValueError('重复选项无效。')
     if data.get('lesson_id'):
-        if repeat!='none':raise ValueError('调整课程仅修改本次课程。')
-        return save_lesson(c,user,data,units,text_value)
+        scope=data.get('scope','single')
+        if scope not in ('single','future'):raise ValueError('调整范围无效。')
+        if scope=='future':return recurrence.update_future(c,user,data,units,text_value)
+        result=save_lesson(c,user,data,units,text_value)
+        c.execute('UPDATE lesson_series SET version=version+1 WHERE id=(SELECT series_id FROM lessons WHERE id=?)',(data['lesson_id'],))
+        return result
     if repeat=='none':return save_lesson(c,user,data,units,text_value)
     raw=str(data.get('repeat_count',''))
-    if not re.fullmatch(r'[0-9]{1,2}',raw) or not 2<=int(raw)<=52:
+    forever=data.get('repeat_end')=='forever'
+    if not forever and (not re.fullmatch(r'[0-9]{1,2}',raw) or not 2<=int(raw)<=52):
         raise ValueError('总课次数需为 2–52 次，包含本次。')
-    count=int(raw)
+    count=(53 if repeat=='weekly' else 27) if forever else int(raw)
     key=str(data.get('request_id',''))
     if not re.fullmatch(r'[A-Za-z0-9-]{16,80}',key):
         raise ValueError('操作编号无效，请重新打开排课表单。')
@@ -173,6 +180,9 @@ def save_schedule(c,user,data,units,text_value):
     if existing:return {'ok':True,'lesson_id':existing['id'],'duplicate':True}
     start=datetime_value(data.get('starts_at'))
     end=datetime_value(data.get('ends_at'))
+    series_id=key
+    template={k:data[k] for k in ('title','teacher_id','starts_at','ends_at','amount','location','color','student_ids') if k in data}
+    c.execute('INSERT INTO lesson_series(id,interval_days,endless,next_index,stop_index,template,created_by) VALUES(?,?,?,?,?,?,?)',(series_id,7 if repeat=='weekly' else 14,int(forever),count,None if forever else count,json.dumps(template),user['id']))
     ids=[]
     for i in range(count):
         offset=dt.timedelta(days=i*(7 if repeat=='weekly' else 14))
@@ -182,6 +192,7 @@ def save_schedule(c,user,data,units,text_value):
         try:ids.append(save_lesson(c,user,item,units,text_value)['lesson_id'])
         except ValueError as e:
             raise ValueError(item['starts_at'][:10]+'：'+str(e)) from e
+        c.execute('UPDATE lessons SET series_id=?,occurrence_index=? WHERE id=?',(series_id,i,ids[-1]))
     return {'ok':True,'lesson_id':ids[0],'lesson_ids':ids,'created_count':len(ids)}
 
 def save_lesson(c,user,data,units,text_value):
@@ -253,8 +264,19 @@ def cancel_lesson(c,user,data,text_value):
     check_version(lesson,data)
     if lesson['status']!='scheduled':
         raise ValueError('只能取消未完成的课程。已完成的课时请通过账本撤销。')
+    scope=data.get('scope','single')
+    if scope not in ('single','future'):raise ValueError('取消范围无效。')
+    if scope=='future':
+        if not lesson['series_id']:raise ValueError('这不是重复课程。')
+        rule=c.execute('SELECT * FROM lesson_series WHERE id=?',(lesson['series_id'],)).fetchone()
+        if int(data.get('series_version',0))!=rule['version']:raise ValueError('重复课程已被调整，请刷新后重试。')
     reason=text_value(data.get('reason'),'取消原因',250)
     c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",(reason,lesson['id']))
+    if scope=='future':
+        c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1 WHERE series_id=? AND occurrence_index>? AND status='scheduled'",(reason,lesson['series_id'],lesson['occurrence_index']))
+        c.execute("UPDATE lesson_series SET stop_index=MIN(COALESCE(stop_index,?),?),error='',version=version+1 WHERE id=?",(lesson['occurrence_index'],lesson['occurrence_index'],lesson['series_id']))
+    elif lesson['series_id']:
+        c.execute('UPDATE lesson_series SET version=version+1 WHERE id=?',(lesson['series_id'],))
     return {'ok':True}
 
 def save_reports(c,user,data,units,action):
