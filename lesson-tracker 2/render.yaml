@@ -1,0 +1,27 @@
+# Prepared deployment configuration. Applying it creates billable resources.
+services:
+  - type: web
+    name: helens-math-secrets
+    runtime: python
+    region: singapore
+    plan: 0.5c-512mb
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --config gunicorn.conf.py wsgi:application
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.12
+      - key: LESSON_ORG_NAME
+        value: HELEN’S MATH SECRETS
+      - key: LESSON_DEMO
+        value: "0"
+      - key: LESSON_SECURE_COOKIE
+        value: "1"
+      - key: LESSON_DB
+        value: /var/data/lessons.sqlite3
+      - key: TZ
+        value: Australia/Melbourne
+    disk:
+      name: lessons-data
+      mountPath: /var/data
+      sizeGB: 1
