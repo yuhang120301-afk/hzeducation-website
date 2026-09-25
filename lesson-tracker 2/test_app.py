@@ -51,6 +51,34 @@ class AppTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.proc.terminate();cls.proc.communicate(timeout=5);cls.tmp.cleanup()
+    def test_owner_only_profile_deletion(self):
+        regular=Client();regular.login('0400000004','AdminDemo2026!')
+        sid=self.new_student();tid,tutor=self.new_teacher()
+        phone='04'+str(uuid.uuid4().int)[:8]
+        status,result=self.admin.request('administrators',{'name':'Duplicate Admin','phone':phone,'password':'SafePassword2026!'})
+        self.assertEqual(status,200)
+        aid=result['admin_id'];duplicate=Client();duplicate.login(phone,'SafePassword2026!')
+        for kind,ident in [('student',sid),('teacher',tid),('admin',aid)]:
+            data={'kind':kind,'id':ident}
+            for client in (regular,tutor,self.parent):
+                self.assertEqual(client.request('profiles/delete',data)[0],403)
+            self.assertEqual(self.admin.request('profiles/delete',data,csrf=False)[0],403)
+        for kind,ident in [('student',sid),('teacher',tid),('admin',aid)]:
+            self.assertEqual(self.admin.request('profiles/delete',{'kind':kind,'id':ident})[0],200)
+            self.assertEqual(self.admin.request('profiles/delete',{'kind':kind,'id':ident})[0],400)
+        self.assertIsNone(tutor.request('state')[1]['user'])
+        self.assertIsNone(duplicate.request('state')[1]['user'])
+        self.assertIsNotNone(self.parent.request('state')[1]['user'])
+        self.assertNotIn(sid,[s['id'] for s in self.admin.request('state')[1]['students']])
+        owner=self.admin.request('state')[1]['user']
+        self.assertEqual(self.admin.request('profiles/delete',{'kind':'admin','id':owner['id']})[0],400)
+        self.assertEqual(self.admin.request('profiles/delete',{'kind':'teacher','id':owner['teacher_id']})[0],400)
+        used=self.new_student();self.entry(used,'credit','1')
+        self.assertEqual(self.admin.request('profiles/delete',{'kind':'student','id':used})[0],400)
+        tid,_=self.new_teacher();scheduled=self.new_student();self.schedule(tid,[scheduled])
+        self.assertEqual(self.admin.request('profiles/delete',{'kind':'teacher','id':tid})[0],400)
+        self.assertEqual(self.admin.request('profiles/delete',{'kind':'student','id':scheduled})[0],400)
+
     def test_schedule_options(self):
         payload={'kind':'location','name':'测试教室','active':True}
         self.assertEqual(self.parent.request('schedule-options',payload)[0],403)

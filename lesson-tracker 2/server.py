@@ -18,6 +18,7 @@ import teaching
 import profiles
 import credit_batches
 import accounting
+import deletion
 from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parent
@@ -227,6 +228,11 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
                     c.commit()
                     return self.response(200,{'ok':True})
+                if self.path == '/api/profiles/delete':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=deletion.remove(c,user,data)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/accounting/cash'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/administrators':result=accounting.add_administrator(c,user,data,phone_value,password_hash,text_value)
