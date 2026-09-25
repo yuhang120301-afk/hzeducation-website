@@ -37,3 +37,5 @@
 .child-course{padding-top:18px;margin-top:18px;border-top:1px solid var(--line)}.child-course h3{margin:0 0 12px;font-size:15px}
 
 .credit-split{display:block;font-size:12px!important;font-weight:400;color:var(--muted);line-height:1.7;margin-top:5px}
+
+#schedule-student-picker label[hidden],#schedule-search-empty[hidden]{display:none} .schedule-selected{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0 14px}.schedule-selected>span{width:100%;font-size:13px;color:var(--muted)}.schedule-selected .btn{font-size:13px;padding:7px 10px}#schedule-search-empty{padding:12px;color:var(--muted);font-size:14px}

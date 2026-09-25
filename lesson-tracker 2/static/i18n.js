@@ -1,6 +1,9 @@
 /* Translate interface nodes only. Authored content is marked data-user-content. */
 (() => {
  const messages = {
+"输入学生姓名、课程或家长手机号":"Search by student name, course or parent phone",
+"没有找到匹配的学生。":"No matching students found.",
+"已选学生：":"Selected students: ",
 "删除并归档":"Archive student",
 "删除并归档学生":"Archive student profile",
 "已归档学生":"Archived students",
