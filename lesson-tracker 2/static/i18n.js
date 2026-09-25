@@ -1,6 +1,10 @@
 /* Translate interface nodes only. Authored content is marked data-user-content. */
 (() => {
  const messages = {
+"我的课程":"My lessons",
+"按学生课时状态筛选":"Filter by student credit status",
+"正常（课时不少于 3 节）":"Normal (at least 3 credits)",
+"需续费（课时不足 3 节）":"Top-up needed (below 3 credits)",
 "输入学生姓名、课程或家长手机号":"Search by student name, course or parent phone",
 "没有找到匹配的学生。":"No matching students found.",
 "已选学生：":"Selected students: ",
