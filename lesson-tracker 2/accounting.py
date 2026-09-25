@@ -64,13 +64,18 @@ def bounds(period,day):
     return start,end
 
 def blank_totals():
-    return {'credit_units':0,'lesson_units':0,'refund_units':0,'reversed_credit_units':0,'returned_lesson_units':0,'returned_refund_units':0,'net_units':0,'count':0,'receipts_cents':0,'refunds_cents':0,'corrections_cents':0,'net_cash_cents':0,'missing_cash_count':0}
+    return {'gift_void_units':0,'paid_credit_units':0,'gift_credit_units':0,'credit_units':0,'lesson_units':0,'refund_units':0,'reversed_credit_units':0,'returned_lesson_units':0,'returned_refund_units':0,'net_units':0,'count':0,'receipts_cents':0,'refunds_cents':0,'corrections_cents':0,'net_cash_cents':0,'missing_cash_count':0}
 
 def add_row(t,row):
     t['count']+=1;t['net_units']+=row['delta']
-    if row['kind']=='credit':t['credit_units']+=row['delta']
+    if row['kind']=='credit':
+        t['credit_units']+=row['delta']
+        t['paid_credit_units']+=row['paid_delta'] if row['split_known'] else row['delta']
+        t['gift_credit_units']+=row['gift_delta'] if row['split_known'] else 0
     elif row['kind']=='lesson':t['lesson_units']-=row['delta']
-    elif row['kind']=='refund':t['refund_units']-=row['delta']
+    elif row['kind']=='refund':
+        t['refund_units']-=row['paid_delta'] if row['split_known'] else row['delta']
+        t['gift_void_units']+=row['gift_void']
     elif row['original_kind']=='credit':t['reversed_credit_units']-=row['delta']
     elif row['original_kind']=='lesson':t['returned_lesson_units']+=row['delta']
     elif row['original_kind']=='refund':t['returned_refund_units']+=row['delta']
@@ -140,4 +145,25 @@ def supplement_cash(c,user,data):
     reversed_entry=c.execute('SELECT id FROM ledger WHERE reversal_of=?',(entry['id'],)).fetchone()
     if reversed_entry:
         record_cash(c,reversed_entry['id'],-cents,method,'原记录补录后同步纠错',user['id'])
+    return {'ok':True}
+
+
+def edit_administrator(c,user,data,phone_value,password_hash,text_value):
+    require_owner(user)
+    uid=int(data.get('admin_id',0))
+    admin=c.execute("SELECT u.* FROM users u LEFT JOIN organization_owners o ON o.user_id=u.id WHERE u.id=? AND u.role='admin' AND o.user_id IS NULL",(uid,)).fetchone()
+    if not admin:
+        raise ValueError('请选择有效的管理员。')
+    name=text_value(data.get('name'),'管理员姓名',40)
+    phone=phone_value(data.get('phone'))
+    password=str(data.get('password',''))
+    if password and not 10<=len(password)<=128:
+        raise ValueError('新密码需为 10–128 位。')
+    if c.execute('SELECT 1 FROM users WHERE phone=? AND id!=?',(phone,uid)).fetchone():
+        raise ValueError('该手机号已有账号，请使用独立的管理员手机号。')
+    c.execute('UPDATE users SET name=?,phone=? WHERE id=?',(name,phone,uid))
+    if password:
+        c.execute('UPDATE users SET password=? WHERE id=?',(password_hash(password),uid))
+    if password or phone!=admin['phone']:
+        c.execute('DELETE FROM sessions WHERE user_id=?',(uid,))
     return {'ok':True}

@@ -65,6 +65,182 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.parent.request('state')[1]['schedule_options'],[])
         self.assertEqual(self.admin.request('schedule-options',{**payload,'id':oid,'active':True})[0],200)
 
+    def test_student_profiles_and_separate_course_balances(self):
+        sid=self.new_student()
+        payload={'student_id':sid,'name':'多科学生','birthday':'2015-04-12','grade':'Year 6','notes':'内部教学备注'}
+        self.assertEqual(self.parent.request('students/profile',payload)[0],403)
+        self.assertEqual(self.admin.request('students/profile',{**payload,'birthday':'2999-01-01'})[0],400)
+        self.assertEqual(self.admin.request('students/profile',payload)[0],200)
+        code,result=self.admin.request('students/course',{'student_id':sid,'course':'物理'})
+        self.assertEqual(code,200)
+        physics=result['student_id']
+        self.assertEqual(self.admin.request('students/course',{'student_id':sid,'course':'物理'})[0],400)
+        self.assertEqual(self.parent.request('students/course',{'student_id':sid,'course':'化学'})[0],403)
+        self.assertEqual(self.entry(sid,'credit','4')[0],201)
+        self.assertEqual(self.entry(physics,'credit','2')[0],201)
+        self.assertEqual(self.entry(physics,'lesson','3')[0],400)
+        self.assertEqual(self.entry(physics,'lesson','0.5')[0],201)
+        self.assertEqual(self.balance(sid),400)
+        self.assertEqual(self.balance(physics),150)
+        tid,tutor=self.new_teacher()
+        lid=self.schedule(tid,[physics])[1]['lesson_id']
+        self.assertTrue(all('notes' not in x for x in tutor.request('state')[1]['students']))
+        self.assertEqual(tutor.request('students/profile',payload)[0],403)
+        self.assertEqual(tutor.request('reports/complete',self.report_data(lid,[physics]))[0],200)
+        self.assertEqual(self.balance(physics),100)
+        self.assertEqual(self.balance(sid),400)
+        code,result=self.admin.request('refunds',{'student_id':physics,'amount':'0.5','cash_amount':'10','payment_method':'bank','date':date.today().isoformat(),'note':'测试退款','request_id':str(uuid.uuid4())})
+        self.assertEqual(code,201)
+        self.assertEqual(self.balance(physics),50)
+        self.assertEqual(self.balance(sid),400)
+        refund=next(e for e in self.admin.request('state')[1]['entries'] if e['student_id']==physics and e['kind']=='refund')
+        self.assertEqual(self.admin.request('reverse',{'entry_id':refund['id'],'note':'测试撤销','request_id':str(uuid.uuid4())})[0],201)
+        self.assertEqual(self.balance(physics),100)
+        self.assertEqual(self.balance(sid),400)
+        self.assertEqual(self.admin.request('students/profile',{**payload,'student_id':physics,'name':'更新姓名','grade':'Year 7'})[0],200)
+        rows=self.admin.request('state')[1]['students']
+        accounts=[x for x in rows if x['id'] in (sid,physics)]
+        self.assertEqual(len({x['profile_id'] for x in accounts}),1)
+        self.assertTrue(all(x['name']=='更新姓名' and x['grade']=='Year 7' for x in accounts))
+        self.assertTrue(all('notes' not in x for x in self.parent.request('state')[1]['students']))
+        state=self.admin.request('state')[1]
+        teacher=state['teachers'][0]['id']
+        day=(date.today()+timedelta(days=50)).isoformat()
+        lesson={'title':'物理','teacher_id':teacher,'starts_at':day+'T09:00','ends_at':day+'T10:00','amount':'1','student_ids':[sid,physics],'request_id':str(uuid.uuid4())}
+        self.assertEqual(self.admin.request('lessons',lesson)[0],400)
+        lesson.update(student_ids=[sid],request_id=str(uuid.uuid4()))
+        self.assertEqual(self.admin.request('lessons',lesson)[0],200)
+        lesson.update(student_ids=[physics],teacher_id=state['teachers'][1]['id'],request_id=str(uuid.uuid4()))
+        self.assertEqual(self.admin.request('lessons',lesson)[0],400)
+
+    def test_guardian_account_edit_and_password_reset(self):
+        phone='0498765432'
+        code,result=self.admin.request('students',{'name':'账号测试','course':'物理','phone':phone,'password':'OriginalPass2026!','parent_name':'测试家长'})
+        self.assertEqual(code,201)
+        sid=result['student_id']
+        guardian=Client();guardian.login(phone,'OriginalPass2026!')
+        payload={'student_id':sid,'parent_name':'家长新姓名','phone':'0498765431','contact_phone':'0498765430','password':'UpdatedPass2026!'}
+        self.assertEqual(guardian.request('students/guardian',payload)[0],403)
+        self.assertEqual(self.admin.request('students/guardian',{**payload,'phone':'0400000000'})[0],400)
+        self.assertEqual(self.admin.request('students/guardian',payload)[0],200)
+        self.assertIsNone(guardian.request('state')[1]['user'])
+        after=guardian.login(payload['phone'],payload['password'])
+        account=next(s for s in after['students'] if s['id']==sid)
+        self.assertEqual(account['parent_name'],payload['parent_name'])
+        self.assertEqual(account['contact_phone'],payload['contact_phone'])
+        self.assertNotIn('password',account)
+        self.assertEqual(self.admin.request('students/guardian',{**payload,'password':''})[0],200)
+        guardian.login(payload['phone'],payload['password'])
+
+    def test_edit_administrator_permissions_and_login(self):
+        code,result=self.admin.request('administrators',{'name':'编辑测试','phone':'0491111111','password':'InitialAdmin2026!'})
+        self.assertEqual(code,200)
+        uid=result['admin_id']
+        admin=Client();before=admin.login('0491111111','InitialAdmin2026!')
+        payload={'admin_id':uid,'name':'新管理员姓名','phone':'0491111112','password':''}
+        self.assertEqual(admin.request('administrators/edit',payload)[0],403)
+        self.assertEqual(self.parent.request('administrators/edit',payload)[0],403)
+        self.assertEqual(self.admin.request('administrators/edit',{**payload,'admin_id':1})[0],400)
+        self.assertEqual(self.admin.request('administrators/edit',{**payload,'phone':'0400000001'})[0],400)
+        self.assertEqual(self.admin.request('administrators/edit',{**payload,'password':'short'})[0],400)
+        self.assertEqual(self.admin.request('administrators/edit',payload)[0],200)
+        self.assertIsNone(admin.request('state')[1]['user'])
+        after=admin.login('0491111112','InitialAdmin2026!')
+        self.assertEqual(after['user']['name'],payload['name'])
+        self.assertEqual(after['user']['teacher_id'],before['user']['teacher_id'])
+        self.assertEqual(self.admin.request('administrators/edit',{**payload,'password':'ResetAdmin2026!'})[0],200)
+        self.assertIsNone(admin.request('state')[1]['user'])
+        admin.login('0491111112','ResetAdmin2026!')
+        self.assertEqual(self.admin.request('administrators/status',{'admin_id':uid,'active':False})[0],200)
+        self.assertEqual(self.admin.request('administrators/edit',{**payload,'password':''})[0],200)
+        self.assertEqual(admin.request('login',{'phone':payload['phone'],'password':'ResetAdmin2026!'})[0],401)
+
+    def test_teacher_edit_subjects_and_departure(self):
+        tid,tutor=self.new_teacher()
+        current=tutor.request('state')[1]['user']
+        payload={'teacher_id':tid,'name':'多科老师','phone':current['phone'],'subjects':['物理','化学'],'password':''}
+        self.assertEqual(tutor.request('teachers/edit',payload)[0],403)
+        self.assertEqual(self.parent.request('teachers/status',{'teacher_id':tid,'active':False})[0],403)
+        self.assertEqual(self.admin.request('teachers/edit',{**payload,'subjects':[]})[0],400)
+        self.assertEqual(self.admin.request('teachers/edit',payload)[0],200)
+        row=next(t for t in self.admin.request('state')[1]['teachers'] if t['id']==tid)
+        self.assertEqual(row['subjects'],['物理','化学'])
+        sid=self.new_student();lid=self.schedule(tid,[sid])[1]['lesson_id']
+        self.assertEqual(self.admin.request('teachers/status',{'teacher_id':tid,'active':False})[0],200)
+        self.assertIsNone(tutor.request('state')[1]['user'])
+        self.assertEqual(self.schedule(tid,[self.new_student()])[0],400)
+        self.assertEqual(self.lesson(lid)['teacher_id'],tid)
+        row=next(t for t in self.admin.request('state')[1]['teachers'] if t['id']==tid)
+        self.assertEqual(row['active'],0)
+        self.assertEqual(self.admin.request('teachers/status',{'teacher_id':tid,'active':True})[0],200)
+        self.assertEqual(self.admin.request('teachers/edit',{**payload,'phone':'0492222222','password':'NewTeacher2026!'})[0],200)
+        tutor.login('0492222222','NewTeacher2026!')
+        owner_teacher=next(t for t in self.admin.request('state')[1]['teachers'] if t['account_role']=='owner')
+        self.assertEqual(self.admin.request('teachers/status',{'teacher_id':owner_teacher['id'],'active':False})[0],400)
+        self.assertEqual(self.admin.request('teachers/edit',{'teacher_id':owner_teacher['id'],'subjects':['数学','物理']})[0],200)
+        self.assertEqual(self.admin.request('teachers/edit',{**payload,'teacher_id':owner_teacher['id']})[0],400)
+
+    def gift_credit(self,sid,paid,gift,key=None):
+        return self.admin.request('entries',{'student_id':sid,'kind':'credit','amount':paid,'gift_amount':gift,'cash_amount':'100' if float(paid)>0 else '0','payment_method':'bank' if float(paid)>0 else 'gift','date':date.today().isoformat(),'request_id':key or str(uuid.uuid4())})
+    def credit_account(self,sid):
+        return next(s for s in self.admin.request('state')[1]['students'] if s['id']==sid)
+    def test_gifts_paid_first_across_batches_and_scheduled_lessons(self):
+        sid=self.new_student();key=str(uuid.uuid4())
+        self.assertEqual(self.gift_credit(sid,'2','1',key)[0],201)
+        self.assertEqual(self.gift_credit(sid,'2','1',key)[0],200)
+        self.gift_credit(sid,'1','2')
+        self.assertEqual(len(self.credit_account(sid)['credit_batches']),2)
+        self.assertEqual(self.entry(sid,'lesson','2.5')[0],201)
+        s=self.credit_account(sid)
+        self.assertEqual((s['paid_balance'],s['gift_balance']),(50,300))
+        self.assertEqual(self.entry(sid,'lesson','1')[0],201)
+        s=self.credit_account(sid)
+        self.assertEqual((s['paid_balance'],s['gift_balance']),(0,250))
+        tid,tutor=self.new_teacher();lid=self.schedule(tid,[sid])[1]['lesson_id']
+        self.assertEqual(tutor.request('reports/complete',self.report_data(lid,[sid]))[0],200)
+        s=self.credit_account(sid)
+        self.assertEqual((s['paid_balance'],s['gift_balance'],s['balance']),(0,200,200))
+        self.assertEqual(self.entry(sid,'lesson','2.01')[0],400)
+        self.assertEqual(self.balance(sid),200)
+    def test_gift_refund_voids_only_selected_batch_and_reversal(self):
+        sid=self.new_student();self.gift_credit(sid,'10','2');self.gift_credit(sid,'5','1')
+        self.entry(sid,'lesson','3')
+        batch=self.credit_account(sid)['credit_batches'][0]
+        key=str(uuid.uuid4())
+        payload={'student_id':sid,'batch_id':batch['id'],'amount':'2','cash_amount':'20','payment_method':'bank','date':date.today().isoformat(),'note':'部分退款','request_id':key}
+        code,result=self.admin.request('refunds',payload)
+        self.assertEqual(code,201);self.assertEqual(result['gift_void'],200)
+        self.assertEqual(self.admin.request('refunds',payload)[0],200)
+        s=self.credit_account(sid)
+        self.assertEqual((s['paid_balance'],s['gift_balance'],s['balance']),(1000,100,1100))
+        self.assertEqual(s['credit_batches'][1]['gift_left'],100)
+        refund=next(e for e in self.admin.request('state')[1]['entries'] if e['student_id']==sid and e['kind']=='refund')
+        self.assertEqual((refund['paid_delta'],refund['gift_delta'],refund['delta']),(-200,-200,-400))
+        self.assertEqual(self.admin.request('reverse',{'entry_id':refund['id'],'note':'纠错','request_id':str(uuid.uuid4())})[0],201)
+        s=self.credit_account(sid)
+        self.assertEqual((s['paid_balance'],s['gift_balance']),(1200,300))
+        report=self.admin.request('reconciliation?period=day&date='+date.today().isoformat())[1]
+        self.assertTrue(report['balance_check'])
+        self.assertGreaterEqual(report['totals']['gift_void_units'],200)
+    def test_gift_only_not_refundable_and_batch_isolation(self):
+        sid=self.new_student();self.assertEqual(self.gift_credit(sid,'0','2')[0],201)
+        other=self.new_student();self.gift_credit(other,'5','1')
+        batch=self.credit_account(other)['credit_batches'][0]
+        payload={'student_id':sid,'batch_id':batch['id'],'amount':'1','cash_amount':'10','payment_method':'bank','date':date.today().isoformat(),'note':'退款','request_id':str(uuid.uuid4())}
+        self.assertEqual(self.admin.request('refunds',payload)[0],400)
+        self.assertEqual(self.admin.request('refunds',{**payload,'batch_id':self.credit_account(sid)['credit_batches'][0]['id']})[0],400)
+        self.assertEqual(self.gift_credit(sid,'0','0')[0],400)
+        self.assertEqual(self.gift_credit(sid,'1','-1')[0],400)
+        self.assertEqual(self.balance(sid),200)
+        self.assertEqual(self.balance(other),600)
+    def test_gift_concurrent_consumption_no_overdraw(self):
+        sid=self.new_student();self.gift_credit(sid,'0.5','0.5')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            codes=list(pool.map(lambda _:self.entry(sid,'lesson','0.75')[0],range(2)))
+        self.assertEqual(sorted(codes),[201,400])
+        s=self.credit_account(sid)
+        self.assertEqual((s['paid_balance'],s['gift_balance'],s['balance']),(0,25,25))
+
     def new_student(self):
         status,result=self.admin.request('students',{'name':'测试学生','course':'测试课程','phone':'0400000001'})
         self.assertEqual(status,201)

@@ -15,6 +15,8 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import teaching
+import profiles
+import credit_batches
 import accounting
 from urllib.parse import urlsplit, parse_qs
 
@@ -92,7 +94,7 @@ def initialize():
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(2,?,?,?,?)', ('0400000001', '陈同学家长', password_hash('ParentDemo2026!'), 'parent'))
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(3,?,?,?,?)', ('0400000002', '其他学生家长', password_hash(secrets.token_urlsafe(24)), 'parent'))
             for sid, name, course, pid, total, used in [(1,'陈一诺','数学 · 一对一',2,2000,650),(2,'陈子墨','数学 · 小班课',2,1200,300),(3,'王星然','数学 · 一对一',3,1000,800),(4,'李沐阳','数学 · 小班课',3,2000,400)]:
-                c.execute('INSERT INTO students VALUES(?,?,?,?,?)',(sid,name,course,pid,total-used))
+                c.execute('INSERT INTO students(id,name,course,parent_id,balance) VALUES(?,?,?,?,?)',(sid,name,course,pid,total-used))
                 c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,?,?,?,1,?)',(sid,total,'credit','2026-09-01','示例：购入课时',secrets.token_hex(16)))
                 c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,?,?,?,1,?)',(sid,-used,'lesson','2026-09-20','示例：历史上课汇总',secrets.token_hex(16)))
         c.execute('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
@@ -111,6 +113,8 @@ def initialize():
                         c.execute('INSERT INTO lesson_students VALUES(?,?)',(lid,student['id']))
             c.execute("INSERT INTO app_meta VALUES('teaching_demo_v1','1')")
         accounting.schema(c,DEMO)
+        profiles.schema(c)
+        credit_batches.schema(c)
         if DEMO and not c.execute("SELECT 1 FROM app_meta WHERE key='owner_demo_v1'").fetchone():
             if not c.execute("SELECT 1 FROM users WHERE phone='0400000004'").fetchone():
                 uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'admin')",('0400000004','Amy 管理员',password_hash('AdminDemo2026!'))).lastrowid
@@ -169,7 +173,10 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role']=='teacher':
                     condition=' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN lessons tl ON ls.lesson_id=tl.id WHERE ls.student_id=s.id AND tl.teacher_id=?)'
                     params=(user['teacher_id'],)
-                students = [dict(x) for x in c.execute('SELECT s.*,u.name parent_name,u.phone FROM students s JOIN users u ON s.parent_id=u.id'+condition+' ORDER BY s.id',params)]
+                students = [dict(x) for x in c.execute('SELECT s.*,u.name parent_name,u.phone,u.contact_phone FROM students s JOIN users u ON s.parent_id=u.id'+condition+' ORDER BY s.id',params)]
+                if user['role'] not in ('owner','admin'):
+                    for s in students: s.pop('notes',None)
+                credit_batches.enrich(c,students)
                 entry_condition=condition
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
@@ -207,6 +214,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(403, {'error':'页面已过期，请刷新后重试。'})
                 if self.path == '/api/logout':
                     c.execute('DELETE FROM sessions WHERE token_hash=?',(user['token_hash'],))
+                    c.commit()
                     return self.response(200,{'ok':True},'session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'+('; Secure' if SECURE else ''))
                 if self.path == '/api/password':
                     old = str(data.get('old',''))
@@ -217,18 +225,24 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('新密码需为 10–128 位。')
                     c.execute('UPDATE users SET password=? WHERE id=?',(password_hash(new),user['id']))
                     c.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
+                    c.commit()
                     return self.response(200,{'ok':True})
-                if self.path in ('/api/administrators','/api/administrators/status','/api/accounting/cash'):
+                if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/accounting/cash'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/administrators':result=accounting.add_administrator(c,user,data,phone_value,password_hash,text_value)
+                    elif self.path=='/api/administrators/edit':result=accounting.edit_administrator(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/administrators/status':result=accounting.set_active(c,user,data)
                     else:result=accounting.supplement_cash(c,user,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/schedule-options','/api/teachers','/api/lessons','/api/lessons/cancel','/api/reports/draft','/api/reports/complete','/api/reports/edit'):
+                if self.path in ('/api/schedule-options','/api/teachers/edit','/api/teachers/status','/api/teachers','/api/lessons','/api/lessons/cancel','/api/reports/draft','/api/reports/complete','/api/reports/edit'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/schedule-options':
                         result=teaching.save_option(c,user,data,text_value)
+                    elif self.path=='/api/teachers/edit':
+                        result=teaching.edit_teacher(c,user,data,phone_value,password_hash,text_value)
+                    elif self.path=='/api/teachers/status':
+                        result=teaching.teacher_status(c,user,data)
                     elif self.path=='/api/teachers':
                         result=teaching.create_teacher(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/lessons':
@@ -241,6 +255,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 if user['role'] not in ('owner','admin'):
                     return self.response(403, {'error':'只有老师可以修改课时。'})
+                if self.path in ('/api/students/profile','/api/students/guardian','/api/students/course'):
+                    c.execute('BEGIN IMMEDIATE')
+                    if self.path.endswith('/profile'): result=profiles.update(c,user,data,text_value)
+                    elif self.path.endswith('/course'): result=profiles.add_course(c,user,data,text_value)
+                    else: result=profiles.guardian(c,user,data,text_value,phone_value,password_hash)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path == '/api/students':
                     return self.add_student(c,user,data)
                 if self.path in ('/api/entries','/api/reverse','/api/refunds'):
@@ -274,16 +295,19 @@ class Handler(BaseHTTPRequestHandler):
         if not user or not valid or not user['active']:
             for key in keys:
                 c.execute('INSERT INTO attempts VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1',(key,now+900))
+            c.commit()
             return self.response(401,{'error':'手机号或密码不正确。'})
         c.execute('DELETE FROM attempts WHERE key=?',(keys[0],))
         c.execute('DELETE FROM sessions WHERE expires<?',(now,))
         token = secrets.token_urlsafe(32)
         c.execute('INSERT INTO sessions VALUES(?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),user['id'],secrets.token_urlsafe(24),now+43200))
+        c.commit()
         return self.response(200,{'ok':True},f'session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200'+('; Secure' if SECURE else ''))
 
     def add_student(self,c,user,data):
         name = text_value(data.get('name'),'学生姓名',40)
-        course = text_value(data.get('course'),'课程名称',60)
+        course = text_value(data.get('course'),'课程名称',80)
+        birthday,grade,notes=profiles.fields(data)
         phone = phone_value(data.get('phone'))
         c.execute('BEGIN IMMEDIATE')
         parent = c.execute('SELECT * FROM users WHERE phone=?',(phone,)).fetchone()
@@ -295,8 +319,11 @@ class Handler(BaseHTTPRequestHandler):
             password = str(data.get('password',''))
             if not 10 <= len(password) <=128:
                 raise ValueError('新家长的初始密码需为 10–128 位。')
-            pid = c.execute('INSERT INTO users(phone,name,password,role) VALUES(?,?,?,?)',(phone,name+'家长',password_hash(password),'parent')).lastrowid
-        sid = c.execute('INSERT INTO students(name,course,parent_id) VALUES(?,?,?)',(name,course,pid)).lastrowid
+            pid = c.execute('INSERT INTO users(phone,name,password,role) VALUES(?,?,?,?)',(phone,text_value(data.get('parent_name') or name+'家长','家长姓名',40),password_hash(password),'parent')).lastrowid
+        profile_id=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+        sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
+        c.execute('UPDATE students SET birthday=?,grade=?,notes=? WHERE id=?',(birthday,grade,notes,sid))
+        c.commit()
         return self.response(201,{'ok':True,'student_id':sid})
 
     def record(self,c,user,data):
@@ -326,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
             kind = 'refund' if self.path=='/api/refunds' else data.get('kind')
             if kind not in ('lesson','credit','refund') or (kind=='refund' and self.path!='/api/refunds'):
                 raise ValueError('记录类型无效。')
-            delta = units(data.get('amount')) * (-1 if kind in ('lesson','refund') else 1)
+            delta = (credit_batches.zero_units(data.get('amount'),units)+credit_batches.zero_units(data.get('gift_amount',0),units)) if kind=='credit' else -units(data.get('amount'))
             day = dt.date.fromisoformat(str(data.get('date',''))).isoformat()
             if day > teaching.now_local().date().isoformat():
                 raise ValueError('不能登记尚未发生的上课或充值记录。')
@@ -335,6 +362,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('备注不能超过 300 个字。')
             if kind in ('credit','refund'):
                 cents,method,reference=accounting.cash_details(data)
+                if kind=='credit' and method=='gift' and credit_batches.zero_units(data.get('amount'),units)>0:
+                    raise ValueError('纯赠课请将付费课时填 0，并在赠送课时中填写数量。')
                 if kind=='refund':
                     if cents<=0:raise ValueError('实际退款金额必须大于 0。')
                     note='退课退款：'+text_value(data.get('note'),'退款原因',250)
@@ -344,11 +373,11 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError('学生不存在。')
         if student['balance']+delta<0:
             raise ValueError('剩余课时不足，无法完成此次操作。')
-        c.execute('UPDATE students SET balance=balance+? WHERE id=?',(delta,sid))
         lid=c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id,reversal_of) VALUES(?,?,?,?,?,?,?,?)',(sid,delta,kind,day,note,user['id'],request_id,reversal_of)).lastrowid
+        breakdown=credit_batches.apply(c,lid,kind,data,units,original if reversal_of else None)
         if cash:accounting.record_cash(c,lid,*cash,user['id'])
         c.commit()
-        return self.response(201,{'ok':True})
+        return self.response(201,{'ok':True,**breakdown})
 
 def main():
     parser = argparse.ArgumentParser()
