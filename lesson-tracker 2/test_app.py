@@ -357,6 +357,20 @@ class AppTests(unittest.TestCase):
     def report_data(self,lid,students,amount='.5',client=None):
         return {'lesson_id':lid,'version':self.lesson(lid,client)['version'],'reports':[{'student_id':sid,'amount':amount,'content':'通分与约分','homework':'练习册第 12 页','feedback':f'学生 {sid} 的私人反馈'} for sid in students]}
 
+    def test_lesson_colors_persist_and_validate(self):
+        tid,_=self.new_teacher();sid=self.new_student()
+        status,result=self.schedule(tid,[sid],color='purple',repeat='weekly',repeat_count=2)
+        self.assertEqual(status,200,result)
+        lessons=[l for l in self.admin.request('state')[1]['lessons'] if l['teacher_id']==tid]
+        self.assertEqual(len(lessons),2)
+        self.assertTrue(all(l['color']=='purple' for l in lessons))
+        l=lessons[0]
+        self.assertEqual(self.schedule(tid,[sid],lesson_id=l['id'],version=l['version'],color='blue')[0],200)
+        self.assertEqual(self.lesson(l['id'])['color'],'blue')
+        self.assertEqual(self.schedule(tid,[sid],lesson_id=l['id'],version=self.lesson(l['id'])['version'])[0],200)
+        self.assertEqual(self.lesson(l['id'])['color'],'blue')
+        self.assertEqual(self.schedule(tid,[sid],day='2026-02-01',color='invalid')[0],400)
+
     def test_schedule_conflicts_and_cancel_no_debit(self):
         tid,_=self.new_teacher();tid2,_=self.new_teacher();s1=self.new_student();s2=self.new_student()
         status,r=self.schedule(tid,[s1]);self.assertEqual(status,200,r);lid=r['lesson_id']

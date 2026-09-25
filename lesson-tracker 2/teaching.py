@@ -56,6 +56,8 @@ def schema(c):
     CREATE INDEX IF NOT EXISTS lesson_time ON lessons(teacher_id,starts_at,ends_at);
     CREATE INDEX IF NOT EXISTS enrollment_student ON lesson_students(student_id,lesson_id);
     ''')
+    if 'color' not in {r['name'] for r in c.execute('PRAGMA table_info(lessons)')}:
+        c.execute("ALTER TABLE lessons ADD COLUMN color TEXT NOT NULL DEFAULT 'green'")
     if 'subjects' not in {r['name'] for r in c.execute('PRAGMA table_info(teachers)')}:
         c.execute("ALTER TABLE teachers ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
     c.execute("INSERT OR IGNORE INTO teachers(user_id) SELECT id FROM users WHERE role='admin'")
@@ -197,6 +199,9 @@ def save_lesson(c,user,data,units,text_value):
         existing=c.execute('SELECT id FROM lessons WHERE request_id=?',(key,)).fetchone()
         if existing:
             return {'ok':True,'lesson_id':existing['id'],'duplicate':True}
+    color=data.get('color',old['color'] if lesson_id else 'green')
+    if color not in ('green','blue','purple','pink','orange','yellow','gray'):
+        raise ValueError('请选择有效的课程颜色。')
     title=text_value(data.get('title'),'课程名称',80)
     teacher_id=int(data.get('teacher_id',0))
     if not c.execute('SELECT 1 FROM teachers t JOIN users u ON t.user_id=u.id WHERE t.id=? AND u.active=1',(teacher_id,)).fetchone():
@@ -237,6 +242,7 @@ def save_lesson(c,user,data,units,text_value):
         c.execute(f'DELETE FROM lesson_reports WHERE lesson_id=? AND student_id NOT IN ({marks})',(lesson_id,*members))
     else:
         lesson_id=c.execute('INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,created_by,request_id) VALUES(?,?,?,?,?,?,?,?)',(teacher_id,title,start,end,amount,location,user['id'],key)).lastrowid
+    c.execute('UPDATE lessons SET color=? WHERE id=?',(color,lesson_id))
     c.executemany('INSERT INTO lesson_students VALUES(?,?)',[(lesson_id,sid) for sid in members])
     return {'ok':True,'lesson_id':lesson_id}
 
