@@ -53,12 +53,13 @@ function renderSchedule(){
  if($('#teacher-filter'))$('#teacher-filter').onchange=e=>{teacherFilter=e.target.value;renderSchedule();};
  $('#status-filter').onchange=e=>{scheduleStatus=e.target.value;renderSchedule();};bindLessons();
  document.querySelectorAll('[data-slot]').forEach(b=>b.onclick=()=>scheduleModal(null,'',b.dataset.slot));
+ document.querySelectorAll('[data-add-day]').forEach(area=>area.onclick=e=>{if(!e.target.closest('button'))scheduleModal(null,'',area.dataset.addDay+'T16:00');});
 }
 function parentCalendar(rows){
  const days=Array.from({length:7},(_,i)=>datePlus(weekStart,i));
- return `<div class="week-grid parent-week-grid">${days.map((day,i)=>{
+ return `<div class="week-grid parent-week-grid ${state.user.role==='owner'?'owner-week-grid':''}">${days.map((day,i)=>{
  const lessons=rows.filter(l=>l.starts_at.slice(0,10)===day).sort((a,b)=>a.starts_at.localeCompare(b.starts_at));
- return `<section class="day-column ${day===state.today?'is-today':''}"><header class="day-title"><span>${['周一','周二','周三','周四','周五','周六','周日'][i]}</span><strong>${Number(day.slice(8))}${day===state.today?'<small>今天</small>':''}</strong></header><div class="day-lessons">${lessons.map(lessonCard).join('')}</div></section>`;
+ return `<section class="day-column ${day===state.today?'is-today':''}"><header class="day-title"><span>${['周一','周二','周三','周四','周五','周六','周日'][i]}</span><strong>${Number(day.slice(8))}${day===state.today?'<small>今天</small>':''}</strong></header><div class="day-lessons" ${state.user.role==='owner'?`data-add-day="${day}"`:''}>${lessons.map(lessonCard).join('')}${state.user.role==='owner'?`<button class="day-add-lesson" data-slot="${day}T16:00" aria-label="${day} · 新增排课"><span aria-hidden="true">＋</span></button>`:''}</div></section>`;
  }).join('')}</div>`;
 }
 function timeCalendar(rows){

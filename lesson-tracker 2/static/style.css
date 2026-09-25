@@ -39,3 +39,12 @@
 .credit-split{display:block;font-size:12px!important;font-weight:400;color:var(--muted);line-height:1.7;margin-top:5px}
 
 #schedule-student-picker label[hidden],#schedule-search-empty[hidden]{display:none} .schedule-selected{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0 14px}.schedule-selected>span{width:100%;font-size:13px;color:var(--muted)}.schedule-selected .btn{font-size:13px;padding:7px 10px}#schedule-search-empty{padding:12px;color:var(--muted);font-size:14px}
+
+/* Owner day columns keep the remaining space available for scheduling. */
+.owner-week-grid .day-column{display:flex;flex-direction:column}
+.owner-week-grid .day-lessons{display:flex;flex-direction:column;flex:1;cursor:pointer}
+.day-add-lesson{flex:1;min-height:90px;width:100%;border:0;border-radius:8px;background:transparent;color:var(--green);cursor:pointer;font:inherit}
+.day-add-lesson span{opacity:.35;font-size:24px}
+.day-add-lesson:hover,.day-add-lesson:focus-visible{background:#e7f1eb;outline:2px solid #96b4a4;outline-offset:-2px}
+.day-add-lesson:hover span,.day-add-lesson:focus-visible span{opacity:1}
+@media(max-width:760px){.owner-week-grid .day-column{display:grid;grid-template-columns:68px minmax(0,1fr)}.owner-week-grid .day-add-lesson{min-height:64px}}
