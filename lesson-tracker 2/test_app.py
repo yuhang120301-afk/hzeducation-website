@@ -74,10 +74,20 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.admin.request('profiles/delete',{'kind':'admin','id':owner['id']})[0],400)
         self.assertEqual(self.admin.request('profiles/delete',{'kind':'teacher','id':owner['teacher_id']})[0],400)
         used=self.new_student();self.entry(used,'credit','1')
-        self.assertEqual(self.admin.request('profiles/delete',{'kind':'student','id':used})[0],400)
+        self.assertEqual(self.admin.request('profiles/delete',{'kind':'student','id':used})[0],200)
+        archived=next(s for s in self.admin.request('state')[1]['archived_students'] if s['id']==used)
+        self.assertEqual(archived['balance'],100)
+        for client in (regular,self.parent):
+            self.assertEqual(client.request('profiles/restore',{'id':used})[0],403)
+            self.assertEqual(client.request('state')[1]['archived_students'],[])
+        self.assertEqual(self.entry(used,'credit','1')[0],400)
+        self.assertEqual(self.admin.request('profiles/restore',{'id':used})[0],200)
+        self.assertEqual(self.balance(used),100)
         tid,_=self.new_teacher();scheduled=self.new_student();self.schedule(tid,[scheduled])
         self.assertEqual(self.admin.request('profiles/delete',{'kind':'teacher','id':tid})[0],400)
-        self.assertEqual(self.admin.request('profiles/delete',{'kind':'student','id':scheduled})[0],400)
+        self.assertEqual(self.admin.request('profiles/delete',{'kind':'student','id':scheduled})[0],200)
+        self.assertEqual(self.schedule(tid,[scheduled],day='2026-01-06')[0],400)
+        self.assertTrue(any(s['id']==scheduled for l in self.admin.request('state')[1]['lessons'] for s in l['students']))
 
     def test_schedule_options(self):
         payload={'kind':'location','name':'测试教室','active':True}

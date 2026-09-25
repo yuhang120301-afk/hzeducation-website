@@ -223,9 +223,11 @@ def save_lesson(c,user,data,units,text_value):
     if c.execute("SELECT 1 FROM lessons WHERE teacher_id=? AND status!='cancelled' AND id!=? AND starts_at<? AND ends_at>?",(teacher_id,lesson_id,end,start)).fetchone():
         raise ValueError('这位老师在该时段已有课程，请调整时间或老师。')
     for sid in members:
-        student=c.execute('SELECT name FROM students WHERE id=?',(sid,)).fetchone()
+        student=c.execute('SELECT name,archived FROM students WHERE id=?',(sid,)).fetchone()
         if not student:
             raise ValueError('所选学生不存在，请刷新后重试。')
+        if student['archived']:
+            raise ValueError('学生已归档，请先恢复档案再排课。')
         if c.execute("SELECT 1 FROM lesson_students ls JOIN lessons l ON ls.lesson_id=l.id JOIN students enrolled ON enrolled.id=ls.student_id WHERE enrolled.profile_id=(SELECT profile_id FROM students WHERE id=?) AND l.status!='cancelled' AND l.id!=? AND l.starts_at<? AND l.ends_at>?",(sid,lesson_id,end,start)).fetchone():
             raise ValueError(student['name']+'在该时段已有课程。')
     if lesson_id:

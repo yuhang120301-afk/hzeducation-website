@@ -25,15 +25,10 @@ def remove(c, user, data):
         student = c.execute('SELECT * FROM students WHERE id=?', (ident,)).fetchone()
         if not student:
             raise ValueError('学生档案不存在，请刷新页面。')
-        accounts = c.execute('SELECT * FROM students WHERE profile_id=?', (student['profile_id'],)).fetchall()
-        for account in accounts:
-            if account['balance'] or referenced(c, 'students', account['id'], ('profile_audit',)):
-                raise ValueError('这位学生有课时余额、课程或账目记录，不能删除。请编辑档案修正信息。')
-        for account in accounts:
-            c.execute('DELETE FROM profile_audit WHERE student_id=?', (account['id'],))
-            c.execute('DELETE FROM students WHERE id=?', (account['id'],))
-        c.execute('DELETE FROM student_profiles WHERE id=?', (student['profile_id'],))
-        # The shared guardian account is intentionally retained for other children.
+        if student['archived']:
+            raise ValueError('学生已经归档，请刷新页面。')
+        c.execute('UPDATE students SET archived=1 WHERE profile_id=?', (student['profile_id'],))
+        c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'],user['id'],'archived'))
     elif kind in ('teacher', 'admin'):
         if kind == 'teacher':
             target = c.execute('SELECT u.* FROM users u JOIN teachers t ON t.user_id=u.id WHERE t.id=?', (ident,)).fetchone()
@@ -55,3 +50,14 @@ def remove(c, user, data):
     else:
         raise ValueError('档案类型无效。')
     return {'ok': True}
+
+
+def restore(c, user, data):
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以恢复学生档案。')
+    student=c.execute('SELECT * FROM students WHERE id=? AND archived=1', (int(data.get('id',0)),)).fetchone()
+    if not student:
+        raise ValueError('已归档学生不存在，请刷新页面。')
+    c.execute('UPDATE students SET archived=0 WHERE profile_id=?', (student['profile_id'],))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'],user['id'],'restored'))
+    return {'ok':True}

@@ -178,11 +178,13 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
+                archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
+                students=[s for s in students if not s['archived']]
                 entry_condition=condition
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
                 entries = [dict(x) for x in c.execute('SELECT l.*,s.name student_name,s.course,u.name actor_name, r.id reversed_by FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN ledger r ON r.reversal_of=l.id'+entry_condition+' ORDER BY l.id DESC',params)]
-                return self.response(200, {'user':{'id':user['id'],'name':user['name'],'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
+                return self.response(200, {'user':{'id':user['id'],'name':user['name'],'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
         if path not in files:
             return self.response(404, {'error':'页面不存在。'})
@@ -228,9 +230,9 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
                     c.commit()
                     return self.response(200,{'ok':True})
-                if self.path == '/api/profiles/delete':
+                if self.path in ('/api/profiles/delete','/api/profiles/restore'):
                     c.execute('BEGIN IMMEDIATE')
-                    result=deletion.remove(c,user,data)
+                    result=deletion.restore(c,user,data) if self.path.endswith('/restore') else deletion.remove(c,user,data)
                     c.commit()
                     return self.response(200,result)
                 if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/accounting/cash'):
@@ -377,6 +379,8 @@ class Handler(BaseHTTPRequestHandler):
         student = c.execute('SELECT * FROM students WHERE id=?',(sid,)).fetchone()
         if not student:
             raise ValueError('学生不存在。')
+        if student['archived'] and kind in ('credit','lesson'):
+            raise ValueError('学生已归档，请先恢复档案。')
         if student['balance']+delta<0:
             raise ValueError('剩余课时不足，无法完成此次操作。')
         lid=c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id,reversal_of) VALUES(?,?,?,?,?,?,?,?)',(sid,delta,kind,day,note,user['id'],request_id,reversal_of)).lastrowid

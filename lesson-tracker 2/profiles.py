@@ -11,6 +11,8 @@ def schema(c):
         pid=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
         c.execute('UPDATE students SET profile_id=? WHERE id=?',(pid,row['id']))
     c.execute('CREATE UNIQUE INDEX IF NOT EXISTS profile_course_unique ON students(profile_id,course)')
+    if 'archived' not in cols:
+        c.execute('ALTER TABLE students ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
     for name in ('birthday','grade','notes'):
         if name not in cols:
             c.execute('ALTER TABLE students ADD COLUMN '+name+" TEXT NOT NULL DEFAULT ''")
@@ -38,7 +40,7 @@ def require_admin(user):
         raise AccessError('只有老板或管理员可以编辑学生档案。')
 
 def student(c,data):
-    row=c.execute('SELECT * FROM students WHERE id=?',(int(data.get('student_id',0)),)).fetchone()
+    row=c.execute('SELECT * FROM students WHERE archived=0 AND id=?',(int(data.get('student_id',0)),)).fetchone()
     if not row: raise ValueError('学生不存在，请刷新页面。')
     return row
 
