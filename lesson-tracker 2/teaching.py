@@ -17,6 +17,11 @@ def now_local():
 
 def schema(c):
     c.executescript('''
+    CREATE TABLE IF NOT EXISTS schedule_options (
+        id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('course','location')),
+        name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+        UNIQUE(kind,name)
+    );
     CREATE TABLE IF NOT EXISTS teachers (
         id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
         subject TEXT NOT NULL DEFAULT '数学'
@@ -51,6 +56,13 @@ def schema(c):
     CREATE INDEX IF NOT EXISTS enrollment_student ON lesson_students(student_id,lesson_id);
     ''')
     c.execute("INSERT OR IGNORE INTO teachers(user_id) SELECT id FROM users WHERE role='admin'")
+    if not c.execute("SELECT 1 FROM app_meta WHERE key='schedule_options_v1'").fetchone():
+        for kind, names in [('course',['数学 · 一对一','物理','化学']),('location',[])]:
+            column='title' if kind=='course' else 'location'
+            names += [r[0] for r in c.execute('SELECT DISTINCT '+column+" FROM lessons WHERE "+column+"!=''")]
+            c.executemany('INSERT OR IGNORE INTO schedule_options(kind,name) VALUES(?,?)',[(kind,n) for n in names])
+        c.execute("INSERT INTO app_meta VALUES('schedule_options_v1','1')")
+
 
 def staff_or_admin(user):
     if user['role'] not in ('owner','admin','teacher'):
@@ -100,7 +112,7 @@ def state_for(c,user):
         tw=' WHERE u.active=1' if role in ('owner','admin') else ' WHERE u.id=? AND u.active=1'
         tp=() if role in ('owner','admin') else (user['id'],)
         teachers=[dict(x) for x in c.execute('SELECT t.id,t.subject,u.name,u.phone,u.id user_id FROM teachers t JOIN users u ON t.user_id=u.id'+tw+' ORDER BY t.id',tp)]
-    return {'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
+    return {'schedule_options':[dict(x) for x in c.execute('SELECT * FROM schedule_options ORDER BY kind,id')] if role in ('owner','admin','teacher') else [],'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
 
 def create_teacher(c,user,data,phone_value,password_hash,text_value):
     if user['role'] not in ('owner','admin'):
@@ -270,3 +282,25 @@ def save_reports(c,user,data,units,action):
     c.execute("UPDATE lessons SET status=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",('completed' if action in ('complete','edit') else 'scheduled',lesson['id']))
     c.execute('INSERT INTO report_edits(lesson_id,actor_id,payload) VALUES(?,?,?)',(lesson['id'],user['id'],json.dumps({'action':action,'reports':raw},ensure_ascii=False)))
     return {'ok':True}
+
+
+def save_option(c,user,data,text_value):
+    if user['role'] not in ('owner','admin'):
+        raise AccessError('只有老板或管理员可以设置课程与地点。')
+    kind=data.get('kind')
+    if kind not in ('course','location'):
+        raise ValueError('选项类型无效。')
+    name=text_value(data.get('name'),'选项名称',80 if kind=='course' else 150)
+    active=data.get('active',True)
+    if type(active) is not bool:
+        raise ValueError('选项状态无效。')
+    option_id=int(data.get('id') or 0)
+    if option_id and not c.execute('SELECT 1 FROM schedule_options WHERE id=? AND kind=?',(option_id,kind)).fetchone():
+        raise ValueError('选项不存在，请刷新页面。')
+    if c.execute('SELECT 1 FROM schedule_options WHERE kind=? AND name=? AND id!=?',(kind,name,option_id)).fetchone():
+        raise ValueError('已有同名选项，请编辑或启用原选项。')
+    if option_id:
+        c.execute('UPDATE schedule_options SET name=?,active=? WHERE id=?',(name,int(active),option_id))
+    else:
+        option_id=c.execute('INSERT INTO schedule_options(kind,name,active) VALUES(?,?,?)',(kind,name,int(active))).lastrowid
+    return {'ok':True,'id':option_id}

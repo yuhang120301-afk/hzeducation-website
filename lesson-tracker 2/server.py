@@ -95,8 +95,8 @@ def initialize():
                 c.execute('INSERT INTO students VALUES(?,?,?,?,?)',(sid,name,course,pid,total-used))
                 c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,?,?,?,1,?)',(sid,total,'credit','2026-09-01','示例：购入课时',secrets.token_hex(16)))
                 c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,?,?,?,1,?)',(sid,-used,'lesson','2026-09-20','示例：历史上课汇总',secrets.token_hex(16)))
-        teaching.schema(c)
         c.execute('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+        teaching.schema(c)
         if DEMO and not c.execute("SELECT 1 FROM app_meta WHERE key='teaching_demo_v1'").fetchone():
             demo_teacher=c.execute("SELECT id FROM users WHERE phone='0400000003'").fetchone()
             if not demo_teacher:
@@ -225,9 +225,11 @@ class Handler(BaseHTTPRequestHandler):
                     else:result=accounting.supplement_cash(c,user,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/teachers','/api/lessons','/api/lessons/cancel','/api/reports/draft','/api/reports/complete','/api/reports/edit'):
+                if self.path in ('/api/schedule-options','/api/teachers','/api/lessons','/api/lessons/cancel','/api/reports/draft','/api/reports/complete','/api/reports/edit'):
                     c.execute('BEGIN IMMEDIATE')
-                    if self.path=='/api/teachers':
+                    if self.path=='/api/schedule-options':
+                        result=teaching.save_option(c,user,data,text_value)
+                    elif self.path=='/api/teachers':
                         result=teaching.create_teacher(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/lessons':
                         result=teaching.save_schedule(c,user,data,units,text_value)

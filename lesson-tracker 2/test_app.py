@@ -51,6 +51,20 @@ class AppTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.proc.terminate();cls.proc.communicate(timeout=5);cls.tmp.cleanup()
+    def test_schedule_options(self):
+        payload={'kind':'location','name':'测试教室','active':True}
+        self.assertEqual(self.parent.request('schedule-options',payload)[0],403)
+        code,created=self.admin.request('schedule-options',payload)
+        self.assertEqual(code,200)
+        self.assertEqual(self.admin.request('schedule-options',payload)[0],400)
+        oid=created['id']
+        self.assertEqual(self.admin.request('schedule-options',{**payload,'id':oid,'name':'新教室','active':False})[0],200)
+        options=self.admin.request('state')[1]['schedule_options']
+        row=next(o for o in options if o['id']==oid)
+        self.assertEqual((row['name'],row['active']),('新教室',0))
+        self.assertEqual(self.parent.request('state')[1]['schedule_options'],[])
+        self.assertEqual(self.admin.request('schedule-options',{**payload,'id':oid,'active':True})[0],200)
+
     def new_student(self):
         status,result=self.admin.request('students',{'name':'测试学生','course':'测试课程','phone':'0400000001'})
         self.assertEqual(status,201)
