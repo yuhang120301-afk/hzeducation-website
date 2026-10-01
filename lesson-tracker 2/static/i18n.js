@@ -1,6 +1,26 @@
 /* Translate interface nodes only. Authored content is marked data-user-content. */
 (() => {
  const messages = {
+"计费方式":"Billing unit",
+"按课时":"By lesson credits",
+"按小时（按实际时长扣费）":"By hours (based on lesson duration)",
+"按小时":"By hours",
+"剩余余额":"Remaining balance",
+"余额明细":"Balance history",
+"编辑单据":"Edit transaction",
+"编辑历史单据":"Edit transaction",
+"修改原因（仅后台）":"Reason for change (staff only)",
+"全班共用内容":"Shared class notes",
+"统一反馈":"Shared feedback",
+"此学生需要单独反馈":"Individual feedback for this student",
+"此学生的内容或作业不同":"Different content or homework for this student",
+"单独反馈":"Individual feedback",
+"单独学习内容":"Individual lesson content",
+"单独作业":"Individual homework",
+"充值小时":"Top up hours",
+"赠送小时":"Bonus hours",
+"本次扣除小时":"Hours deducted",
+
 "我的课程":"My lessons",
 "按学生课时状态筛选":"Filter by student credit status",
 "正常（课时不少于 3 节）":"Normal (at least 3 credits)",

@@ -80,3 +80,5 @@
 
 /* Completed owner lessons use a neutral palette regardless of their selected color. */
 .owner-week-grid .owner-lesson.completed{--event-bg:#edf0f2;--event-ink:#53616b;--event-edge:#9aa7af}.owner-week-grid .owner-lesson.completed .lesson-state{color:#46555f;font-weight:700}
+
+.report-choice{display:flex;gap:10px;align-items:center;margin:14px 0}.report-choice input{width:20px;height:20px;accent-color:#285b46}.stat-value:has(small){overflow-wrap:anywhere}
