@@ -51,6 +51,103 @@ class AppTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.proc.terminate();cls.proc.communicate(timeout=5);cls.tmp.cleanup()
+    def entry_row(self,sid,kind):
+        return next(e for e in self.admin.request('state')[1]['entries'] if e['student_id']==sid and e['kind']==kind)
+
+    def correct_entry(self,e,**changes):
+        return self.admin.request('entries/edit',{'entry_id':e['id'],'version':e['version'],'reason':'Correct test receipt',**changes})
+
+    def test_billing_units_profile_and_mixed_class_defaults(self):
+        sid=self.new_student();other=self.new_student()
+        code,_=self.admin.request('students/profile',{'student_id':sid,'name':'Hourly student','billing_unit':'hour'})
+        self.assertEqual(code,200)
+        self.assertEqual(self.credit_account(sid)['billing_unit'],'hour')
+        self.assertEqual(self.credit_account(other)['billing_unit'],'lesson')
+        self.assertEqual(self.parent.request('students/profile',{'student_id':sid,'name':'No','billing_unit':'lesson'})[0],403)
+        self.assertEqual(self.admin.request('students/profile',{'student_id':sid,'name':'No','billing_unit':'bad'})[0],400)
+        code,r=self.admin.request('students/course',{'student_id':sid,'course':'物理'})
+        self.assertEqual(code,200,r);self.assertEqual(self.credit_account(r['student_id'])['billing_unit'],'hour')
+        self.gift_credit(sid,5,1);self.entry(other,'credit',5)
+        tid,t=self.new_teacher();lid=self.schedule(tid,[sid,other],end='11:30')[1]['lesson_id']
+        data=self.report_data(lid,[sid,other])
+        for report in data['reports']:report.pop('amount')
+        self.assertEqual(t.request('reports/complete',data)[0],200)
+        self.assertEqual(self.balance(sid),450)
+        self.assertEqual(self.balance(other),400)
+        self.assertEqual({r['student_id']:r['amount'] for r in self.lesson(lid)['reports']},{sid:150,other:100})
+        state=self.parent.request('state')[1]
+        self.assertEqual(next(s for s in state['students'] if s['id']==sid)['billing_unit'],'hour')
+        self.assertFalse(any('credit_batches' in s for s in state['students']))
+        summary=self.admin.request('reconciliation?period=month&date='+date.today().isoformat())[1]
+        self.assertIn('hour',summary['totals']['by_unit'])
+
+    def test_owner_correction_rebuild_audit_and_parent_effective_records(self):
+        import sqlite3
+        sid=self.new_student();self.gift_credit(sid,10,2);self.entry(sid,'lesson',3)
+        credit=self.entry_row(sid,'credit')
+        regular=Client();regular.login('0400000004','AdminDemo2026!')
+        tid,tutor=self.new_teacher()
+        payload={'entry_id':credit['id'],'version':credit['version'],'reason':'Correction','amount':12}
+        for client in (regular,tutor,self.parent):self.assertEqual(client.request('entries/edit',payload)[0],403)
+        self.assertEqual(self.admin.request('entries/edit',payload,csrf=False)[0],403)
+        code,r=self.correct_entry(credit,amount=12,gift_amount=3,cash_amount='1200',payment_method='bank',reference='correct receipt')
+        self.assertEqual(code,200,r)
+        a=self.credit_account(sid);self.assertEqual((a['paid_balance'],a['gift_balance'],a['balance']),(900,300,1200))
+        self.assertEqual(self.entry_row(sid,'credit')['cash_delta'],120000)
+        self.assertEqual(self.correct_entry(credit,note='stale')[0],400)
+        lesson=self.entry_row(sid,'lesson');self.assertEqual(self.correct_entry(lesson,amount=4)[0],200)
+        self.assertEqual(self.balance(sid),1100)
+        credit=self.entry_row(sid,'credit');self.assertEqual(self.correct_entry(credit,amount=1,gift_amount=0)[0],400)
+        self.assertEqual(self.balance(sid),1100)
+        self.assertEqual(self.entry_row(sid,'credit')['delta'],1500)
+        with sqlite3.connect(self.tmp.name+'/test.sqlite3') as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM ledger_edits WHERE ledger_id=?',(credit['id'],)).fetchone()[0],1)
+        parent=self.parent.request('state')[1]
+        self.assertFalse('Correct test receipt' in json.dumps(parent))
+        lesson=self.entry_row(sid,'lesson')
+        self.assertEqual(self.admin.request('reverse',{'entry_id':lesson['id'],'note':'mistake','request_id':str(uuid.uuid4())})[0],201)
+        visible=[e for e in self.parent.request('state')[1]['entries'] if e['student_id']==sid]
+        self.assertEqual([e['kind'] for e in visible],['credit'])
+        self.assertEqual(visible[0]['delta'],1500)
+        self.assertTrue(any(e['kind']=='reversal' for e in self.admin.request('state')[1]['entries'] if e['student_id']==sid))
+
+    def test_owner_correction_refund_and_report_sync(self):
+        sid=self.new_student();self.gift_credit(sid,10,2)
+        batch=self.credit_account(sid)['credit_batches'][0]
+        code,r=self.admin.request('refunds',{'student_id':sid,'batch_id':batch['id'],'amount':2,'date':date.today().isoformat(),'note':'refund','cash_amount':20,'payment_method':'bank','request_id':str(uuid.uuid4())})
+        self.assertEqual(code,201,r)
+        refund=self.entry_row(sid,'refund');self.assertEqual(self.correct_entry(refund,amount=3,cash_amount=30,payment_method='bank')[0],200)
+        a=self.credit_account(sid);self.assertEqual((a['paid_balance'],a['gift_balance']),(700,0))
+        tid,t=self.new_teacher();lid=self.schedule(tid,[sid])[1]['lesson_id']
+        self.assertEqual(t.request('reports/complete',self.report_data(lid,[sid],amount=1))[0],200)
+        data=self.report_data(lid,[sid],amount=2)
+        self.assertEqual(t.request('reports/edit',data)[0],400)
+        self.assertEqual(self.admin.request('reports/edit',data)[0],200)
+        self.assertEqual(self.balance(sid),500)
+        self.assertEqual(self.lesson(lid)['reports'][0]['amount'],200)
+        self.assertEqual(self.entry_row(sid,'lesson')['delta'],-200)
+        self.assertEqual(self.correct_entry(self.entry_row(sid,'lesson'),amount=1.5)[0],200)
+        self.assertEqual(self.lesson(lid)['reports'][0]['amount'],150)
+        self.assertEqual(self.balance(sid),550)
+        # Owner can correct completed course metadata, with its charge preserved.
+        l=self.lesson(lid)
+        self.assertEqual(self.schedule(tid,[sid],day='2026-01-06',lesson_id=lid,version=l['version'])[0],200)
+        self.assertEqual(self.lesson(lid)['status'],'completed')
+        self.assertEqual(self.balance(sid),550)
+
+    def test_owner_legacy_credit_edit_and_group_report_atomicity(self):
+        # Existing pre-batch data can be corrected without losing opening balances.
+        old=next(e for e in self.admin.request('state')[1]['entries'] if e['student_id']==4 and e['kind']=='credit')
+        initial=self.balance(4)
+        code,r=self.correct_entry(old,amount=21)
+        self.assertEqual(code,200,r);self.assertEqual(self.balance(4),initial+100)
+        sid=self.new_student();other=self.new_student();self.entry(sid,'credit',5);self.entry(other,'credit',1)
+        tid,t=self.new_teacher();lid=self.schedule(tid,[sid,other])[1]['lesson_id']
+        data=self.report_data(lid,[sid,other],amount=1)
+        self.assertEqual(t.request('reports/complete',data)[0],200)
+        code,_=self.admin.request('reports/edit',self.report_data(lid,[sid,other],amount=2))
+        self.assertEqual(code,400);self.assertEqual(self.balance(sid),400);self.assertEqual(self.balance(other),0)
+        self.assertTrue(all(r['amount']==100 for r in self.lesson(lid)['reports']))
+
     def test_owner_only_profile_deletion(self):
         regular=Client();regular.login('0400000004','AdminDemo2026!')
         sid=self.new_student();tid,tutor=self.new_teacher()
@@ -533,7 +630,8 @@ class AppTests(unittest.TestCase):
         report=self.lesson(lid)['reports'][0]
         self.assertEqual(self.admin.request('reverse',{'entry_id':report['ledger_id'],'note':'课时扣除有误','request_id':str(uuid.uuid4())})[0],201)
         self.assertEqual(self.balance(sid),200)
-        self.assertIsNotNone(self.lesson(lid,self.parent)['reports'][0]['reversed_by'])
+        self.assertFalse(any(l['id']==lid for l in self.parent.request('state')[1]['lessons']))
+        self.assertIsNotNone(self.lesson(lid)['reports'][0]['reversed_by'])
         self.assertEqual(t.request('reports/complete',data)[0],200)
         self.assertEqual(self.balance(sid),200)
 

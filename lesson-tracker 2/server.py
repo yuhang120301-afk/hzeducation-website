@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import teaching
 import profiles
+import record_edits
 import credit_batches
 import accounting
 import deletion
@@ -51,7 +52,7 @@ def units(raw):
             raise ValueError()
         return int(n * 100)
     except (InvalidOperation, ValueError):
-        raise ValueError('课时必须大于 0，最多保留两位小数，且不超过 10000。')
+        raise ValueError('数量必须大于 0，最多保留两位小数，且不超过 10000。')
 
 def text_value(raw, label, maximum=100):
     value = str(raw or '').strip()
@@ -116,6 +117,7 @@ def initialize():
         accounting.schema(c,DEMO)
         profiles.schema(c)
         credit_batches.schema(c)
+        record_edits.schema(c)
         if DEMO and not c.execute("SELECT 1 FROM app_meta WHERE key='owner_demo_v1'").fetchone():
             if not c.execute("SELECT 1 FROM users WHERE phone='0400000004'").fetchone():
                 uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'admin')",('0400000004','Amy 管理员',password_hash('AdminDemo2026!'))).lastrowid
@@ -160,6 +162,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,accounting.reconciliation(c,user,params.get('period',['day'])[0],params.get('date',[teaching.now_local().date().isoformat()])[0]))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/entries/history':
+            with connect() as c:
+                user=self.current(c)
+                if not user or user['role']!='owner':return self.response(403,{'error':'仅老板可查看修改记录。'})
+                try:ident=int(parse_qs(urlsplit(self.path).query).get('id',['0'])[0])
+                except ValueError:return self.response(400,{'error':'单据编号无效。'})
+                rows=[dict(r) for r in c.execute('SELECT e.*,u.name actor_name FROM ledger_edits e JOIN users u ON u.id=e.actor_id WHERE e.ledger_id=? ORDER BY e.id DESC',(ident,))]
+                return self.response(200,{'edits':rows})
         if path == '/health':
             with connect() as c:
                 c.execute('SELECT 1 FROM users LIMIT 1').fetchone()
@@ -190,7 +200,12 @@ class Handler(BaseHTTPRequestHandler):
                 entry_condition=condition
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
-                entries = [dict(x) for x in c.execute('SELECT l.*,s.name student_name,s.course,u.name actor_name, r.id reversed_by FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN ledger r ON r.reversal_of=l.id'+entry_condition+' ORDER BY l.id DESC',params)]
+                entries = [dict(x) for x in c.execute('SELECT l.*,s.name student_name,s.course,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,r.id reversed_by FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id'+entry_condition+' ORDER BY l.id DESC',params)]
+                if user['role']=='parent':
+                    entries=[e for e in entries if e['kind']!='reversal' and not e['reversed_by']]
+                    for e in entries:
+                        for key in ('request_id','reversal_of','version'):e.pop(key,None)
+                    for s in students:s.pop('credit_batches',None)
                 return self.response(200, {'user':{'id':user['id'],'name':user['name'],'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
         if path not in files:
@@ -281,6 +296,11 @@ class Handler(BaseHTTPRequestHandler):
                     else: result=profiles.guardian(c,user,data,text_value,phone_value,password_hash)
                     c.commit()
                     return self.response(200,result)
+                if self.path == '/api/entries/edit':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=record_edits.edit(c,user,data,units,text_value)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path == '/api/students':
                     return self.add_student(c,user,data)
                 if self.path in ('/api/entries','/api/reverse','/api/refunds'):
@@ -327,6 +347,7 @@ class Handler(BaseHTTPRequestHandler):
         name = text_value(data.get('name'),'学生姓名',40)
         course = text_value(data.get('course'),'课程名称',80)
         birthday,grade,notes=profiles.fields(data)
+        billing_unit=profiles.billing_unit(data.get('billing_unit','lesson'))
         phone = phone_value(data.get('phone'))
         c.execute('BEGIN IMMEDIATE')
         parent = c.execute('SELECT * FROM users WHERE phone=?',(phone,)).fetchone()
@@ -341,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
             pid = c.execute('INSERT INTO users(phone,name,password,role) VALUES(?,?,?,?)',(phone,text_value(data.get('parent_name') or name+'家长','家长姓名',40),password_hash(password),'parent')).lastrowid
         profile_id=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
         sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
-        c.execute('UPDATE students SET birthday=?,grade=?,notes=? WHERE id=?',(birthday,grade,notes,sid))
+        c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=? WHERE id=?',(birthday,grade,notes,billing_unit,sid))
         c.commit()
         return self.response(201,{'ok':True,'student_id':sid})
 
@@ -393,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
         if student['archived'] and kind in ('credit','lesson'):
             raise ValueError('学生已归档，请先恢复档案。')
         if student['balance']+delta<0:
-            raise ValueError('剩余课时不足，无法完成此次操作。')
+            raise ValueError('剩余余额不足，无法完成此次操作。')
         lid=c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id,reversal_of) VALUES(?,?,?,?,?,?,?,?)',(sid,delta,kind,day,note,user['id'],request_id,reversal_of)).lastrowid
         breakdown=credit_batches.apply(c,lid,kind,data,units,original if reversal_of else None)
         if cash:accounting.record_cash(c,lid,*cash,user['id'])

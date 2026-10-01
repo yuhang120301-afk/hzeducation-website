@@ -13,6 +13,8 @@ def schema(c):
     c.execute('CREATE UNIQUE INDEX IF NOT EXISTS profile_course_unique ON students(profile_id,course)')
     if 'archived' not in cols:
         c.execute('ALTER TABLE students ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
+    if 'billing_unit' not in cols:
+        c.execute("ALTER TABLE students ADD COLUMN billing_unit TEXT NOT NULL DEFAULT 'lesson' CHECK(billing_unit IN ('lesson','hour'))")
     for name in ('birthday','grade','notes'):
         if name not in cols:
             c.execute('ALTER TABLE students ADD COLUMN '+name+" TEXT NOT NULL DEFAULT ''")
@@ -49,6 +51,8 @@ def update(c,user,data,text_value):
     s=student(c,data)
     name=text_value(data.get('name'),'学生姓名',40)
     birthday,grade,notes=fields(data)
+    unit=billing_unit(data.get('billing_unit',s['billing_unit']))
+    c.execute('UPDATE students SET billing_unit=? WHERE profile_id=?',(unit,s['profile_id']))
     c.execute('UPDATE students SET name=?,birthday=?,grade=?,notes=? WHERE profile_id=?',(name,birthday,grade,notes,s['profile_id']))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'profile_updated'))
     return {'ok':True}
@@ -86,5 +90,10 @@ def add_course(c,user,data,text_value):
     if c.execute('SELECT 1 FROM students WHERE profile_id=? AND course=?',(s['profile_id'],course)).fetchone():
         raise ValueError('这位学生已有关联课程，无需重复添加。')
     sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
+    c.execute('UPDATE students SET billing_unit=? WHERE id=?',(s['billing_unit'],sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
     return {'ok':True,'student_id':sid}
+
+def billing_unit(value):
+    if value not in ('lesson','hour'):raise ValueError('请选择按课时或按小时计费。')
+    return value

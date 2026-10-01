@@ -90,7 +90,7 @@ def add_row(t,row):
 def reconciliation(c,user,period,day):
     require_owner(user)
     start,end=bounds(period,day)
-    rows=[dict(r) for r in c.execute('''SELECT l.*,s.name student_name,s.course,u.name actor_name,
+    rows=[dict(r) for r in c.execute('''SELECT l.*,s.name student_name,s.course,s.billing_unit,u.name actor_name,
         original.kind original_kind, original.lesson_date original_date,original.id original_id,
         reversal.id reversed_by,cash.cash_delta,cash.payment_method,cash.reference FROM ledger l JOIN students s ON l.student_id=s.id
         JOIN users u ON l.actor_id=u.id LEFT JOIN ledger original ON l.reversal_of=original.id
@@ -104,10 +104,19 @@ def reconciliation(c,user,period,day):
         day_value+=dt.timedelta(days=1)
     for row in rows:
         add_row(totals,row);add_row(daily[row['lesson_date']],row)
+    by_unit={u:blank_totals() for u in ('lesson','hour')}
+    for d in daily.values():d['by_unit']={u:blank_totals() for u in ('lesson','hour')}
+    for row in rows:
+        unit=row['billing_unit'];add_row(by_unit[unit],row);add_row(daily[row['lesson_date']]['by_unit'][unit],row)
+    totals['by_unit']=by_unit
+    unit_balances=[]
+    for unit in ('lesson','hour'):
+        opening_unit=c.execute('SELECT COALESCE(SUM(l.delta),0) FROM ledger l JOIN students s ON s.id=l.student_id WHERE l.lesson_date<? AND s.billing_unit=?',(start.isoformat(),unit)).fetchone()[0]
+        unit_balances.append({'unit':unit,'opening':opening_unit,'closing':opening_unit+by_unit[unit]['net_units'],'totals':by_unit[unit]})
     opening=c.execute('SELECT COALESCE(SUM(delta),0) FROM ledger WHERE lesson_date<?',(start.isoformat(),)).fetchone()[0]
     mismatches=c.execute('SELECT COUNT(*) FROM students s WHERE s.balance!=COALESCE((SELECT SUM(l.delta) FROM ledger l WHERE l.student_id=s.id),0)').fetchone()[0]
     return {'period':period,'start':start.isoformat(),'end':end.isoformat(),'timezone':TIMEZONE,
-        'opening_units':opening,'closing_units':opening+totals['net_units'],
+        'unit_balances':unit_balances,'opening_units':opening,'closing_units':opening+totals['net_units'],
         'totals':totals,'daily':list(daily.values()),'rows':rows,'balance_check':mismatches==0,
         'generated_at':now_local().isoformat(timespec='seconds')}
 
