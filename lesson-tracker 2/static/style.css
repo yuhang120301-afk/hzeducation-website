@@ -133,6 +133,15 @@
 .pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer}
 .pay-card h2{margin:0;font-size:22px}
 .package-presets .btn{margin:0 8px 8px 0}
+.year-level select{font-size:18px}
+.profile-group{margin:10px 0;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:#fff}
+.profile-group summary{cursor:pointer;font-weight:700}
+.health-badge{display:inline-block;margin-left:8px;background:#F8E8E4;color:#8C3A2F;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
+.pack-cards{display:grid;gap:8px}
+.pack-card{display:block;width:100%;text-align:left;border:1px solid #D9E3DF;border-radius:10px;padding:10px 12px;background:#fff}
+.pack-card.selected{border-color:#214e3e;background:#E4F0E9}
+.pack-card small{display:block;color:#5b6b66;margin-top:4px}
+.pack-now{margin:6px 0 0;font-size:13px;color:#204F40}
 .pay-fold h3{margin:14px 0 8px;font-size:16px;color:#204F40}
 .pack-list{margin:4px 0 12px;padding-left:18px;color:#5b6b66}
 .pay-fold .num small{display:block;font-weight:500;color:#5b6b66;font-size:12px}

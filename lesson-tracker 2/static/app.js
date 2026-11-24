@@ -71,7 +71,7 @@ function studentFold(group, admin){
  const methods=typeof paymentNames==='object'?paymentNames:{};
  const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑档案</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加科目</button>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">删除并归档</button>`:''}</div>`:'';
  const enrolments=group.map(account=>{
-  const packs=(account.credit_batches||[]).map(batch=>`<li>${batch.legacy?'原有课时':escapeHTML(batch.credited_on||'课时包')} · 购买 ${fmt(batch.purchased||0)} · 赠送 ${fmt(batch.gifted||0)} · 还剩 ${fmt((batch.paid_left||0)+(batch.gift_left||0))}</li>`).join('')||'<li>还没有课时包。</li>';
+  const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money)).join('')||'<li>还没有课时包。</li>';
   return `<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}</small></div><div class="num">${accountStatus(account)}</div></article><ul class="pack-list">${packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button></p>`:''}`;
  }).join('');
  const history=lessons.slice(0,12).map(lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}"><div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div></article>`).join('')||'<p class="muted">还没有课。</p>';
@@ -87,7 +87,9 @@ function renderStudents(){
   const tone=studentToneName(teacher);
   const subjects=group.map(account=>[account.grade||person.grade, account.subject_name||account.course, account.course_type_name].filter(Boolean).join(' · ')).join('，');
   const balance=group.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · ');
-  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(person.name.slice(-1))}</div><div style="flex:1"><h2>${userHTML(person.name)}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p></div><div><div class="muted">剩余课时</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${group.some(account=>account.balance<=0)?'欠费':group.some(needsRenewal)?'该续费':'正常'}</strong></div></article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
+  const health=String(person.health_notes||'').trim();
+  const pack=group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
+  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(person.name.slice(-1))}</div><div style="flex:1"><h2>${userHTML(person.name)}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div><div><div class="muted">剩余课时</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${group.some(account=>account.balance<=0)?'欠费':group.some(needsRenewal)?'该续费':'正常'}</strong></div>${admin?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:''}</article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
  }).join(''):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
  if(state.user.role==='owner'){
   const archived=Object.values((state.archived_students||[]).reduce((groups,s)=>{(groups[s.profile_id]??=[]).push(s);return groups;},{}));
@@ -106,9 +108,9 @@ function renderStudents(){
 }
 function addCourseModal(id){
  const s=state.students.find(s=>s.id==id),existing=state.students.filter(x=>x.profile_id===s.profile_id).map(x=>x.course);
- const choices=state.schedule_options.filter(o=>o.kind==='course'&&o.active&&!existing.includes(o.name));
- if(!choices.length){toast('没有可添加的科目，请先在课程与地点设置中添加课程。');return;}
- modal('添加学生科目',`<div class="form-context">${userHTML(s.name)} · 新科目从 0 ${unitFor(s)}开始，充值与扣课独立计算。</div><label class="field">课程名称<select name="course" required><option value="">请选择课程</option>${choices.map(o=>`<option data-user-content value="${escapeHTML(o.name)}">${escapeHTML(o.name)}</option>`).join('')}</select></label>`,'添加科目',async data=>{await api('students/course',{...data,student_id:s.id});toast('新科目已添加，可单独充值课时。');});
+ const choices=(state.subjects||[]).filter(o=>o.active&&!existing.includes(o.name));
+ if(!choices.length){toast('没有可添加的科目。停用的科目可以在设置里重新打开。');return;}
+ modal('添加学生科目',`<div class="form-context">${userHTML(s.name)} · 目前只使用数学和英语。新科目从 0 ${unitFor(s)}开始。</div><label class="field">科目<select name="subject_id" required><option value="">请选择科目</option>${choices.map(o=>`<option value="${o.id}">${escapeHTML(o.name)}</option>`).join('')}</select></label><label class="field">课型${catalogSelect(state.course_types,'course_type_id','','请选择课型')}</label>`,'添加科目',async data=>{await api('students/course',{...data,student_id:s.id});toast('新科目已添加，可单独充值课时。');});
 }
 function renderRecords(){
  let rows=state.entries.filter(e=>!selected||String(e.student_id)===selected);if(view==='overview')rows=rows.slice(0,5);
@@ -128,7 +130,7 @@ $('#modal').addEventListener('close',()=>lastFocus?.isConnected&&lastFocus.focus
 function entryModal(kind,id){
  if(!state.students.length){toast('请先添加学生。');return studentModal();}
  const isLesson=kind==='lesson', request_id=crypto.randomUUID();
- modal(isLesson?'登记上课':'充值课时',`<label class="field">学生<select name="student_id" id="entry-student">${state.students.map(s=>`<option data-user-content value="${s.id}" ${id==s.id?'selected':''}>${escapeHTML(s.name)} · ${escapeHTML(s.subject_name||s.course)} · ${escapeHTML(s.level_now||s.grade||'')}</option>`).join('')}</select></label><div class="form-context" id="balance-context"></div>${isLesson?'':`<div id="package-presets" class="package-presets"></div>`}<div class="two-cols"><label class="field"><span id="entry-unit-label"></span><input name="amount" id="amount" type="number" min="${isLesson?'0.01':'0'}" max="10000" step="0.01" value="${isLesson?'1':'10'}" required></label><label class="field">${isLesson?'上课日期':'充值日期'}<input name="date" type="date" value="${today()}" max="${today()}" required></label></div>${isLesson?`<div class="quick">${[0.5,1,1.5,2].map(n=>`<button type="button" data-amount="${n}">${n} 课时</button>`).join('')}</div>`:`<label class="field"><span id="entry-gift-label"></span><input name="gift_amount" id="gift-amount" type="number" min="0" max="10000" step="0.01" value="0" required></label><div class="form-context" id="entry-unit-help"></div>${paymentFields()}`}<label class="field">备注（选填）<textarea name="note" id="entry-note" maxlength="300" placeholder="${isLesson?'例如：补录历史课时':'自定义金额留给旧价学生'}"></textarea></label>`,isLesson?'确认扣除':'确认充值',async data=>{await api('entries',{...data,kind,request_id});toast(isLesson?'上课已登记，课时已扣除。':'课时已充值。');});
+ modal(isLesson?'登记上课':'充值课时',`<label class="field">学生<select name="student_id" id="entry-student">${state.students.map(s=>`<option data-user-content value="${s.id}" ${id==s.id?'selected':''}>${escapeHTML(s.name)} · ${escapeHTML(s.subject_name||s.course)} · ${escapeHTML(s.level_now||s.grade||'')}</option>`).join('')}</select></label><div class="form-context" id="balance-context"></div>${isLesson?'':`<div id="package-presets" class="package-presets"></div><input type="hidden" name="product"><input type="hidden" name="lesson_minutes"><input type="hidden" name="terms">`}<div class="two-cols"><label class="field"><span id="entry-unit-label"></span><input name="amount" id="amount" type="number" min="${isLesson?'0.01':'0'}" max="10000" step="0.01" value="${isLesson?'1':'10'}" required></label><label class="field">${isLesson?'上课日期':'充值日期'}<input name="date" type="date" value="${today()}" max="${today()}" required></label></div>${isLesson?`<div class="quick">${[0.5,1,1.5,2].map(n=>`<button type="button" data-amount="${n}">${n} 课时</button>`).join('')}</div>`:`<label class="field"><span id="entry-gift-label"></span><input name="gift_amount" id="gift-amount" type="number" min="0" max="10000" step="0.01" value="0" required></label><div class="form-context" id="entry-unit-help"></div>${paymentFields()}`}<label class="field">备注（选填）<textarea name="note" id="entry-note" maxlength="300" placeholder="${isLesson?'例如：补录历史课时':'自定义金额留给旧价学生'}"></textarea></label>`,isLesson?'确认扣除':'确认充值',async data=>{await api('entries',{...data,kind,request_id});toast(isLesson?'上课已登记，课时已扣除。':'课时已充值。');});
  const update=()=>{const s=state.students.find(s=>s.id==$('#entry-student').value),amount=Math.round(Number($('#amount').value||0)*100),gift=Math.round(Number($('#gift-amount')?.value||0)*100),paid=regularHours(s),gifts=s.gift_balance||0;const afterPaid=isLesson?Math.max(0,paid-amount):paid+amount,afterGift=isLesson?gifts-Math.max(0,amount-paid):gifts+gift;$('#modal-title').textContent=isLesson?'登记上课':'充值'+unitFor(s);$('#entry-unit-label').textContent=(isLesson?'扣除':'充值')+unitFor(s);if($('#entry-gift-label'))$('#entry-gift-label').textContent='赠送'+unitFor(s);if($('#entry-unit-help'))$('#entry-unit-help').textContent=unitFor(s)+'用完后再使用赠送'+unitFor(s)+'，不足 3 '+unitFor(s)+'时提醒续费。';document.querySelectorAll('[data-amount]').forEach(b=>b.textContent=b.dataset.amount+' '+unitFor(s));$('#balance-context').innerHTML=`当前：${unitFor(s)} <strong>${fmt(paid)}</strong> · 赠送${unitFor(s)} <strong>${fmt(gifts)}</strong><br>${isLesson?'扣除':'充值'}后：${unitFor(s)} <strong>${fmt(afterPaid)}</strong> · 赠送${unitFor(s)} <strong>${fmt(afterGift)}</strong>`;};
  async function loadPresets(){
  const host=$('#package-presets');
@@ -138,28 +140,72 @@ function entryModal(kind,id){
  try{
   const offer=await api('prices/presets?student_id='+encodeURIComponent(studentId));
   if(!offer.packages?.length){host.innerHTML=`<p>${escapeHTML(offer.reason||'可以自己填节数。')}</p><button type="button" class="btn" id="custom-pack">自定义金额</button>`; $('#custom-pack').onclick=()=>{$('#amount').focus();}; return;}
-  host.innerHTML=`<p><b>${escapeHTML(offer.level)} · ${escapeHTML(offer.course_type)}</b> · $${((offer.hourly_cents||0)/100).toFixed(2)} / 小时${offer.source==='custom'?' · 旧价':''}</p>${offer.packages.map((item,index)=>`<button type="button" class="btn" data-pack="${index}">${escapeHTML(item.label)} ${moneyAud(item.total_cents)}${item.gift_lessons?` + 赠 ${item.gift_lessons}`:''}</button>`).join(' ')} <button type="button" class="btn" id="custom-pack">自定义金额</button><p class="footnote">赠课没有单独的钱，不能退。付费的 20 节用完后才能用赠课。${escapeHTML(offer.validity||offer.packages[0].validity||'')}</p>`;
+  host.innerHTML=`<p><b>${escapeHTML(offer.level)} · ${escapeHTML(offer.course_type)}</b>${offer.source==='custom'?' · 老学员锁定价':''}</p><div class="pack-cards">${offer.packages.map((item,index)=>`<button type="button" class="pack-card" data-pack="${index}"><strong>${escapeHTML(item.label)}</strong><small>${escapeHTML(item.validity||'')}${item.gift_lessons?` · 赠 ${item.gift_lessons} 节，付费课用完后才能用`:''}</small></button>`).join('')}</div><p class="footnote" id="pack-chosen">点一个课时包，再确认充值。</p>`;
   host.querySelectorAll('[data-pack]').forEach(button=>button.onclick=()=>{
    const item=offer.packages[Number(button.dataset.pack)];
+   host.querySelectorAll('.pack-card').forEach(card=>card.classList.remove('selected'));
+   button.classList.add('selected');
    $('#amount').value=item.paid_lessons;
    if($('#gift-amount')) $('#gift-amount').value=item.gift_lessons;
    const cash=document.querySelector('[name=cash_amount]');
    if(cash) cash.value=(item.total_cents/100).toFixed(2);
    const note=$('#entry-note');
-   if(note && !note.value) note.value=`${offer.level} · ${offer.course_type} · ${item.label}`;
+   if(note) note.value=`${offer.level} · ${offer.course_type} · ${item.label}`;
+   const product=document.querySelector('[name=product]');
+   if(product) product.value=item.product;
+   const minutes=document.querySelector('[name=lesson_minutes]');
+   if(minutes) minutes.value=item.lesson_minutes;
+   const terms=document.querySelector('[name=terms]');
+   if(terms) terms.value=(item.terms||[]).join(',');
+   const chosen=$('#pack-chosen');
+   if(chosen) chosen.textContent=`增加 ${item.paid_lessons} 节付费${item.gift_lessons?` + ${item.gift_lessons} 节赠送`:''}，学费 ${moneyAud(item.total_cents)}。确认充值即可。`;
    update();
   });
-  $('#custom-pack').onclick=()=>{$('#amount').value=''; if($('#gift-amount')) $('#gift-amount').value='0'; const cash=document.querySelector('[name=cash_amount]'); if(cash) cash.value=''; $('#amount').focus();};
  }catch(error){host.textContent=error.message;}
 }
 $('#entry-student').onchange=()=>{update(); loadPresets();};$('#amount').oninput=update;if($('#gift-amount'))$('#gift-amount').oninput=update;document.querySelectorAll('[data-amount]').forEach(b=>b.onclick=()=>{$('#amount').value=b.dataset.amount;update();});update(); loadPresets();
 }
-function studentModal(){modal('添加学生',`<label class="field">学生姓名<input name="name" required maxlength="40" placeholder="例如：陈一诺"></label>${profileFields()}${billingField()}<label class="field">科目${catalogSelect(state.subjects,'subject_id','','请选择科目')}</label><label class="field">课程类型${catalogSelect(state.course_types,'course_type_id','','请选择课程类型')}</label><div class="form-context" id="offer-preview">选择年级和课程类型后，系统会锁定对应的时薪和课时包。</div><label class="field">家长姓名<input name="parent_name" maxlength="40" placeholder="选填"></label><label class="field">家长手机号<input name="phone" type="tel" required maxlength="24" placeholder="例如 +61 412 345 678"><small>同一手机号可关联多个孩子。已有账号会直接关联。</small></label><label class="field">家长初始密码<input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="新账号需至少 10 位"><small>已有家长账号可留空，其原密码保持不变。请单独告知家长登录信息。</small></label>`,'创建学生',async data=>{await api('students',data);toast('学生已添加。年级和课型对应的课时包已锁定，充值时会自动带出。');}); const refreshOffer=()=>{const level=$('#year-level')?.value, type=document.querySelector('[name=course_type_id]')?.value; if(level&&type) showOffer('level='+encodeURIComponent(level)+'&course_type_id='+encodeURIComponent(type), $('#offer-preview'));}; $('#year-level').onchange=refreshOffer; document.querySelector('[name=course_type_id]').onchange=refreshOffer;}
+function studentModal(){modal('添加学生',`<label class="field">学生姓名<input name="name" required maxlength="40" placeholder="例如：陈一诺"></label>${profileFields()}${billingField()}<div class="profile-group"><label class="field">科目${catalogSelect(state.subjects,'subject_id','','请选择科目')}</label><label class="field">课型${catalogSelect(state.course_types,'course_type_id','','请选择课型')}</label><div class="form-context" id="offer-preview">选择年级和课型后，这里显示这个年级的课时包。科目不改变价格。</div><label class="field">家长初始密码（新手机号才需要）<input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="至少 10 位"><small>不填手机号也可以先建档，以后再补家长账号。</small></label></div>`,'创建学生',async data=>{await api('students',data);toast('学生已添加。');}); bindProfileFields(); const refreshOffer=()=>{const level=$('#year-level')?.value, type=document.querySelector('[name=course_type_id]')?.value; if(level&&type) showOffer('level='+encodeURIComponent(level)+'&course_type_id='+encodeURIComponent(type), $('#offer-preview'));}; $('#year-level').onchange=refreshOffer; document.querySelector('[name=course_type_id]').onchange=refreshOffer;}
 function reverseModal(id){const e=state.entries.find(e=>e.id==id),request_id=crypto.randomUUID();modal('撤销这笔记录？',`<div class="form-context">${userHTML(e.student_name)} · ${escapeHTML(e.lesson_date)}<br>原记录：${e.kind==='refund'?'退课退款':e.delta>0?'充值':'扣除'} ${fmt(Math.abs(e.delta))} ${unitFor(e)}。<br>撤销后会${e.delta>0?'扣回':'返还'}相应课时，原记录仍会保留。涉及金额时会产生记账纠错，不代表实际收款或退款。${creditBreakdown(e)}</div><label class="field">撤销原因<textarea name="note" required maxlength="250" placeholder="例如：重复登记，返还课时"></textarea></label>`,'确认撤销',async data=>{await api('reverse',{...data,entry_id:id,request_id});toast('已撤销，课时余额已更新。');},true);}
 function passwordModal(){modal('修改密码',`<label class="field">当前密码<input name="old" type="password" autocomplete="current-password" required maxlength="128"></label><label class="field">新密码<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required><small>至少 10 位，修改成功后需重新登录。</small></label>`,'保存新密码',async data=>{await api('password',data);toast('密码已修改，请重新登录。');});}
 
 function yearLevels(){return ['Prep','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12'];}
-function profileFields(s={}){const current=s.level_now||s.level_code||s.grade||''; const extra=current&&!yearLevels().includes(current)?`<option value="${escapeHTML(current)}" selected>${escapeHTML(current)}</option>`:''; return `<div class="two-cols"><label class="field">生日<input type="date" name="birthday" max="${state.today}" value="${escapeHTML(s.birthday||'')}"></label><label class="field">年级<select name="grade" id="year-level" required><option value="">请选择年级</option>${extra}${yearLevels().map(level=>`<option value="${level}" ${current===level?'selected':''}>${level}</option>`).join('')}</select></label></div><label class="field">内部备注<textarea name="notes" maxlength="2000" placeholder="仅老板和管理员可查看">${escapeHTML(s.notes||'')}</textarea></label>`;}
+function ageText(birthday){
+ if(!birthday||!state.today) return '';
+ const born=new Date(birthday+'T12:00:00Z'), now=new Date(state.today+'T12:00:00Z');
+ let years=now.getUTCFullYear()-born.getUTCFullYear();
+ const month=now.getUTCMonth()-born.getUTCMonth();
+ if(month<0||(month===0&&now.getUTCDate()<born.getUTCDate())) years--;
+ return years>=0?`（${years} 岁）`:'';
+}
+function profileFields(s={}){
+ const current=s.level_now||s.level_code||s.grade||'';
+ const extra=current&&!yearLevels().includes(current)?`<option value="${escapeHTML(current)}" selected>${escapeHTML(current)}</option>`:'';
+ const phone=String(s.phone||'').startsWith('pending-')?'':(s.phone||'');
+ const checked=name=>s[name]?'checked':'';
+ return `<label class="field year-level">2027 年级<select name="grade" id="year-level" required><option value="">请选择年级</option>${extra}${yearLevels().map(level=>`<option value="${level}" ${current===level?'selected':''}>${level}</option>`).join('')}</select><small>价格只看年级和课型，科目不改变价格。</small></label>
+<details class="profile-group" open><summary>学生</summary><label class="field">出生日期<input type="date" name="birthday" max="${state.today}" value="${escapeHTML(s.birthday||'')}" data-birthday><small id="age-note">${ageText(s.birthday)}</small></label><label class="field">学校<input name="school" maxlength="80" value="${escapeHTML(s.school||'')}"></label></details>
+<details class="profile-group"><summary>家长</summary><label class="field">家长姓名<input name="parent_name" maxlength="40" value="${escapeHTML(s.parent_name||'')}"></label><label class="field">电话<input name="phone" type="tel" maxlength="24" value="${escapeHTML(phone)}"></label><label class="field">邮箱<input name="parent_email" type="email" maxlength="80" value="${escapeHTML(s.parent_email||'')}"></label></details>
+<details class="profile-group"><summary>紧急联系人（不是家长）</summary><label class="field">姓名<input name="emergency_name" maxlength="40" value="${escapeHTML(s.emergency_name||'')}"></label><label class="field">关系<input name="emergency_relation" maxlength="40" value="${escapeHTML(s.emergency_relation||'')}"></label><label class="field">电话<input name="emergency_phone" type="tel" maxlength="24" value="${escapeHTML(s.emergency_phone||'')}"></label></details>
+<details class="profile-group"><summary>健康</summary><label class="field">过敏、疾病、需要老师注意的事项<textarea name="health_notes" maxlength="2000">${escapeHTML(s.health_notes||'')}</textarea></label></details>
+<details class="profile-group"><summary>报读</summary><p class="footnote">课型只用一对一、一对二、小班课。科目目前只用数学和英语。</p></details>
+<details class="profile-group"><summary>拍照 / 视频同意</summary><label class="report-choice"><input type="checkbox" name="photo_homework" ${checked('photo_homework')}>① 作业试卷（隐去姓名）用于宣传</label><label class="report-choice"><input type="checkbox" name="photo_class" ${checked('photo_class')}>② 上课照片 / 视频（不露脸）</label><label class="report-choice"><input type="checkbox" name="photo_face" ${checked('photo_face')}>③ 露脸照片 / 视频</label><label class="report-choice"><input type="checkbox" name="photo_none" ${checked('photo_none')}>④ 均不同意</label><div class="two-cols"><label class="field">同意日期<input type="date" name="consent_on" value="${escapeHTML(s.consent_on||'')}"></label><label class="field">撤回日期<input type="date" name="consent_withdrawn_on" value="${escapeHTML(s.consent_withdrawn_on||'')}"></label></div></details>
+<details class="profile-group"><summary>确认</summary><label class="report-choice"><input type="checkbox" name="handbook_read" ${checked('handbook_read')}>已阅读家长须知</label><label class="field">签字日期<input type="date" name="signed_on" value="${escapeHTML(s.signed_on||'')}"></label></details>
+<details class="profile-group"><summary>更多报名资料</summary><p class="footnote">其他报名项以后加在这里。</p><label class="field">内部备注<textarea name="notes" maxlength="2000">${escapeHTML(s.notes||'')}</textarea></label></details>`;
+}
+function bindProfileFields(){
+ const box=document.querySelector('[data-birthday]');
+ if(box) box.oninput=()=>{const note=document.querySelector('#age-note'); if(note) note.textContent=ageText(box.value);};
+ const none=document.querySelector('[name=photo_none]');
+ if(!none) return;
+ none.onchange=()=>{if(none.checked) document.querySelectorAll('[name=photo_homework],[name=photo_class],[name=photo_face]').forEach(box=>{box.checked=false;});};
+ document.querySelectorAll('[name=photo_homework],[name=photo_class],[name=photo_face]').forEach(box=>box.onchange=()=>{if(box.checked) none.checked=false;});
+}
+function packLine(batch, money){
+ const used=((batch.purchased||0)+(batch.gifted||0))-((batch.paid_left||0)+(batch.gift_left||0));
+ const price=batch.total_cents!=null?` · 总额 ${money(batch.total_cents)}`:'';
+ return `<li>${batch.pack_label?escapeHTML(batch.pack_label):(batch.legacy?'原有课时':escapeHTML(batch.credited_on||'课时包'))}${price} · 购买 ${fmt(batch.purchased||0)} · 赠送 ${fmt(batch.gifted||0)} · 已用 ${fmt(used)} · 还剩 ${fmt((batch.paid_left||0)+(batch.gift_left||0))}</li>`;
+}
 function moneyAud(cents){return '$'+((cents||0)/100).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
 async function showOffer(query, host){
  if(!host) return;
@@ -172,7 +218,7 @@ async function showOffer(query, host){
 }
 function profileModal(id){
  const s=state.students.find(s=>s.id==id);
- modal('编辑学生档案',`<label class="field">学生姓名<input name="name" required maxlength="40" value="${escapeHTML(s.name)}"></label>${profileFields(s)}${billingField(s)}<p class="footnote">计费方式适用于该学生的所有科目。切换不会自动换算已有余额数字；如数量有误，请由老板编辑相应单据。</p>`,'保存档案',async data=>{await api('students/profile',{...data,student_id:s.id});toast('学生档案已更新。');});
+ modal('编辑学生档案',`<label class="field">学生姓名<input name="name" required maxlength="40" value="${escapeHTML(s.name)}"></label>${profileFields(s)}${billingField(s)}<p class="footnote">价格只看年级和课型。科目不改变价格。</p>`,'保存档案',async data=>{await api('students/profile',{...data,student_id:s.id});toast('学生档案已更新。');}); bindProfileFields();
 }
 function guardianModal(id){
  const s=state.students.find(s=>s.id==id),children=studentGroups().map(g=>g[0]).filter(x=>x.parent_id===s.parent_id);

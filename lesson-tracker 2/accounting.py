@@ -29,8 +29,9 @@ def schema(c,demo=False):
     if 'handed_over_on' not in cash_cols:
         c.execute('ALTER TABLE cash_entries ADD COLUMN handed_over_on TEXT')
     for code,label,active,sort_order,system in (
-        ('bank','银行转账',1,10,1),('card','刷卡',1,20,1),('alipay','支付宝',1,30,0),
-        ('wechat','微信',1,40,0),('cash','现金',1,50,1),('gift','赠课 / 无收款',1,90,1)):
+        ('bank','银行转账',1,10,1),('cash','现金',1,20,1),('cny','人民币',1,30,1),
+        ('alipay','支付宝',1,40,0),('card','刷卡',1,50,1),('wechat','微信',1,60,0),
+        ('gift','赠课 / 无收款',1,90,1)):
         c.execute('INSERT OR IGNORE INTO payment_methods(code,label,active,sort_order,system) VALUES(?,?,?,?,?)',(code,label,active,sort_order,system))
     if demo:
         c.execute("INSERT OR IGNORE INTO organization_owners SELECT id FROM users WHERE phone='0400000000' AND role='admin'")

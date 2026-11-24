@@ -40,9 +40,9 @@ class OfferTests(unittest.TestCase):
         with server.connect() as c:
             kind = c.execute("SELECT id FROM course_types WHERE name='小班课'").fetchone()['id']
             offer = pricing.presets(c, owner, level='Y6', course_type_id=kind, day='2027-03-01')
-        named = {item['label'].split(' · ')[0]: item['total_cents'] for item in offer['packages']}
-        self.assertEqual(named['T1'], 90000)
-        self.assertEqual(named['T1+T2'], 192375)
+        named = {tuple(item['terms']): item['total_cents'] for item in offer['packages']}
+        self.assertEqual(named[('T1',)], 90000)
+        self.assertEqual(named[('T1', 'T2')], 192375)
         self.assertTrue(all(item['gift_lessons'] == 0 for item in offer['packages']))
 
     def test_finance_presets_cover_last_month_and_this_year(self):

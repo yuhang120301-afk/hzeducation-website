@@ -468,12 +468,28 @@ class Handler(BaseHTTPRequestHandler):
                     FROM students s JOIN users u ON s.parent_id=u.id
                     LEFT JOIN course_types ct ON ct.id=s.course_type_id
                     LEFT JOIN subjects sb ON sb.id=s.subject_id'''+condition+' ORDER BY s.id',params)]
+                profiles.ensure_enrolment_columns(c)
+                extras = {row['id']: dict(row) for row in c.execute('SELECT * FROM student_profiles')}
+                for person in students:
+                    extra = extras.get(person.get('profile_id')) or {}
+                    for key, value in extra.items():
+                        if key != 'id':
+                            person[key] = value
+                    pricing.annotate(person)
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
-                if user['role'] in ('owner','admin'):
+                if user['role'] == 'teacher':
                     for person in students:
-                        pricing.annotate(person)
+                        for key in ('parent_email', 'phone', 'contact_phone'):
+                            person.pop(key, None)
+                        for batch in person.get('credit_batches') or []:
+                            batch.pop('total_cents', None)
+                            batch.pop('unit_fees', None)
+                if user['role'] == 'parent':
+                    for person in students:
+                        for batch in person.get('credit_batches') or []:
+                            batch.pop('unit_fees', None)
                 archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
                 students=[s for s in students if not s['archived']]
                 if user['role']!='owner':
@@ -684,20 +700,26 @@ class Handler(BaseHTTPRequestHandler):
         else:
             course = text_value(data.get('course'),'课程名称',80)
         birthday,grade,notes=profiles.fields(data)
+        if 'grade' in data and not str(data.get('grade') or '').strip():
+            raise ValueError('请选择年级。')
         billing_unit=profiles.billing_unit(data.get('billing_unit','lesson'))
-        phone = phone_value(data.get('phone'))
+        phone_raw = str(data.get('phone') or '').strip()
+        phone = phone_value(phone_raw) if phone_raw else 'pending-' + secrets.token_hex(6)
         c.execute('BEGIN IMMEDIATE')
-        parent = c.execute('SELECT * FROM users WHERE phone=?',(phone,)).fetchone()
+        parent = c.execute('SELECT * FROM users WHERE phone=?',(phone,)).fetchone() if phone_raw else None
         if parent and (parent['role'] != 'parent' or c.execute('SELECT 1 FROM teachers WHERE user_id=?',(parent['id'],)).fetchone()):
             raise ValueError('此手机号是老师账号，请使用家长手机号。')
         if parent:
             pid = parent['id']
         else:
-            password = str(data.get('password',''))
-            if not 10 <= len(password) <=128:
+            password = str(data.get('password') or '')
+            if phone_raw and not 10 <= len(password) <=128:
                 raise ValueError('新家长的初始密码需为 10–128 位。')
+            if not phone_raw:
+                password = secrets.token_urlsafe(18)
             pid = c.execute('INSERT INTO users(phone,name,password,role) VALUES(?,?,?,?)',(phone,text_value(data.get('parent_name') or name+'家长','家长姓名',40),password_hash(password),'parent')).lastrowid
         profile_id=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+        profiles.save_enrolment(c, profile_id, data)
         sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
         type_id, subject_id = teaching.resolve_catalog(c, data, None, course)
         level_code, level_year = pricing.remember_level(data, grade)

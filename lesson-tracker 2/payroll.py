@@ -35,6 +35,8 @@ def schema(c):
         c.execute('ALTER TABLE lesson_reports ADD COLUMN fee_cents INTEGER')
     if 'fee_overridden' not in report_cols:
         c.execute('ALTER TABLE lesson_reports ADD COLUMN fee_overridden INTEGER NOT NULL DEFAULT 0')
+    if 'fee_millis' not in report_cols:
+        c.execute('ALTER TABLE lesson_reports ADD COLUMN fee_millis INTEGER')
     c.executescript('''
     CREATE TABLE IF NOT EXISTS pay_rules (
         id INTEGER PRIMARY KEY,
@@ -172,8 +174,41 @@ def mul_div(value, numerator, denominator):
     return (value * numerator + denominator // 2) // denominator
 
 
+def indexed_fee_millis(c, ledger_id):
+    """Per-lesson price stored on the package. Gift lessons are included and still paid to the teacher."""
+    import json
+    moves = c.execute('''SELECT m.paid, m.gift, m.batch_id, b.unit_fees
+        FROM credit_movements m JOIN credit_batches b ON b.id=m.batch_id
+        WHERE m.ledger_id=?''', (ledger_id,)).fetchall()
+    total = 0
+    used = False
+    for move in moves:
+        raw = move['unit_fees'] if 'unit_fees' in move.keys() else ''
+        if not raw:
+            continue
+        try:
+            fees = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not fees:
+            continue
+        before = c.execute('''SELECT COALESCE(SUM(-paid - gift),0) FROM credit_movements
+            WHERE batch_id=? AND ledger_id<? AND (paid<0 OR gift<0)''', (move['batch_id'], ledger_id)).fetchone()[0]
+        index = int(before) // 100
+        taken = ((-move['paid'] if move['paid'] < 0 else 0) + (-move['gift'] if move['gift'] < 0 else 0)) // 100
+        if taken <= 0:
+            continue
+        used = True
+        for step in range(taken):
+            slot = index + step
+            if 0 <= slot < len(fees):
+                total += int(fees[slot])
+    return total if used else None
+
+
 def fee_for_ledger(c, ledger_id, amount):
     """Return (fee cents or None if the price is unknown, paid units, gift units)."""
+    indexed = indexed_fee_millis(c, ledger_id)
     moves = c.execute('''SELECT m.paid, m.gift, b.purchased, b.gifted, cash.cash_delta
         FROM credit_movements m JOIN credit_batches b ON b.id=m.batch_id
         LEFT JOIN cash_entries cash ON cash.ledger_id=b.ledger_id
@@ -200,6 +235,8 @@ def fee_for_ledger(c, ledger_id, amount):
             known = False
             continue
         fee += mul_div(taken, cash, pool)
+    if indexed is not None:
+        return (indexed + 5) // 10, paid_units, gift_units
     return (fee if known else None), paid_units, gift_units
 
 
@@ -225,7 +262,7 @@ def confirmed_rows(c, start, end):
     return c.execute('''SELECT l.id lesson_id, l.teacher_id, l.title, l.starts_at, l.ends_at, l.course_type_id,
         (SELECT name FROM course_types WHERE id=l.course_type_id) course_type_name,
         (SELECT name FROM subjects WHERE id=l.subject_id) subject_name,
-        r.student_id, r.amount, r.ledger_id, r.fee_cents, r.fee_overridden,
+        r.student_id, r.amount, r.ledger_id, r.fee_cents, r.fee_millis, r.fee_overridden,
         s.name student_name, s.course, s.billing_unit, s.profile_id, s.helen_original,
         u.name teacher_name
         FROM lessons l
@@ -259,11 +296,12 @@ def build_lessons(c, rows, rules_by_teacher):
             index[key] = item
             grouped.append(item)
         fee, known, paid_units, gift_units, overridden = resolved_fee(c, row)
+        millis = row['fee_millis'] if row['fee_millis'] is not None else (None if fee is None else fee * 10)
         index[key]['lines'].append({'student_id': row['student_id'], 'student_name': row['student_name'],
             'course': row['course'], 'billing_unit': row['billing_unit'], 'profile_id': row['profile_id'],
             'is_new': student_is_new(row['helen_original']),
             'units': row['amount'], 'paid_units': paid_units, 'gift_units': gift_units,
-            'fee_cents': fee, 'fee_known': known, 'fee_overridden': overridden, 'ledger_id': row['ledger_id']})
+            'fee_cents': fee, 'fee_millis': millis, 'fee_known': known, 'fee_overridden': overridden, 'ledger_id': row['ledger_id']})
     for item in grouped:
         rule = rule_on(rules_by_teacher.get(item['teacher_id'], []), item['date'])
         known = [line['fee_cents'] for line in item['lines'] if line['fee_known']]
@@ -271,9 +309,19 @@ def build_lessons(c, rows, rules_by_teacher):
         item['fee_cents'] = sum(known)
         item['unknown_fee_count'] = sum(1 for line in item['lines'] if not line['fee_known'])
         item['rule'] = public_rule(rule)
-        pay, basis = lesson_pay(rule, item['minutes'], item['fee_cents'])
-        percent_cents = mul_div(item['fee_cents'], rule['percent_bp'] or 0, 10000) if rule and rule['rule_type'] == 'percent' else 0
         floor_cents = mul_div(rule['hourly_floor_cents'], item['minutes'], 60) if rule and rule['hourly_floor_cents'] else 0
+        if item['course_type_name'] == '小班课' and item['fee_known']:
+            percent_cents = 0
+            for line in item['lines']:
+                millis = line['fee_millis'] if line['fee_millis'] is not None else (line['fee_cents'] or 0) * 10
+                percent_cents += (int(millis) * 4000 + 50000) // 100000
+            if floor_cents > percent_cents:
+                pay, basis = floor_cents, 'floor'
+            else:
+                pay, basis = percent_cents, 'percent'
+        else:
+            pay, basis = lesson_pay(rule, item['minutes'], item['fee_cents'])
+            percent_cents = mul_div(item['fee_cents'], rule['percent_bp'] or 0, 10000) if rule and rule['rule_type'] == 'percent' else 0
         item['pay_cents'] = pay
         item['pay_basis'] = basis
         item['share_bp'] = rule['percent_bp'] if rule and rule['rule_type'] == 'percent' else None

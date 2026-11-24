@@ -76,6 +76,8 @@ def schema(c):
 
 DEFAULT_COURSE_TYPES = ('一对一', '一对二', '小班课')
 DEFAULT_SUBJECTS = ('数学', '英语', '科学', '物理', '化学', '中文', '写作', '高数', '中数')
+OFFERED_SUBJECTS = ('数学', '英语')
+OFFERED_TYPES = ('一对一', '一对二', '小班课')
 TYPE_ALIASES = {
     '一对一': '一对一', '1:1': '一对一', '1：1': '一对一', 'one': '一对一', 'one_to_one': '一对一',
     '一对二': '一对二', '1:2': '一对二', '1：2': '一对二', 'two': '一对二', 'one_to_two': '一对二',
@@ -154,6 +156,27 @@ def ensure_catalogs(c):
         _add_column(c, 'price_rows', 'course_type_id', 'course_type_id INTEGER REFERENCES course_types(id)')
         _add_column(c, 'price_rows', 'placeholder', 'placeholder INTEGER NOT NULL DEFAULT 1')
     _backfill_catalogs(c)
+    focus_catalog(c)
+
+
+def focus_catalog(c):
+    """Hide extra subjects and old course-name options once. Rows stay, so Settings can turn them back on."""
+    if c.execute("SELECT 1 FROM app_meta WHERE key='catalog_focus_v1'").fetchone():
+        return
+    for index, name in enumerate(OFFERED_SUBJECTS):
+        c.execute('INSERT OR IGNORE INTO subjects(name, sort_order, active) VALUES(?,?,1)', (name, (index + 1) * 10))
+        c.execute('UPDATE subjects SET active=1 WHERE name=?', (name,))
+    marks = ','.join('?' * len(OFFERED_SUBJECTS))
+    c.execute(f'UPDATE subjects SET active=0 WHERE name NOT IN ({marks})', OFFERED_SUBJECTS)
+    type_marks = ','.join('?' * len(OFFERED_TYPES))
+    c.execute(f'UPDATE course_types SET active=1 WHERE name IN ({type_marks})', OFFERED_TYPES)
+    c.execute(f'UPDATE course_types SET active=0 WHERE name NOT IN ({type_marks})', OFFERED_TYPES)
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
+        c.execute("UPDATE schedule_options SET active=0 WHERE kind='course' AND name NOT IN ('数学','英语')")
+        for name in OFFERED_SUBJECTS:
+            c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (name,))
+            c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (name,))
+    c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_focus_v1', '1')")
 
 
 def _id_by_name(c, table, name):
@@ -225,8 +248,10 @@ def save_catalog_item(c, user, table, data, text_value):
 
 def resolve_catalog(c, data, student_count, fallback_text=''):
     """Use the chosen ids. Older callers that only send a label are parsed, not left as free text."""
-    type_id = int(data.get('course_type_id') or 0)
-    subject_id = int(data.get('subject_id') or 0)
+    explicit_type = int(data.get('course_type_id') or 0)
+    explicit_subject = int(data.get('subject_id') or 0)
+    type_id = explicit_type
+    subject_id = explicit_subject
     if not type_id or not subject_id:
         subject_name, type_name, _original = parse_label(data.get('title') or data.get('course') or fallback_text, student_count if not type_id else None)
         if not type_id and type_name:
@@ -235,10 +260,12 @@ def resolve_catalog(c, data, student_count, fallback_text=''):
             subject_id = _id_by_name(c, 'subjects', subject_name) or 0
     if not type_id:
         type_id = _id_by_name(c, 'course_types', infer_type_name(student_count if student_count is not None else 0)) or 0
-    if type_id and not c.execute('SELECT 1 FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone():
+    if explicit_type and not c.execute('SELECT 1 FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone():
         raise ValueError('请选择课程类型。')
-    if subject_id and not c.execute('SELECT 1 FROM subjects WHERE id=? AND active=1', (subject_id,)).fetchone():
+    if explicit_subject and not c.execute('SELECT 1 FROM subjects WHERE id=? AND active=1', (subject_id,)).fetchone():
         raise ValueError('请选择科目。')
+    if subject_id and not explicit_subject and not c.execute('SELECT 1 FROM subjects WHERE id=? AND active=1', (subject_id,)).fetchone():
+        subject_id = None
     return type_id or None, subject_id or None
 
 def staff_or_admin(user):
@@ -574,11 +601,23 @@ def save_reports(c,user,data,units,action):
             credit_batches.apply(c,ledger_id,'lesson',{},units)
             import payroll
             computed,_,_=payroll.fee_for_ledger(c,ledger_id,amount)
+            millis = payroll.indexed_fee_millis(c, ledger_id)
+            if '试听' in (lesson['title'] or '') and not str(fee_amount or '').strip():
+                import pricing
+                kind = c.execute('''SELECT ct.name FROM students s LEFT JOIN course_types ct ON ct.id=s.course_type_id WHERE s.id=?''', (sid,)).fetchone()
+                product = pricing.TYPE_PRODUCT.get(kind['name'] if kind and kind['name'] else '', 'one_to_one')
+                length = max(1, int((dt.datetime.fromisoformat(lesson['ends_at']) - dt.datetime.fromisoformat(lesson['starts_at'])).total_seconds() // 60))
+                snapped = (150 if length >= 135 else 120) if product == 'term' else (90 if length >= 75 else 60)
+                single = pricing.list_lesson_cents(c, sid, lesson['starts_at'][:10], product, snapped)
+                if single:
+                    computed = pricing.trial_cents(single)
+                    millis = computed * 10
             if str(fee_amount or '').strip():
                 import accounting
-                c.execute('UPDATE lesson_reports SET ledger_id=?,fee_cents=?,fee_overridden=1 WHERE lesson_id=? AND student_id=?',(ledger_id,accounting.money(fee_amount),lesson['id'],sid))
+                overridden = accounting.money(fee_amount)
+                c.execute('UPDATE lesson_reports SET ledger_id=?,fee_cents=?,fee_millis=?,fee_overridden=1 WHERE lesson_id=? AND student_id=?',(ledger_id,overridden,overridden*10,lesson['id'],sid))
             else:
-                c.execute('UPDATE lesson_reports SET ledger_id=?,fee_cents=?,fee_overridden=0 WHERE lesson_id=? AND student_id=?',(ledger_id,computed,lesson['id'],sid))
+                c.execute('UPDATE lesson_reports SET ledger_id=?,fee_cents=?,fee_millis=?,fee_overridden=0 WHERE lesson_id=? AND student_id=?',(ledger_id,computed,millis,lesson['id'],sid))
     c.execute("UPDATE lessons SET status=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",('completed' if action in ('complete','edit','close') else 'scheduled',lesson['id']))
     c.execute('INSERT INTO report_edits(lesson_id,actor_id,payload) VALUES(?,?,?)',(lesson['id'],user['id'],json.dumps({'action':action,'reports':raw},ensure_ascii=False)))
     return {'ok':True}
