@@ -122,7 +122,7 @@ button{cursor:default}
 .mini table{width:100%;border-collapse:collapse;text-align:center;font-size:13px}
 .mini th{color:#9aa3af;font-weight:600;padding:4px 0}
 .mini td{padding:3px 0}
-.mini .today{background:#1a73e8;color:#fff;border-radius:50%;display:inline-grid;place-items:center;width:26px;height:26px;font-weight:700}
+.mini .today{background:#204F40;color:#fff;border-radius:50%;display:inline-grid;place-items:center;width:26px;height:26px;font-weight:700}
 .gcal{background:#fff;border:1px solid #dadce0;border-radius:12px;overflow:hidden}
 .gcal-tools{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #dadce0}
 .gcal-tools h2{margin:0;font-size:20px;font-weight:500;flex:1}
@@ -131,32 +131,47 @@ button{cursor:default}
 .gviews{margin-left:auto;display:flex;border:1px solid #dadce0;border-radius:8px;overflow:hidden}
 .gviews button{border:0;background:#fff;padding:8px 12px;border-left:1px solid #dadce0}
 .gviews button:first-child{border-left:0}
-.gviews .on{background:#e8f0fe;color:#1a73e8;font-weight:700}
+.gviews .on{background:#204F40;color:#fff;font-weight:600}
 .grid{display:grid;grid-template-columns:56px repeat(7,1fr);position:relative}
 .gh,.gd{border-bottom:1px solid #dadce0;border-left:1px solid #dadce0;text-align:center;padding:8px 2px;background:#fff}
 .gh{border-left:0}
 .gd small{display:block;color:#70757a;font-size:11px}
 .gd b{font-size:22px;font-weight:500}
-.gd.now b{background:#1a73e8;color:#fff;border-radius:50%;display:inline-grid;place-items:center;width:34px;height:34px}
-.hours{position:relative;display:grid;grid-template-columns:56px repeat(7,1fr);height:672px;background:#fff}
-.gutter div,.col{height:56px;border-top:1px solid #e6e8eb;box-sizing:border-box}
+.gd.now b{background:#204F40;color:#fff;border-radius:50%;display:inline-grid;place-items:center;width:34px;height:34px}
+.hours{position:relative;display:grid;grid-template-columns:56px repeat(7,1fr);height:576px;background:#fff}
+.gutter div,.col{height:48px;border-top:1px solid #e6e8eb;box-sizing:border-box}
 .gutter div{color:#70757a;font-size:11px;text-align:right;padding:2px 6px 0 0;transform:translateY(-7px);border-top-color:transparent}
 .col{border-left:1px solid #e6e8eb;position:relative}
 .hours{display:block;position:relative}
 .gutter{position:absolute;left:0;top:0;width:56px}
 .cols{position:absolute;left:56px;right:0;top:0;bottom:0;display:grid;grid-template-columns:repeat(7,1fr)}
-.col{height:100%;border-top:0;background-image:linear-gradient(to bottom,#e6e8eb 1px,transparent 1px);background-size:100% 56px}
-.event{position:absolute;left:3px;right:3px;border-radius:6px;padding:3px 5px;overflow:hidden;border-left:3px solid;font-size:12px;line-height:1.25}
-.event b,.event span{display:block}
+.col{height:100%;border-top:0;background-image:linear-gradient(to bottom,#e6e8eb 1px,transparent 1px);background-size:100% 48px}
+.event{position:absolute;left:3px;right:3px;border-radius:6px;padding:3px 5px;overflow:hidden;border-left:3px solid;font-size:12px;line-height:1.2;display:flex;flex-wrap:nowrap;align-items:flex-start;gap:0 4px}
+.event b,.event span{display:inline;white-space:nowrap}
 .nowline{position:absolute;left:48px;right:0;height:0;border-top:2px solid #ea4335;z-index:3}
 .nowline i{position:absolute;left:-4px;top:-5px;width:10px;height:10px;border-radius:50%;background:#ea4335;font-style:normal}
-.nowline em{position:absolute;top:-18px;left:10px;color:#ea4335;font-size:11px;font-style:normal;background:#fff;padding:0 3px}
+.nowline em{position:absolute;top:-16px;right:8px;left:auto;color:#ea4335;font-size:11px;font-style:normal;background:#fff;padding:0 3px}
 .ev-a{background:#F5EAE8;border-color:#CB958B;color:#1F2A27}
 .ev-k{background:#EDEAF3;border-color:#A695C3;color:#1F2A27}
 .ev-v{background:#E7ECF3;border-color:#85A1C2;color:#1F2A27}
 .ev-e{background:#E4F0EF;border-color:#7AB6AD;color:#1F2A27}
 .ev-h{background:#E4F0E9;border-color:#78B48F;color:#1F2A27}
 .ev-c{background:#F5F1E7;border-color:#CEBA88;color:#1F2A27}
+.event.done{background:#EDF0F2;border-left-color:#9AA7AF;color:#53616B}
+.event.ghost{background:transparent;border:1.5px dashed #85A1C2;color:transparent;z-index:1}
+.event.dragging{z-index:4;overflow:visible;box-shadow:0 10px 24px rgba(32,79,64,.28)}
+.event .tip{position:absolute;left:6px;top:-28px;background:#204F40;color:#fff;border-radius:6px;padding:3px 8px;font-size:12px;white-space:nowrap;font-style:normal;z-index:5}
+.newslot{position:absolute;left:3px;right:3px;border:1.5px dashed #204F40;background:#E3EFE9;color:#204F40;border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:center}
+.tfilters{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.tfilters h4{margin:0 0 2px;font-size:13px;color:var(--muted);font-weight:600}
+.tfilters label{display:flex;align-items:center;gap:8px;font-size:14px}
+.tfilters input,.phone-filters input{width:15px;height:15px;accent-color:var(--tone)}
+.mini td.wk{background:#E3EFE9}
+.mini .hintline{color:#5B6B66;font-size:12px;line-height:1.5;margin:12px 0 0}
+.day-view,.phone-filters{display:none}
+.gutter .close{position:absolute;top:576px;height:auto;width:56px;transform:translateY(-8px);border:0}
+.todaybtn{color:#204F40}
+.gcal-tools h2{color:#204F40}
 .sums{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;margin:14px 0 16px}
 .sums .card{grid-column:span 3}
 .sums .card:nth-child(n+5){grid-column:span 4}
@@ -259,7 +274,13 @@ body[data-page="package"] section[data-page="package"]{display:block}
   .prow .for{flex:1 1 100%;color:var(--muted);font-size:13px}
   .prow time{color:var(--muted);font-size:13px}
   .cal-wrap{grid-template-columns:1fr}
-  .mini{display:none}
+  .cal-side,.week-view{display:none}
+  .day-view{display:flex;flex-direction:column}
+  .phone-filters{display:flex}
+  .phone-filters{flex-wrap:wrap;gap:4px 8px;padding:8px 10px 6px;border-bottom:1px solid #dadce0}
+  .phone-filters label{font-size:12px}
+  .gviews button.on{background:#fff;color:#5B6B66;font-weight:500}
+  .gviews button[data-view="day"]{background:#204F40;color:#fff;font-weight:600}
   .phonemonth{display:block!important}
   .tabbar{position:fixed;left:0;right:0;bottom:0;height:72px;background:#fff;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);z-index:5}
   .tabbar button{flex-direction:column;gap:3px;font-size:11px;padding:8px 2px;border-radius:0;justify-content:center}
@@ -276,7 +297,7 @@ body[data-page="package"] section[data-page="package"]{display:block}
 .phonemonth{display:none;background:#fff;border:1px solid #dadce0;border-radius:12px;padding:8px 10px;margin-bottom:10px}
 .phonemonth strong{font-size:14px}
 .dots{display:flex;justify-content:space-between;font-size:12px;color:#70757a;margin-top:6px}
-.dots .today{color:#fff;background:#1a73e8;border-radius:50%;width:22px;height:22px;display:grid;place-items:center}
+.dots .today{color:#fff;background:#204F40;border-radius:50%;width:22px;height:22px;display:grid;place-items:center}
 h1,h2,h3,.top h1,.section h2,.sheet h2,.block h2,.staff h3,.gcal-tools h2{font-weight:600;letter-spacing:-0.02em}
 .top h1{font-size:22px}
 .section h2,.block h2,.sheet h2{font-size:16px}
@@ -484,7 +505,7 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
 
     <section data-page="calendar">
       <div class="cal-wrap">
-        <div class="mini">
+        <aside class="cal-side mini">
           <h3>2026年11月 <span>‹ ›</span></h3>
           <table><thead><tr><th>一</th><th>二</th><th>三</th><th>四</th><th>五</th><th>六</th><th>日</th></tr></thead>
           <tbody>
@@ -492,63 +513,109 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
             <tr><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td></tr>
             <tr><td>9</td><td>10</td><td>11</td><td>12</td><td>13</td><td>14</td><td>15</td></tr>
             <tr><td>16</td><td>17</td><td>18</td><td>19</td><td>20</td><td>21</td><td>22</td></tr>
-            <tr><td>23</td><td><span class="today">24</span></td><td>25</td><td>26</td><td>27</td><td>28</td><td>29</td></tr>
+            <tr><td class="wk">23</td><td class="wk"><span class="today">24</span></td><td class="wk">25</td><td class="wk">26</td><td class="wk">27</td><td class="wk">28</td><td class="wk">29</td></tr>
             <tr><td>30</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
           </tbody></table>
-          <p style="color:#70757a;font-size:12px;line-height:1.5">点空白格排课。拖动色块改时间，拖下边缘改时长。重复课会问：只改这一节，还是之后的都改。</p>
-        </div>
+          <div class="tfilters">
+            <h4>老师</h4>
+            <label class="t-helen"><input type="checkbox" checked> Helen</label>
+            <label class="t-vincent"><input type="checkbox" checked> Vincent</label>
+            <label class="t-angela"><input type="checkbox" checked> Angela</label>
+            <label class="t-kelsey"><input type="checkbox" checked> Kelsey</label>
+            <label class="t-ethan"><input type="checkbox" checked> Ethan</label>
+            <label class="t-christina"><input type="checkbox" checked> Christina</label>
+          </div>
+          <p class="hintline">点空白处新建课。拖动色块改时间。</p>
+        </aside>
         <div>
-          <div class="phonemonth"><strong>2026年11月</strong><div class="dots"><span>23</span><span class="today">24</span><span>25</span><span>26</span><span>27</span><span>28</span><span>29</span></div></div>
           <div class="gcal">
             <div class="gcal-tools">
               <button class="todaybtn">今天</button>
               <button class="iconbtn" aria-label="上一周">‹</button>
               <button class="iconbtn" aria-label="下一周">›</button>
               <h2>2026年11月</h2>
-              <div class="gviews"><button>日</button><button class="on">周</button><button>月</button></div>
+              <div class="gviews"><button data-view="day">日</button><button class="on" data-view="week">周</button><button data-view="month">月</button></div>
             </div>
-            <div class="grid">
-              <div class="gh"></div>
-              <div class="gd"><small>周一</small><b>23</b></div>
-              <div class="gd now"><small>周二</small><b>24</b></div>
-              <div class="gd"><small>周三</small><b>25</b></div>
-              <div class="gd"><small>周四</small><b>26</b></div>
-              <div class="gd"><small>周五</small><b>27</b></div>
-              <div class="gd"><small>周六</small><b>28</b></div>
-              <div class="gd"><small>周日</small><b>29</b></div>
+            <div class="week-view">
+              <div class="grid">
+                <div class="gh"></div>
+                <div class="gd"><small>周一</small><b>23</b></div>
+                <div class="gd now"><small>周二</small><b>24</b></div>
+                <div class="gd"><small>周三</small><b>25</b></div>
+                <div class="gd"><small>周四</small><b>26</b></div>
+                <div class="gd"><small>周五</small><b>27</b></div>
+                <div class="gd"><small>周六</small><b>28</b></div>
+                <div class="gd"><small>周日</small><b>29</b></div>
+              </div>
+              <div class="hours">
+                <div class="gutter">
+                  <div>9:00</div><div>10:00</div><div>11:00</div><div>12:00</div><div>13:00</div><div>14:00</div><div>15:00</div><div>16:00</div><div>17:00</div><div>18:00</div><div>19:00</div><div>20:00</div>
+                  <div class="close">21:00</div>
+                </div>
+                <div class="cols">
+                  <div class="col">
+                    <div class="event ev-v" style="top:240px;height:46px"><b>周可</b><span>Y11 · 1:1</span></div>
+                    <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event done" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                    <div class="event ev-h" style="top:456px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <button class="newslot" style="top:192px;height:46px">+ 新建课</button>
+                    <div class="event ev-e" style="top:312px;height:70px"><b>陈子墨</b><span>Y3 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-v ghost" style="top:336px;height:46px"><b>周可</b><span>Y11 · 1:1</span></div>
+                    <div class="event ev-v dragging" style="top:384px;height:46px"><b>周可</b><span>Y11 · 1:1</span><em class="tip">改到 周四 17:00</em></div>
+                    <div class="event ev-a" style="top:432px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-c" style="top:384px;height:46px"><b>林晓</b><span>Y8 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-k" style="top:24px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                    <div class="event ev-h" style="top:96px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-c" style="top:0;height:46px"><b>林晓</b><span>Y8 · 1:1</span></div>
+                  </div>
+                </div>
+                <div class="nowline" style="top:368px"><i></i><em>16:40</em></div>
+              </div>
             </div>
-            <div class="hours">
-              <div class="gutter">
-                <div style="height:56px">08:00</div><div style="height:56px">09:00</div><div style="height:56px">10:00</div><div style="height:56px">11:00</div><div style="height:56px">12:00</div><div style="height:56px">13:00</div><div style="height:56px">14:00</div><div style="height:56px">15:00</div><div style="height:56px">16:00</div><div style="height:56px">17:00</div><div style="height:56px">18:00</div><div style="height:56px">19:00</div>
+            <div class="day-view">
+              <div class="phone-filters">
+                <label class="t-helen"><input type="checkbox" checked> Helen</label>
+                <label class="t-vincent"><input type="checkbox" checked> Vincent</label>
+                <label class="t-angela"><input type="checkbox" checked> Angela</label>
+                <label class="t-kelsey"><input type="checkbox" checked> Kelsey</label>
+                <label class="t-ethan"><input type="checkbox" checked> Ethan</label>
+                <label class="t-christina"><input type="checkbox" checked> Christina</label>
               </div>
-              <div class="cols">
-                <div class="col">
-                  <div class="event ev-a" style="top:448px;height:52px;width:calc(50% - 4px)"><b>16:00 陈一诺</b><span>Angela</span></div>
-                  <div class="event ev-k" style="top:448px;height:80px;left:50%;width:calc(50% - 4px)"><b>16:00 王星然</b><span>Kelsey</span></div>
-                </div>
-                <div class="col">
-                  <div class="event ev-a" style="top:448px;height:52px;width:calc(50% - 4px)"><b>16:00 陈一诺</b><span>Angela</span></div>
-                  <div class="event ev-k" style="top:448px;height:80px;left:50%;width:calc(50% - 4px)"><b>16:00 王星然</b><span>Kelsey</span></div>
-                  <div class="event ev-v" style="top:504px;height:52px;width:calc(50% - 4px)"><b>17:00 周可</b><span>Vincent</span></div>
-                  <div class="event ev-h" style="top:560px;height:80px"><b>18:00 李沐阳</b><span>Helen · 1.5h</span></div>
-                </div>
-                <div class="col">
-                  <div class="event ev-e" style="top:420px;height:80px"><b>15:30 陈子墨</b><span>Ethan · 1.5h</span></div>
-                </div>
-                <div class="col">
-                  <div class="event ev-v" style="top:448px;height:80px"><b>16:00 周可</b><span>Vincent</span></div>
-                  <div class="event ev-a" style="top:560px;height:52px"><b>18:00 陈一诺</b><span>Angela</span></div>
-                </div>
-                <div class="col"></div>
-                <div class="col">
-                  <div class="event ev-k" style="top:84px;height:136px;width:calc(50% - 4px)"><b>09:30 学期班</b><span>Kelsey</span></div>
-                  <div class="event ev-h" style="top:112px;height:108px;left:50%;width:calc(50% - 4px)"><b>10:00 VCE</b><span>Helen</span></div>
-                </div>
-                <div class="col">
-                  <div class="event ev-e" style="top:56px;height:108px"><b>09:00 林晓</b><span>Ethan</span></div>
-                </div>
+              <div class="grid" style="grid-template-columns:56px 1fr">
+                <div class="gh"></div>
+                <div class="gd now"><small>周二</small><b>24</b></div>
               </div>
-              <div class="nowline" style="top:485px"><i></i><em>16:40</em></div>
+              <div class="hours">
+                <div class="gutter">
+                  <div>9:00</div><div>10:00</div><div>11:00</div><div>12:00</div><div>13:00</div><div>14:00</div><div>15:00</div><div>16:00</div><div>17:00</div><div>18:00</div><div>19:00</div><div>20:00</div>
+                  <div class="close">21:00</div>
+                </div>
+                <div class="cols" style="grid-template-columns:1fr">
+                  <div class="col">
+                    <button class="newslot" style="top:96px;height:46px">+ 新建课</button>
+                    <div class="event done" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                    <div class="event ev-h" style="top:456px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
+                  </div>
+                </div>
+                <div class="nowline" style="top:368px"><i></i><em>16:40</em></div>
+              </div>
             </div>
           </div>
         </div>
