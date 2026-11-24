@@ -11,7 +11,7 @@ function navigationItems(){
  if(role==='owner') return [
   ['每天',[['today','今天','clock'],['schedule','课表排课','grid'],['feedback','确认课时','check']]],
   ['学生',[['overview','学生与余额','users'],['records','余额明细','book']]],
-  ['财务',[['pay','老师工资','book'],['accounting','收款记录','grid']]],
+  ['财务',[['pay','老师工资','book'],['accounting','收款与欠费','grid'],['finance','财务报表','book']]],
   ['设置',[['setup','设置','users']]]
  ];
  const items=[['schedule',role==='admin'?'排课日历':role==='teacher'?'我的课程':'孩子的课表','clock'],['feedback','课后记录','book'],['overview',role==='admin'?'学生与课时':role==='teacher'?'我的学生':'剩余余额','grid'],['records','余额明细','book']];
@@ -79,6 +79,7 @@ function dashboard(){
  if(view==='today')renderToday();
  if(view==='accounting')renderAccounting();
  if(view==='pay')renderPay();
+ if(view==='finance')renderFinance();
  if(view==='setup')renderSetup();
  if(view==='administrators')renderAdministrators();
  if(view==='settings')renderScheduleSettings();
@@ -105,10 +106,13 @@ function renderListSchedule(){
  const rows=week.filter(l=>scheduleStatus==='all'||l.status===scheduleStatus);
  const done=week.filter(l=>l.status==='completed');
  const duration=done.reduce((n,l)=>n+(new Date(l.ends_at+'Z')-new Date(l.starts_at+'Z'))/3600000,0);
- $('#surface').innerHTML=`<section class="stats teaching-stats"><div class="stat featured"><div class="stat-label">本周课程${icon('clock')}</div><div class="stat-value">${week.filter(l=>l.status!=='cancelled').length}<small>节</small></div><div class="stat-note">已安排 · 不含取消课程</div></div><div class="stat"><div class="stat-label">已完成</div><div class="stat-value">${done.length}<small>节</small></div><div class="stat-note">课后记录已发布</div></div><div class="stat"><div class="stat-label">${isStaff()?'已授课时长':'已完成课程时长'}</div><div class="stat-value">${Number(duration.toFixed(2))}<small>小时</small></div><div class="stat-note">按实际课程时段统计，与扣课单位分开</div></div></section><div class="calendar-toolbar"><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上一周">‹</button><strong>${formatDate(weekStart)} — ${formatDate(datePlus(weekStart,6))}<small>${weekStart.slice(0,4)}</small></strong><button class="btn icon-button" id="next-week" aria-label="下一周">›</button><button class="btn" id="this-week">本周</button></div><div class="calendar-filters">${admin?`<select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(t=>`<option data-user-content value="${t.id}" ${teacherFilter==t.id?'selected':''}>${escapeHTML(t.name)}</option>`).join('')}</select>`:''}<select id="status-filter" aria-label="按课程状态筛选">${[['all','全部状态'],['scheduled','待上课 / 待记录'],['completed','已完成']].map(([v,t])=>`<option value="${v}" ${v===scheduleStatus?'selected':''}>${t}</option>`).join('')}</select></div></div>${state.user.role==='owner'?'<p class="footnote">拖动课程卡片到其他日期可调整排课；点击空白处可新增当天课程。</p>':''}${state.user.role==='admin'?timeCalendar(rows):parentCalendar(rows)}<p class="footnote">时间以 ${escapeHTML(state.timezone)} 为准。排课不扣课时；完成课程并发布记录后才扣除。</p>`;
+ $('#surface').innerHTML=`<label class="calendar-search"><input id="calendar-search" type="search" placeholder="搜索学生或老师" aria-label="搜索学生或老师" value="${escapeHTML(calendarSearch||'')}"></label><section class="stats teaching-stats"><div class="stat featured"><div class="stat-label">本周课程${icon('clock')}</div><div class="stat-value">${week.filter(l=>l.status!=='cancelled').length}<small>节</small></div><div class="stat-note">已安排 · 不含取消课程</div></div><div class="stat"><div class="stat-label">已完成</div><div class="stat-value">${done.length}<small>节</small></div><div class="stat-note">课后记录已发布</div></div><div class="stat"><div class="stat-label">${isStaff()?'已授课时长':'已完成课程时长'}</div><div class="stat-value">${Number(duration.toFixed(2))}<small>小时</small></div><div class="stat-note">按实际课程时段统计，与扣课单位分开</div></div></section><div class="calendar-toolbar"><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上一周">‹</button><strong>${formatDate(weekStart)} — ${formatDate(datePlus(weekStart,6))}<small>${weekStart.slice(0,4)}</small></strong><button class="btn icon-button" id="next-week" aria-label="下一周">›</button><button class="btn" id="this-week">本周</button></div><div class="calendar-filters">${admin?`<select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(t=>`<option data-user-content value="${t.id}" ${teacherFilter==t.id?'selected':''}>${escapeHTML(t.name)}</option>`).join('')}</select>`:''}<select id="status-filter" aria-label="按课程状态筛选">${[['all','全部状态'],['scheduled','待上课 / 待记录'],['completed','已完成']].map(([v,t])=>`<option value="${v}" ${v===scheduleStatus?'selected':''}>${t}</option>`).join('')}</select></div></div>${state.user.role==='owner'?'<p class="footnote">拖动课程卡片到其他日期可调整排课；点击空白处可新增当天课程。</p>':''}${state.user.role==='admin'?timeCalendar(rows):parentCalendar(rows)}<p class="footnote">时间以 ${escapeHTML(state.timezone)} 为准。排课不扣课时；完成课程并发布记录后才扣除。</p>`;
  $('#prev-week').onclick=()=>changeScheduleWeek(datePlus(weekStart,-7));$('#next-week').onclick=()=>changeScheduleWeek(datePlus(weekStart,7));$('#this-week').onclick=()=>changeScheduleWeek(monday(state.today));
  if($('#teacher-filter'))$('#teacher-filter').onchange=e=>{teacherFilter=e.target.value;renderSchedule();};
- $('#status-filter').onchange=e=>{scheduleStatus=e.target.value;renderSchedule();};bindLessons();
+ $('#status-filter').onchange=e=>{scheduleStatus=e.target.value;renderSchedule();};
+ const calendarSearchBox=$('#calendar-search');
+ if(calendarSearchBox && typeof applyCalendarSearch==='function'){calendarSearchBox.oninput=event=>{calendarSearch=event.target.value;applyCalendarSearch();};applyCalendarSearch();}
+ bindLessons();
  initCalendarDragging();
  if(state.recurrence_warnings?.length)$('#surface').insertAdjacentHTML('afterbegin',`<div class="form-context" role="alert"><strong>重复排课需要处理</strong>${state.recurrence_warnings.map(w=>`<p>${escapeHTML(w)}</p>`).join('')}<p>发生冲突后的课程暂未继续生成，请调整时间或处理冲突课程。</p></div>`);
  document.querySelectorAll('[data-slot]').forEach(b=>b.onclick=()=>{if(Date.now()>calendarClickSuppressedUntil)scheduleModal(null,'',b.dataset.slot);});

@@ -21,6 +21,9 @@ import credit_batches
 import accounting
 import deletion
 import payroll
+import pricing
+import auditlog
+import finance
 from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parent
@@ -31,7 +34,8 @@ ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HZ Education Melbourne')[:60]
 NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
 
 def contact_details():
-    return {'phone':os.environ.get('LESSON_CONTACT_PHONE','').strip()[:40],'email':os.environ.get('LESSON_CONTACT_EMAIL','').strip()[:80],'wechat':os.environ.get('LESSON_CONTACT_WECHAT','').strip()[:60]}
+    email = os.environ.get('LESSON_CONTACT_EMAIL', 'helenzeducation@gmail.com').strip()[:80]
+    return {'email': email or 'helenzeducation@gmail.com'}
 
 def connect():
     c = sqlite3.connect(DB_PATH, timeout=20)
@@ -129,6 +133,8 @@ def initialize():
                 c.execute('INSERT INTO teachers(user_id) VALUES(?)',(uid,))
             c.execute("INSERT INTO app_meta VALUES('owner_demo_v1','1')")
         payroll.schema(c)
+        pricing.schema(c)
+        auditlog.schema(c)
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -218,6 +224,31 @@ class Handler(BaseHTTPRequestHandler):
                         filename=f'teacher-pay-{result["start"]}-to-{result["end"]}.csv'
                         return self.response(200,blob,content_type='text/csv; charset=utf-8',extra=[('Content-Disposition',f'attachment; filename="{filename}"')])
                     return self.response(200,result)
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
+        if path in ('/api/finance', '/api/finance.xlsx', '/api/finance.pdf'):
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    result=finance.statement(c,user,params.get('period',['month'])[0],params.get('date',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])
+                    if path.endswith('.xlsx') or path.endswith('.pdf'):
+                        import exports
+                        blob=exports.finance_xlsx(result) if path.endswith('.xlsx') else exports.finance_pdf(result)
+                        kind='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' if path.endswith('.xlsx') else 'application/pdf'
+                        name='HZ-Education-Melbourne-finance.'+('xlsx' if path.endswith('.xlsx') else 'pdf')
+                        return self.response(200, blob, content_type=kind, extra=[('Content-Disposition', f'attachment; filename="{name}"')])
+                    return self.response(200,result)
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/audit':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    return self.response(200,{'entries':auditlog.search(c,user,params.get('actor',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])})
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/health':
@@ -374,6 +405,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 if self.path == '/api/students':
                     return self.add_student(c,user,data)
+                if self.path == '/api/prices/quote':
+                    return self.response(200, pricing.quote(c,user,data.get('student_id'),data.get('product'),data.get('lesson_minutes'),data.get('paid_lessons'),data.get('date') or teaching.now_local().date().isoformat(),data.get('terms')))
+                if self.path == '/api/audit/undo':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=auditlog.undo(c,user,int(data.get('id') or 0))
+                    c.commit()
+                    return self.response(200,result)
                 if self.path in ('/api/entries','/api/reverse','/api/refunds'):
                     return self.record(c,user,data)
                 return self.response(404,{'error':'接口不存在。'})
@@ -466,6 +504,8 @@ class Handler(BaseHTTPRequestHandler):
             kind = 'refund' if self.path=='/api/refunds' else data.get('kind')
             if kind not in ('lesson','credit','refund') or (kind=='refund' and self.path!='/api/refunds'):
                 raise ValueError('记录类型无效。')
+            if kind=='credit' and data.get('product'):
+                data=pricing.normalize_purchase(c,user,data)
             delta = (credit_batches.zero_units(data.get('amount'),units)+credit_batches.zero_units(data.get('gift_amount',0),units)) if kind=='credit' else -units(data.get('amount'))
             day = dt.date.fromisoformat(str(data.get('date',''))).isoformat()
             if day > teaching.now_local().date().isoformat():

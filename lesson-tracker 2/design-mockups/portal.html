@@ -125,6 +125,11 @@ button{cursor:default}
 .mini .today{background:#204F40;color:#fff;border-radius:50%;display:inline-grid;place-items:center;width:26px;height:26px;font-weight:700}
 .gcal{background:#fff;border:1px solid #dadce0;border-radius:12px;overflow:hidden}
 .gcal-tools{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #dadce0}
+.csearch{display:flex;align-items:center;gap:6px;height:36px;width:220px;padding:0 10px;border:1px solid #dadce0;border-radius:8px;background:#fff;color:#5B6B66}
+.csearch input{border:0;outline:0;width:100%;font:inherit;font-size:14px;background:transparent;color:#1F2A27}
+.csearch svg{flex:none;color:#204F40}
+.event.search-dim{opacity:.28}
+.event.search-hit{outline:2px solid #204F40;z-index:4}
 .gcal-tools h2{margin:0;font-size:20px;font-weight:500;flex:1}
 .iconbtn{width:36px;height:36px;border-radius:50%;border:1px solid #dadce0;background:#fff;font-size:18px}
 .todaybtn{height:36px;padding:0 14px;border-radius:18px;border:1px solid #dadce0;background:#fff;font-weight:650}
@@ -290,6 +295,7 @@ body[data-page="package"] section[data-page="package"]{display:block}
   .two{grid-template-columns:1fr}
   .gcal-tools{flex-wrap:wrap}
   .gcal-tools h2{font-size:16px;flex-basis:100%}
+  .csearch{order:5;flex:1 0 100%;width:auto}
   .event{font-size:10px;padding:2px 3px}
   .gd b{font-size:16px}
   .gd.now b{width:26px;height:26px}
@@ -533,6 +539,7 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
               <button class="todaybtn">今天</button>
               <button class="iconbtn" aria-label="上一周">‹</button>
               <button class="iconbtn" aria-label="下一周">›</button>
+              <label class="csearch"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input id="cal-search" type="search" placeholder="搜索学生或老师" aria-label="搜索学生或老师"></label>
               <h2>2026年11月</h2>
               <div class="gviews"><button data-view="day">日</button><button class="on" data-view="week">周</button><button data-view="month">月</button></div>
             </div>
@@ -559,7 +566,7 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
                     <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
                   </div>
                   <div class="col">
-                    <div class="event done" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
+                    <div class="event done ev-a" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
                     <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
                     <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
                     <div class="event ev-h" style="top:456px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
@@ -608,7 +615,7 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
                 <div class="cols" style="grid-template-columns:1fr">
                   <div class="col">
                     <button class="newslot" style="top:96px;height:46px">+ 新建课</button>
-                    <div class="event done" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
+                    <div class="event done ev-a" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
                     <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
                     <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
                     <div class="event ev-h" style="top:456px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
@@ -667,6 +674,20 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
   </form>
 </div>
 <script>
+const calWho={'ev-a':'Angela','ev-k':'Kelsey','ev-v':'Vincent','ev-e':'Ethan','ev-h':'Helen','ev-c':'Christina'};
+document.querySelectorAll('.event').forEach(el=>{
+  const teacher=Object.keys(calWho).find(key=>el.classList.contains(key))||'';
+  el.dataset.find=((teacher?calWho[teacher]+' ':'')+(el.textContent||'')).replace(/\s+/g,' ');
+});
+const calSearch=document.getElementById('cal-search');
+if(calSearch) calSearch.addEventListener('input',()=>{
+  const q=calSearch.value.trim().toLowerCase();
+  document.querySelectorAll('.event').forEach(el=>{
+    const hit=!q || (el.dataset.find||'').toLowerCase().includes(q);
+    el.classList.toggle('search-hit', !!q && hit);
+    el.classList.toggle('search-dim', !!q && !hit);
+  });
+});
 const page=new URLSearchParams(location.search).get('page')||'today';
 document.body.dataset.page=page;
 const phoneLabel={finance:['finance','财务'],cash:['cash','收款']};

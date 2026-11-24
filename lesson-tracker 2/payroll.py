@@ -173,7 +173,7 @@ def mul_div(value, numerator, denominator):
 
 def fee_for_ledger(c, ledger_id, amount):
     """Return (fee cents or None if the price is unknown, paid units, gift units)."""
-    moves = c.execute('''SELECT m.paid, m.gift, b.purchased, cash.cash_delta
+    moves = c.execute('''SELECT m.paid, m.gift, b.purchased, b.gifted, cash.cash_delta
         FROM credit_movements m JOIN credit_batches b ON b.id=m.batch_id
         LEFT JOIN cash_entries cash ON cash.ledger_id=b.ledger_id
         WHERE m.ledger_id=?''', (ledger_id,)).fetchall()
@@ -187,12 +187,18 @@ def fee_for_ledger(c, ledger_id, amount):
         gift = -move['gift'] if move['gift'] < 0 else 0
         paid_units += paid
         gift_units += gift
-        if paid <= 0:
+        taken = paid + gift
+        if taken <= 0:
             continue
-        if move['cash_delta'] is None or move['purchased'] <= 0:
+        pool = (move['purchased'] or 0) + (move['gifted'] or 0)
+        cash = move['cash_delta']
+        # A paid package splits its cash across paid and gift lessons. A pure gift, with no cash, stays 0.
+        if cash is None or pool <= 0:
+            if (move['purchased'] or 0) <= 0 and (move['gifted'] or 0) > 0 and cash is None:
+                continue
             known = False
             continue
-        fee += mul_div(paid, move['cash_delta'], move['purchased'])
+        fee += mul_div(taken, cash, pool)
     return (fee if known else None), paid_units, gift_units
 
 

@@ -140,3 +140,5 @@ dialog.dock-right{margin:0 0 0 auto;height:100%;max-height:100%;max-width:min(48
  .language-floating{position:static}
 }
 
+
+.calendar-search{display:flex;align-items:center;height:40px;min-width:200px;padding:0 12px;border:1px solid #d9e3df;border-radius:8px;background:#fff}.calendar-search input{border:0;outline:0;width:100%;font:inherit;background:transparent}.gcal-event.search-dim,.lesson-card.search-dim{opacity:.28}.gcal-event.search-hit,.lesson-card.search-hit{outline:2px solid #204F40;z-index:3}@media(max-width:760px){.calendar-toolbar{flex-wrap:wrap}.calendar-search{flex:1 0 100%;order:5}}
