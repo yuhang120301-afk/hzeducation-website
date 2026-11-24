@@ -82,7 +82,6 @@ def edit(c,user,data,units,text_value):
     if 'cash_amount' in data and data['cash_amount']!='':
         if kind not in ('credit','refund'):raise ValueError('此单据没有独立的收退款金额，请编辑原单据。')
         cents,method,reference=accounting.cash_details(data)
-        if kind=='refund' and cents<=0:raise ValueError('退款金额必须大于 0。')
         if kind=='credit' and method=='gift' and paid>0:raise ValueError('纯赠送的充值数量必须为 0。')
         signed=cents if kind=='credit' else -cents
         c.execute('INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by) VALUES(?,?,?,?,?) ON CONFLICT(ledger_id) DO UPDATE SET cash_delta=excluded.cash_delta,payment_method=excluded.payment_method,reference=excluded.reference,recorded_by=excluded.recorded_by',(entry['id'],signed,method,reference,user['id']))

@@ -781,7 +781,6 @@ class Handler(BaseHTTPRequestHandler):
                 if kind=='credit' and method=='gift' and credit_batches.zero_units(data.get('amount'),units)>0:
                     raise ValueError('纯赠课请将付费课时填 0，并在赠送课时中填写数量。')
                 if kind=='refund':
-                    if cents<=0:raise ValueError('实际退款金额必须大于 0。')
                     note='退课退款：'+text_value(data.get('note'),'退款原因',250)
                 cash=(cents if kind=='credit' else -cents,method,reference)
         student = c.execute('SELECT * FROM students WHERE id=?',(sid,)).fetchone()
