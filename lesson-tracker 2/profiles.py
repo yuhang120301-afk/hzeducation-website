@@ -40,6 +40,8 @@ def ensure_enrolment_columns(c):
     for name in PROFILE_FLAGS:
         if name not in cols:
             c.execute(f'ALTER TABLE student_profiles ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0')
+    if 'study_status' not in cols:
+        c.execute("ALTER TABLE student_profiles ADD COLUMN study_status TEXT NOT NULL DEFAULT 'studying'")
 
 def fields(data):
     birthday=str(data.get('birthday','')).strip()
@@ -98,10 +100,65 @@ def require_admin(user):
     if user['role'] not in ('owner','admin'):
         raise AccessError('只有老板或管理员可以编辑学生档案。')
 
+def profile_withdrawn(c, profile_id):
+    """A whole student was archived from the profile action, not by stopping each course."""
+    if not profile_id:
+        return False
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
+        return False
+    return bool(c.execute('''SELECT 1 FROM profile_audit a
+        JOIN students s ON s.id=a.student_id
+        WHERE s.profile_id=? AND a.action='archived' LIMIT 1''', (profile_id,)).fetchone())
+
+
 def student(c,data):
-    row=c.execute('SELECT * FROM students WHERE archived=0 AND id=?',(int(data.get('student_id',0)),)).fetchone()
-    if not row: raise ValueError('学生不存在，请刷新页面。')
+    row=c.execute('SELECT * FROM students WHERE id=?',(int(data.get('student_id',0)),)).fetchone()
+    if not row:
+        raise ValueError('学生不存在，请刷新页面。')
+    if row['archived'] and profile_withdrawn(c, row['profile_id']):
+        raise ValueError('学生已归档，请先恢复档案。')
     return row
+
+
+def course_shells(c, rows):
+    """One visible card per profile that still belongs here but has no current course."""
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(row.get('profile_id') or row['id'], []).append(row)
+    shells = []
+    for profile_id, group in grouped.items():
+        if any(not row['archived'] for row in group):
+            continue
+        if profile_withdrawn(c, profile_id):
+            continue
+        source = dict(group[0])
+        source['no_course'] = True
+        source['course'] = ''
+        source['subject_name'] = ''
+        source['course_type_name'] = ''
+        source['balance'] = 0
+        source['paid_balance'] = 0
+        source['gift_balance'] = 0
+        source['credit_batches'] = []
+        source['archived'] = 0
+        source['legacy'] = False
+        source['legacy_subjects'] = []
+        source['study_status'] = source.get('study_status') or 'studying'
+        shells.append(source)
+    return shells
+
+
+def set_study_status(c, user, data):
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以修改在读状态。')
+    status = str(data.get('study_status') or '')
+    if status not in ('studying', 'graduated'):
+        raise ValueError('请选择在读或已毕业。')
+    ensure_enrolment_columns(c)
+    row = student(c, data)
+    c.execute('UPDATE student_profiles SET study_status=? WHERE id=?', (status, row['profile_id']))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (row['id'], user['id'], 'study_'+status))
+    return {'ok': True, 'study_status': status}
 
 def update(c,user,data,text_value):
     import payroll
@@ -118,6 +175,8 @@ def update(c,user,data,text_value):
         raise ValueError('请选择年级。')
     c.execute('UPDATE students SET name=?,birthday=?,grade=?,notes=?,level_code=?,level_year=? WHERE profile_id=?',(name,birthday,grade,notes,level_code,level_year,s['profile_id']))
     save_enrolment(c, s['profile_id'], data)
+    if str(data.get('study_status') or ''):
+        set_study_status(c, user, {'student_id': s['id'], 'study_status': data.get('study_status')})
     parent_name = str(data.get('parent_name') or '').strip()
     phone_raw = str(data.get('phone') or '').strip()
     if parent_name or phone_raw:

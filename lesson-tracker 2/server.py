@@ -514,8 +514,9 @@ class Handler(BaseHTTPRequestHandler):
                             person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
+                shells=profiles.course_shells(c, students)
                 archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
-                students=[s for s in students if not s['archived']]
+                students=[s for s in students if not s['archived']]+shells
                 if user['role']!='owner':
                     for person in students+archived_students:
                         person.pop('helen_original', None)
@@ -645,6 +646,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/students/course/relink':
                     c.execute('BEGIN IMMEDIATE')
                     result=profiles.relink_future(c,user,data)
+                    c.commit()
+                    return self.response(200,result)
+                if self.path == '/api/students/study-status':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=profiles.set_study_status(c,user,data)
                     c.commit()
                     return self.response(200,result)
                 if self.path in ('/api/students/profile','/api/students/guardian','/api/students/course'):
