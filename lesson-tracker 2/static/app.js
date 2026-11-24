@@ -215,6 +215,13 @@ function stopCourseModal(id){
  const warn=left>0?`<p class="error">这门课还剩 ${fmt(left)} ${unitFor(account)}。可以先退费（退款金额可以填 0），也可以直接停课。余额会留在这门已停的课上。</p>`:'';
  modal('停课/删除这门课',`<div class="form-context">${userHTML(account.name)} · ${userHTML(account.subject_name||account.course)}<br>同一学生的其他科目不受影响。已上的课、课后记录和账目保留，以后还没上的课会取消。没有任何记录的课会直接删除。</div>${warn}`,'确认停课',async()=>{const result=await api('students/course/stop',{student_id:account.id}); toast(result.deleted?'这门课已删除。':'这门课已停，历史记录还在。');},true);
 }
+function stopCourseModal(id){
+ const account=state.students.find(s=>s.id==id);
+ if(!account) return;
+ const left=account.balance||0;
+ const warn=left>0?`<p class="error">这门课还剩 ${fmt(left)} ${unitFor(account)}。可以先退费（退款金额可以填 0），也可以直接停课。余额会留在这门已停的课上。</p>`:'';
+ modal('停课/删除这门课',`<div class="form-context">${userHTML(account.name)} · ${userHTML(account.subject_name||account.course)}<br>同一学生的其他科目不受影响。已上的课、课后记录和账目保留，以后还没上的课会取消。没有任何记录的课会直接删除。</div>${warn}`,'确认停课',async()=>{const result=await api('students/course/stop',{student_id:account.id}); toast(result.deleted?'这门课已删除。':'这门课已停，历史记录还在。');},true);
+}
 function addCourseModal(id){
  const s=state.students.find(s=>s.id==id),existing=state.students.filter(x=>x.profile_id===s.profile_id).map(x=>x.course);
  const choices=(state.subjects||[]).filter(o=>o.active&&!existing.includes(o.name));
