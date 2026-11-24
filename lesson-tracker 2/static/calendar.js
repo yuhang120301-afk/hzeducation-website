@@ -93,6 +93,11 @@ function lessonIsOpen(lesson){
  const blob=[lesson.title, lesson.title_note, lesson.teacher_name, lesson.subject_name].filter(Boolean).join(' ');
  return /待定|试听/.test(blob);
 }
+function lessonDone(lesson){
+ const status=String(lesson.status||'').toLowerCase();
+ if(['completed','attended','done','redeemed','已完成','已上了'].includes(status)) return true;
+ return (lesson.reports||[]).length>0;
+}
 function clockLabel(value, compact){
  const hour=Number(value.slice(0,2)), minute=Number(value.slice(3,5));
  const suffix=hour>=12?'pm':'am';
@@ -138,7 +143,8 @@ function gcalEvent(item){
  const width = 100/item.cols, left = item.col*width;
  const compact=height<40;
  const hover=`${cardHeadline(lesson)}, ${timeRange(lesson, false)}`;
- return `<button type="button" class="gcal-event ${compact?'is-compact':''} ${lesson.status} t-${teacherTone(lesson.teacher_name)}${lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(hover)}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)">${cardMarkup(lesson, compact, '<i class="gcal-resize" aria-hidden="true"></i>')}</button>`;
+ const done=lessonDone(lesson);
+ return `<button type="button" class="gcal-event ${compact?'is-compact':''} ${lesson.status}${done?' completed':''} t-${teacherTone(lesson.teacher_name)}${!done&&lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(hover)}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)">${cardMarkup(lesson, compact, '<i class="gcal-resize" aria-hidden="true"></i>')}</button>`;
 }
 let calendarLayout='grid';
 function renderSchedule(){
@@ -248,7 +254,7 @@ function renderMonth(){
  for(let n=1;n<=Number(end.slice(8));n++){
   const day=start.slice(0,8)+String(n).padStart(2,'0');
   const items=lessons.filter(lesson=>lesson.starts_at.slice(0,10)===day).sort((a,b)=>a.starts_at.localeCompare(b.starts_at));
-  cells.push(`<div class="month-day ${day===state.today?'is-today':''}" data-month-day="${day}"><button type="button" class="month-num">${n}</button>${items.slice(0,3).map(lesson=>`<button type="button" class="month-chip gcal-event is-compact t-${teacherTone(lesson.teacher_name)} ${lesson.status}${lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(cardHeadline(lesson)+', '+timeRange(lesson, false))}">${cardMarkup(lesson, true)}</button>`).join('')}${items.length>3?`<span class="month-more">还有 ${items.length-3} 节</span>`:''}</div>`);
+  cells.push(`<div class="month-day ${day===state.today?'is-today':''}" data-month-day="${day}"><button type="button" class="month-num">${n}</button>${items.slice(0,3).map(lesson=>{const done=lessonDone(lesson);return `<button type="button" class="month-chip gcal-event is-compact t-${teacherTone(lesson.teacher_name)} ${lesson.status}${done?' completed':''}${!done&&lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(cardHeadline(lesson)+', '+timeRange(lesson, false))}">${cardMarkup(lesson, true)}</button>`;}).join('')}${items.length>3?`<span class="month-more">还有 ${items.length-3} 节</span>`:''}</div>`);
  }
  $('#surface').innerHTML=`<div class="calendar-toolbar"><label class="calendar-search"><input id="calendar-search" type="search" placeholder="搜索学生或老师" value="${escapeHTML(calendarSearch)}"></label><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上个月">‹</button><strong>${start.slice(0,4)}年${Number(start.slice(5,7))}月<small>${lessons.length} 节</small></strong><button class="btn icon-button" id="next-week" aria-label="下个月">›</button><button class="btn" id="this-week">本月</button></div>${miniPickerButton()}<div class="calendar-filters"><div class="period-switch" role="group" aria-label="日周月"><button type="button" id="span-day">日</button><button type="button" id="span-week">周</button><button type="button" id="span-month" class="selected">月</button></div><select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(teacher=>`<option value="${teacher.id}" ${teacherFilter==teacher.id?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select></div></div><div class="month-grid"><div class="month-head">${['周一','周二','周三','周四','周五','周六','周日'].map(name=>`<span>${name}</span>`).join('')}</div><div class="month-days">${cells.join('')}</div></div>`;
  $('#prev-week').onclick=()=>stepCalendar(-1);

@@ -121,16 +121,20 @@
 .gcal-event.is-compact strong{white-space:nowrap}
 .gcal-event.is-open,.month-chip.is-open{border-style:dashed;border-width:1.5px;border-left-width:4px;border-color:var(--event-edge,#8A6D1F)}
 .month-chip{position:relative;width:100%;text-align:left;border:0;border-left:4px solid var(--event-edge,#78B48F);border-radius:6px;background:var(--event-bg,#E4F0E9);color:var(--event-ink,#1F2A27);padding:3px 6px;font-size:12px;line-height:1.3}
-.gcal-event.completed{--event-bg:#edf0f2;--event-ink:#53616b;--event-edge:#9aa7af}
 .gcal-event.t-helen{--event-bg:#E4F0E9;--event-edge:#78B48F;--event-ink:#1F2A27}
 .gcal-event.t-vincent{--event-bg:#E7ECF3;--event-edge:#85A1C2;--event-ink:#1F2A27}
 .gcal-event.t-angela{--event-bg:#F5EAE8;--event-edge:#CB958B;--event-ink:#1F2A27}
 .gcal-event.t-kelsey{--event-bg:#EDEAF3;--event-edge:#A695C3;--event-ink:#1F2A27}
 .gcal-event.t-ethan{--event-bg:#E4F0EF;--event-edge:#7AB6AD;--event-ink:#1F2A27}
 .gcal-event.t-christina{--event-bg:#F5F1E7;--event-edge:#CEBA88;--event-ink:#1F2A27}
+.gcal-event.completed,.month-chip.completed,.lesson-card.completed{--event-bg:#EDF0F2;--event-ink:#53616B;--event-edge:#9AA7AF;background:#EDF0F2;color:#53616B;border-color:#9AA7AF;border-style:solid;border-left-style:solid}
 .gcal-event.gcal-ghost{opacity:.35;outline:1px dashed var(--event-edge)}
 .drag-tip{position:absolute;top:-24px;left:0;background:#204F40;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;white-space:nowrap;font-style:normal}
-.pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px}
+.pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer}
+.pay-card h2{margin:0;font-size:22px}
+.pay-fold h3{margin:14px 0 8px;font-size:16px;color:#204F40}
+.pack-list{margin:4px 0 12px;padding-left:18px;color:#5b6b66}
+.pay-fold .num small{display:block;font-weight:500;color:#5b6b66;font-size:12px}
 .pay-card .avatar{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:var(--tone);color:#1F2A27;font-weight:600}
 .pay-card.t-helen{--fill:#E4F0E9;--tone:#78B48F}.pay-card.t-vincent{--fill:#E7ECF3;--tone:#85A1C2}.pay-card.t-angela{--fill:#F5EAE8;--tone:#CB958B}.pay-card.t-kelsey{--fill:#EDEAF3;--tone:#A695C3}.pay-card.t-ethan{--fill:#E4F0EF;--tone:#7AB6AD}.pay-card.t-christina{--fill:#F5F1E7;--tone:#CEBA88}
 .gcal-preview{z-index:1;background:#214e3e22;border:1px dashed var(--blue);color:var(--blue);pointer-events:none}
