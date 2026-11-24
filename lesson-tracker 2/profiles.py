@@ -184,7 +184,62 @@ def add_course(c,user,data,text_value):
     type_id = int(data.get('course_type_id') or 0) or s['course_type_id']
     c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
-    return {'ok':True,'student_id':sid}
+    moved=relink_future_lessons(c, sid)
+    return {'ok':True,'student_id':sid,'moved':moved}
+
+
+def same_subject(left_name, left_subject, right_name, right_subject):
+    """数学 and 英语 match even when the old course name is longer, such as 数学 一对一."""
+    def token(name, subject):
+        text=f'{subject or ""} {name or ""}'
+        if '数学' in text:
+            return '数学'
+        if '英语' in text:
+            return '英语'
+        return (subject or name or '').strip()
+    a, b = token(left_name, left_subject), token(right_name, right_subject)
+    return bool(a) and a==b
+
+
+def relink_future_lessons(c, student_id):
+    """Point future scheduled lessons from an archived same-subject course at this one."""
+    current=c.execute('''SELECT s.*, sb.name subject_name FROM students s
+        LEFT JOIN subjects sb ON sb.id=s.subject_id WHERE s.id=?''', (int(student_id),)).fetchone()
+    if not current or current['archived']:
+        return 0
+    now=now_local().strftime('%Y-%m-%dT%H:%M')
+    olds=c.execute('''SELECT s.id, s.course, sb.name subject_name FROM students s
+        LEFT JOIN subjects sb ON sb.id=s.subject_id
+        WHERE s.profile_id=? AND s.id!=? AND s.archived=1''', (current['profile_id'], current['id'])).fetchall()
+    moved=0
+    for old in olds:
+        if not same_subject(current['course'], current['subject_name'], old['course'], old['subject_name']):
+            continue
+        lessons=c.execute('''SELECT l.id FROM lessons l
+            JOIN lesson_students ls ON ls.lesson_id=l.id
+            WHERE ls.student_id=? AND l.status='scheduled' AND l.starts_at>=?''', (old['id'], now)).fetchall()
+        for lesson in lessons:
+            already=c.execute('SELECT 1 FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], current['id'])).fetchone()
+            if already:
+                c.execute('DELETE FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], old['id']))
+            else:
+                c.execute('UPDATE lesson_students SET student_id=? WHERE lesson_id=? AND student_id=?', (current['id'], lesson['id'], old['id']))
+            report=c.execute('SELECT 1 FROM lesson_reports WHERE lesson_id=? AND student_id=?', (lesson['id'], current['id'])).fetchone()
+            if report:
+                c.execute('DELETE FROM lesson_reports WHERE lesson_id=? AND student_id=?', (lesson['id'], old['id']))
+            else:
+                c.execute('UPDATE lesson_reports SET student_id=? WHERE lesson_id=? AND student_id=?', (current['id'], lesson['id'], old['id']))
+            moved+=1
+    return moved
+
+
+def relink_future(c, user, data):
+    require_admin(user)
+    sid=int(data.get('student_id') or 0)
+    if not c.execute('SELECT 1 FROM students WHERE id=? AND archived=0', (sid,)).fetchone():
+        raise ValueError('这门课不存在，请刷新页面。')
+    moved=relink_future_lessons(c, sid)
+    return {'ok':True,'moved':moved}
 
 def billing_unit(value):
     if value not in ('lesson','hour'):raise ValueError('请选择按课时或按小时计费。')

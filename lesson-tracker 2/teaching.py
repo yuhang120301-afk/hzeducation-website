@@ -157,6 +157,7 @@ def ensure_catalogs(c):
         _add_column(c, 'price_rows', 'placeholder', 'placeholder INTEGER NOT NULL DEFAULT 1')
     _backfill_catalogs(c)
     focus_catalog(c)
+    refocus_catalog(c)
 
 
 def focus_catalog(c):
@@ -177,6 +178,21 @@ def focus_catalog(c):
             c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (name,))
             c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (name,))
     c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_focus_v1', '1')")
+
+
+def refocus_catalog(c):
+    """Hide course names added after the first pass, such as 跟踪辅导. Rows stay."""
+    if c.execute("SELECT 1 FROM app_meta WHERE key='catalog_focus_v2'").fetchone():
+        return
+    marks = ','.join('?' * len(OFFERED_SUBJECTS))
+    c.execute(f'UPDATE subjects SET active=0 WHERE name NOT IN ({marks})', OFFERED_SUBJECTS)
+    c.execute(f'UPDATE subjects SET active=1 WHERE name IN ({marks})', OFFERED_SUBJECTS)
+    type_marks = ','.join('?' * len(OFFERED_TYPES))
+    c.execute(f'UPDATE course_types SET active=0 WHERE name NOT IN ({type_marks})', OFFERED_TYPES)
+    c.execute(f'UPDATE course_types SET active=1 WHERE name IN ({type_marks})', OFFERED_TYPES)
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
+        c.execute("UPDATE schedule_options SET active=0 WHERE kind='course' AND name NOT IN ('数学','英语')")
+    c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_focus_v2', '1')")
 
 
 def _id_by_name(c, table, name):

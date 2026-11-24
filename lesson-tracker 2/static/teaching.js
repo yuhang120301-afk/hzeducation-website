@@ -160,7 +160,7 @@ function renderTeachers(){
 }
 function teacherModal(existing=null){
  const t=existing&&existing.id?existing:null,managed=t&&t.account_role!=='teacher',selected=t?.subjects||[];
- const choices=[...new Set([...selected,...(state.schedule_options||[]).filter(o=>o.kind==='course'&&o.active).map(o=>o.name)])];
+ const choices=['数学','英语'];
  modal(t?'编辑老师':'添加任课老师',`${managed?'<div class="form-context">此账号兼任管理职务，这里仅修改教学科目。</div>':`<label class="field">老师姓名<input name="name" required maxlength="40" value="${escapeHTML(t?.name||'')}"></label><label class="field">登录手机号<input name="phone" type="tel" required maxlength="24" value="${escapeHTML(t?.phone||'')}"></label><label class="field">${t?'重置密码（选填）':'初始密码'}<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" ${t?'':'required'}><small>${t?'留空保留原密码；修改手机号或密码后需重新登录。':'至少 10 位，请单独告知老师。'}</small></label>`}<fieldset class="student-picker"><legend>教学科目 · 可多选</legend>${choices.map(name=>`<label><input type="checkbox" name="subjects" value="${escapeHTML(name)}" ${selected.includes(name)?'checked':''}>${userHTML(name)}</label>`).join('')}</fieldset><p class="footnote">更多科目可在课程与地点设置中添加。</p>`,'保存老师',async data=>{data.subjects=[...document.querySelectorAll('[name=subjects]:checked')].map(e=>e.value);delete data.subject;await api(t?'teachers/edit':'teachers',{...data,teacher_id:t?.id});toast('老师资料已保存。');});
 }
 function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
@@ -238,12 +238,13 @@ function typeBadge(name){
  return label?`<span class="type-badge type-${kind}">${escapeHTML(label)}</span>`:'';
 }
 function catalogSelect(list, field, current, placeholder){
- const rows=(list||[]).filter(item=>item.active||String(item.id)===String(current));
+ const allowed=field==='subject_id'?['数学','英语']:field==='course_type_id'?['一对一','一对二','小班课']:null;
+ const rows=(list||[]).filter(item=>item.active && (!allowed || allowed.includes(item.name)));
  return `<select name="${field}" required><option value="">${placeholder}</option>${rows.map(item=>`<option value="${item.id}" ${String(item.id)===String(current)?'selected':''}>${escapeHTML(item.name)}</option>`).join('')}</select>`;
 }
 function scheduleOptions(kind,current){
- const options=(state.schedule_options||[]).filter(o=>o.kind===kind&&o.active).map(o=>o.name);
- if(current&&!options.includes(current))options.unshift(current);
+ const options=(state.schedule_options||[]).filter(o=>o.kind===kind&&o.active&&(kind!=='course'||['数学','英语'].includes(o.name))).map(o=>o.name);
+ if(current&&kind!=='course'&&!options.includes(current))options.unshift(current);
  return `<option value="">${kind==='course'?'请选择课程':'不指定地点'}</option>`+options.map(name=>`<option data-user-content value="${escapeHTML(name)}" ${name===current?'selected':''}>${escapeHTML(name)}</option>`).join('');
 }
 function renderScheduleSettings(){
