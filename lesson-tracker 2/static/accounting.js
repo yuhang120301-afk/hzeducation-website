@@ -29,7 +29,7 @@ async function renderAccounting(){
  if($('#accounting-today')) $('#accounting-today').onclick=()=>{accountingDate=state.today;renderAccounting();};
  $('#accounting-export').onclick=async()=>{try{await downloadCsv(`/api/reconciliation.csv?period=${accountingPeriod}&date=${encodeURIComponent(accountingDate)}`,'accounting.csv');}catch(error){toast(error.message);}};
  $('#accounting-pdf').onclick=()=>toast('收款明细请用导出 Excel。财务报表的 PDF 在财务报表页。');
- $('#accounting-add').onclick=()=>{const options=(state.students||[]).map(s=>`<option value="${s.id}">${escapeHTML(s.name)} · ${escapeHTML(s.subject_name||s.course)}</option>`).join('');modal('记一笔收款',`<label class="field">学生<select name="student_id" required>${options}</select></label>`,'继续',data=>{entryModal('credit',data.student_id);});};
+ $('#accounting-add').onclick=()=>{const options=(state.students||[]).filter(s=>!s.no_course).map(s=>`<option value="${s.id}">${escapeHTML(s.name)} · ${escapeHTML(s.subject_name||s.course)}</option>`).join('');modal('记一笔收款',`<label class="field">学生<select name="student_id" required>${options}</select></label>`,'继续',data=>{entryModal('credit',data.student_id);});};
  try{
   const data=await api(`reconciliation?period=${accountingPeriod}&date=${encodeURIComponent(accountingDate)}`);
   if(view!=='accounting'||request!==accountingRequest)return;
