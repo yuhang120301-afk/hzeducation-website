@@ -27,8 +27,12 @@ def remove(c, user, data):
             raise ValueError('学生档案不存在，请刷新页面。')
         if student['archived']:
             raise ValueError('学生已经归档，请刷新页面。')
+        courses=list(c.execute('SELECT * FROM students WHERE profile_id=? AND archived=0', (student['profile_id'],)))
         c.execute('UPDATE students SET archived=1 WHERE profile_id=?', (student['profile_id'],))
         c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'],user['id'],'archived'))
+        import vouchers
+        for course in courses:
+            vouchers.issue_stop(c, user, course, False)
     elif kind in ('teacher', 'admin'):
         if kind == 'teacher':
             target = c.execute('SELECT u.* FROM users u JOIN teachers t ON t.user_id=u.id WHERE t.id=?', (ident,)).fetchone()

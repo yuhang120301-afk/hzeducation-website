@@ -9,7 +9,7 @@ const lessonStatus=l=>l.status==='cancelled'?statusName.cancelled:(typeof lesson
 function navigationItems(){
  const role=state.user.role;
  if(role==='owner') return [
-  ['',[['today','今天','clock'],['schedule','课表','grid'],['overview','学生','users'],['pay','工资','book'],['finance','财务','book'],['share','分红','book']]],
+  ['',[['today','今天','clock'],['schedule','课表','grid'],['overview','学生','users'],['pay','工资','book'],['finance','财务','book'],['vouchers','单据','book'],['share','分红','book']]],
   ['更多',[['feedback','课后记录','check'],['accounting','收款与欠费','grid'],['prices','价格表','book'],['audit','操作日志','book'],['setup','设置','users']]]
  ];
  const items=[['schedule',role==='admin'?'排课日历':role==='teacher'?'我的课程':'孩子的课表','clock'],['feedback','课后记录','book'],['overview',role==='admin'?'学生与课时':role==='teacher'?'我的学生':'剩余余额','grid'],['records','余额明细','book']];
@@ -81,6 +81,7 @@ function dashboard(){
  if(view==='accounting')renderAccounting();
  if(view==='pay')renderPay();
  if(view==='finance')renderFinance();
+ if(view==='vouchers')renderVouchers();
  if(view==='share')renderShare();
  if(view==='prices')renderPrices();
  if(view==='audit')renderAudit();
