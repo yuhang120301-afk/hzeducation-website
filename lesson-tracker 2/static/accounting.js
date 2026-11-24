@@ -1,7 +1,7 @@
 let accountingPeriod='day', accountingDate='', accountingRequest=0;
 const cashFmt=cents=>new Intl.NumberFormat('en-AU',{style:'currency',currency:'AUD',currencyDisplay:'code'}).format(cents/100);
 const signedUnits=v=>(v>0?'+':v<0?'−':'')+fmt(Math.abs(v));
-const paymentNames={bank:'银行转账',cash:'现金',card:'刷卡',other:'其他',gift:'赠课 / 无收款'};
+const paymentNames={bank:'银行转账',cash:'现金',card:'刷卡',alipay:'支付宝',wechat:'微信',other:'其他',gift:'赠课 / 无收款'};
 function paymentFields(refund=false){return `<div class="two-cols"><label class="field">${refund?'实际退款金额':'实际收款金额'}（AUD）<input name="cash_amount" type="number" min="${refund?'0.01':'0'}" max="1000000" step="0.01" required placeholder="0.00"><small>${refund?'填写实际退还给家长的金额。':'赠送课时不计入收款金额；纯赠课填写 0。'}</small></label><label class="field">${refund?'退款':'收款'}方式<select name="payment_method">${Object.entries(paymentNames).filter(([k])=>!refund||k!=='gift').map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></label></div><label class="field">凭证号 / 转账备注（选填）<input name="reference" maxlength="100" placeholder="用于和银行或收款记录核对"></label>`;}
 function refundModal(id){
  const s=state.students.find(x=>x.id==id),request_id=crypto.randomUUID(),batches=(s?.credit_batches||[]).filter(b=>b.paid_left>0);
@@ -23,11 +23,13 @@ function administratorModal(){modal('添加管理员',`<div class="form-context"
 async function renderAccounting(){
  if(!accountingDate)accountingDate=state.today;
  const request=++accountingRequest;
- $('#surface').innerHTML=`<div class="accounting-controls"><div class="period-switch" role="group" aria-label="汇总周期">${[['day','每日'],['week','每周'],['month','每月']].map(([p,t])=>`<button class="${p===accountingPeriod?'selected':''}" data-period="${p}">${t}</button>`).join('')}</div><label>选择日期<input id="accounting-date" type="date" value="${accountingDate}" aria-label="对账日期"></label><button class="btn" id="accounting-today">今天</button><button class="btn" id="accounting-export">导出 CSV</button></div><div id="accounting-result" aria-live="polite"><div class="panel empty">正在汇总账目…</div></div>`;
+ $('#surface').innerHTML=`<div class="mock-top"><div><h1 class="mock-title">收款与欠费</h1></div><div class="exports"><button class="btn primary" id="accounting-add" type="button">+ 记一笔收款</button><button class="btn" id="accounting-export" type="button">导出 Excel</button><button class="btn" id="accounting-pdf" type="button">导出 PDF</button></div></div><div class="pay-tools"><div class="seg">${[['day','日'],['week','周'],['fortnight','双周'],['month','月']].map(([p,t])=>`<button type="button" class="${p===accountingPeriod?'on':''}" data-period="${p}">${t}</button>`).join('')}</div><label class="search">搜索<input id="pay-search" type="search" placeholder="搜索学生、老师或收款人" aria-label="搜索收款"></label><label>日期<input id="accounting-date" type="date" value="${accountingDate}"></label></div><div id="accounting-result" aria-live="polite"><div class="panel empty">正在汇总账目…</div></div>`;
  document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{accountingPeriod=b.dataset.period;renderAccounting();});
  $('#accounting-date').onchange=e=>{if(e.target.value){accountingDate=e.target.value;renderAccounting();}};
  $('#accounting-today').onclick=()=>{accountingDate=state.today;renderAccounting();};
  $('#accounting-export').onclick=async()=>{try{await downloadCsv(`/api/reconciliation.csv?period=${accountingPeriod}&date=${encodeURIComponent(accountingDate)}`,'accounting.csv');}catch(error){toast(error.message);}};
+ $('#accounting-pdf').onclick=()=>toast('收款明细请用导出 Excel。财务报表的 PDF 在财务报表页。');
+ $('#accounting-add').onclick=()=>{const options=(state.students||[]).map(s=>`<option value="${s.id}">${escapeHTML(s.name)} · ${escapeHTML(s.subject_name||s.course)}</option>`).join('');modal('记一笔收款',`<label class="field">学生<select name="student_id" required>${options}</select></label>`,'继续',data=>{entryModal('credit',data.student_id);});};
  try{
   const data=await api(`reconciliation?period=${accountingPeriod}&date=${encodeURIComponent(accountingDate)}`);
   if(view!=='accounting'||request!==accountingRequest)return;

@@ -222,7 +222,9 @@ def student_is_new(helen_original):
 
 
 def confirmed_rows(c, start, end):
-    return c.execute('''SELECT l.id lesson_id, l.teacher_id, l.title, l.starts_at, l.ends_at,
+    return c.execute('''SELECT l.id lesson_id, l.teacher_id, l.title, l.starts_at, l.ends_at, l.course_type_id,
+        (SELECT name FROM course_types WHERE id=l.course_type_id) course_type_name,
+        (SELECT name FROM subjects WHERE id=l.subject_id) subject_name,
         r.student_id, r.amount, r.ledger_id, r.fee_cents, r.fee_overridden,
         s.name student_name, s.course, s.billing_unit, s.profile_id, s.helen_original,
         u.name teacher_name
@@ -252,7 +254,8 @@ def build_lessons(c, rows, rules_by_teacher):
             minutes = minutes_between(row['starts_at'], row['ends_at'])
             item = {'lesson_id': key, 'teacher_id': row['teacher_id'], 'teacher_name': row['teacher_name'],
                 'title': row['title'], 'date': row['starts_at'][:10], 'starts_at': row['starts_at'], 'ends_at': row['ends_at'],
-                'minutes': minutes, 'lines': []}
+                'minutes': minutes, 'course_type_name': row['course_type_name'] or '', 'subject_name': row['subject_name'] or '',
+                'lines': []}
             index[key] = item
             grouped.append(item)
         fee, known, paid_units, gift_units, overridden = resolved_fee(c, row)
@@ -269,8 +272,14 @@ def build_lessons(c, rows, rules_by_teacher):
         item['unknown_fee_count'] = sum(1 for line in item['lines'] if not line['fee_known'])
         item['rule'] = public_rule(rule)
         pay, basis = lesson_pay(rule, item['minutes'], item['fee_cents'])
+        percent_cents = mul_div(item['fee_cents'], rule['percent_bp'] or 0, 10000) if rule and rule['rule_type'] == 'percent' else 0
+        floor_cents = mul_div(rule['hourly_floor_cents'], item['minutes'], 60) if rule and rule['hourly_floor_cents'] else 0
         item['pay_cents'] = pay
         item['pay_basis'] = basis
+        item['share_bp'] = rule['percent_bp'] if rule and rule['rule_type'] == 'percent' else None
+        item['percent_cents'] = percent_cents
+        item['floor_cents'] = floor_cents
+        item['top_up_cents'] = max(0, pay - percent_cents) if basis == 'floor' else 0
         allocate_line_pay(item)
     return grouped
 
@@ -397,6 +406,7 @@ def report(c, user, period, day, start, end):
             'lessons': own, 'total_minutes': sum(lesson['minutes'] for lesson in own),
             'total_fee_cents': sum(lesson['fee_cents'] for lesson in own),
             'total_pay_cents': sum(lesson['pay_cents'] for lesson in own),
+            'total_top_up_cents': sum(lesson['top_up_cents'] for lesson in own),
             'unknown_fee_count': sum(lesson['unknown_fee_count'] for lesson in own)})
     students = []
     for row in c.execute('''SELECT id, profile_id, name, course, helen_original, archived
@@ -592,7 +602,7 @@ def csv_bytes(data, teacher_id=None):
         if not teachers:
             raise ValueError('找不到这位老师。')
     writer.writerow(['老师工资', data['start'], data['end']])
-    writer.writerow(['老师', '日期', '开始', '结束', '时长（小时）', '学生', '课程', '扣除数量', '课酬基数（AUD）', '分摊课酬（AUD）', '本节课酬（AUD）', '计算方式', '备注'])
+    writer.writerow(['老师', '日期', '开始', '结束', '时长（小时）', '学生', '科目', '课程类型', '扣除数量', '课酬基数（AUD）', '分成比例', '比例工资（AUD）', '保底补足（AUD）', '本节应付（AUD）', '计算方式', '备注'])
     basis_name = {'percent': '课酬比例', 'floor': '时薪保底', 'hourly': '时薪', 'missing-rule': '未设置规则'}
     for teacher in teachers:
         if not teacher['lessons']:
@@ -601,13 +611,18 @@ def csv_bytes(data, teacher_id=None):
             for index, line in enumerate(lesson['lines']):
                 writer.writerow([
                     teacher['name'], lesson['date'], lesson['starts_at'][11:16], lesson['ends_at'][11:16],
-                    hours(lesson['minutes']) if index == 0 else '', line['student_name'], line['course'],
+                    hours(lesson['minutes']) if index == 0 else '', line['student_name'],
+                    lesson.get('subject_name') or line['course'], lesson.get('course_type_name') or '',
                     f'{line["units"] / 100:.2f}', aud(line['fee_cents']) if line['fee_known'] else '未定价',
-                    aud(line['pay_cents']), aud(lesson['pay_cents']) if index == 0 else '',
+                    f"{(lesson.get('share_bp') or 0) / 100:.2f}%" if index == 0 and lesson.get('share_bp') is not None else '',
+                    aud(lesson.get('percent_cents') or 0) if index == 0 else '',
+                    aud(lesson.get('top_up_cents') or 0) if index == 0 else '',
+                    aud(lesson['pay_cents']) if index == 0 else '',
                     basis_name.get(lesson['pay_basis'], lesson['pay_basis']) if index == 0 else '',
                     '' if line['fee_known'] else '充值批次没有可计算的澳元单价'])
-        writer.writerow([teacher['name'], '合计', '', '', hours(teacher['total_minutes']), '', '', '',
-            aud(teacher['total_fee_cents']), aud(teacher['total_pay_cents']), aud(teacher['total_pay_cents']), '',
+        writer.writerow([teacher['name'], '合计', '', '', hours(teacher['total_minutes']), '', '', '', '',
+            aud(teacher['total_fee_cents']), '', '', aud(teacher.get('total_top_up_cents') or 0),
+            aud(teacher['total_pay_cents']), '',
             f'未定价 {teacher["unknown_fee_count"]} 节' if teacher['unknown_fee_count'] else ''])
     if not teacher_id:
         partner = data['partner']

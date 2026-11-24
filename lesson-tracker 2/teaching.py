@@ -72,6 +72,174 @@ def schema(c):
         c.execute("INSERT INTO app_meta VALUES('schedule_options_v1','1')")
 
     recurrence.schema(c)
+    ensure_catalogs(c)
+
+DEFAULT_COURSE_TYPES = ('一对一', '一对二', '小班课')
+DEFAULT_SUBJECTS = ('数学', '英语', '科学', '物理', '化学', '中文', '写作', '高数', '中数')
+TYPE_ALIASES = {
+    '一对一': '一对一', '1:1': '一对一', '1：1': '一对一', 'one': '一对一', 'one_to_one': '一对一',
+    '一对二': '一对二', '1:2': '一对二', '1：2': '一对二', 'two': '一对二', 'one_to_two': '一对二',
+    '小班课': '小班课', '班课': '小班课', 'group': '小班课', 'term': '小班课',
+}
+SUBJECT_ALIASES = {
+    '数学': '数学', 'maths': '数学', 'math': '数学', 'mathematics': '数学',
+    '英语': '英语', 'english': '英语',
+    '科学': '科学', 'science': '科学',
+    '物理': '物理', '化学': '化学', '中文': '中文',
+    '写作': '写作', 'writing': '写作',
+    '高数': '高数', '中数': '中数',
+}
+
+
+def infer_type_name(student_count):
+    if student_count == 1:
+        return '一对一'
+    if student_count == 2:
+        return '一对二'
+    return '小班课'
+
+
+def _split_label(text):
+    raw = str(text or '').strip()
+    parts = [part.strip() for part in raw.replace('・', '·').split('·') if part.strip()]
+    if len(parts) < 2 and ' - ' in raw:
+        parts = [part.strip() for part in raw.split(' - ') if part.strip()]
+    return raw, parts
+
+
+def parse_label(text, student_count=None):
+    """Pull a subject and a course type out of an old free-text label. The original is kept."""
+    raw, parts = _split_label(text)
+    found_type = ''
+    found_subject = ''
+    for part in parts or ([raw] if raw else []):
+        key = part.casefold()
+        if key in TYPE_ALIASES or part in TYPE_ALIASES:
+            found_type = TYPE_ALIASES.get(part) or TYPE_ALIASES.get(key, '')
+        elif key in SUBJECT_ALIASES or part in SUBJECT_ALIASES:
+            found_subject = SUBJECT_ALIASES.get(part) or SUBJECT_ALIASES.get(key, '')
+    if not found_type and student_count is not None:
+        found_type = infer_type_name(student_count)
+    return found_subject, found_type, raw
+
+
+def _add_column(c, table, name, ddl):
+    cols = {r['name'] for r in c.execute(f'PRAGMA table_info({table})')}
+    if name not in cols:
+        c.execute(f'ALTER TABLE {table} ADD COLUMN {ddl}')
+
+
+def ensure_catalogs(c):
+    """Add course types and subjects. One transaction, no file changes, no journal mode."""
+    c.execute('''CREATE TABLE IF NOT EXISTS course_types (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+        sort_order INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS subjects (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+        sort_order INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1)''')
+    for index, name in enumerate(DEFAULT_COURSE_TYPES):
+        c.execute('INSERT OR IGNORE INTO course_types(name, sort_order) VALUES(?,?)', (name, (index + 1) * 10))
+    for index, name in enumerate(DEFAULT_SUBJECTS):
+        c.execute('INSERT OR IGNORE INTO subjects(name, sort_order) VALUES(?,?)', (name, (index + 1) * 10))
+    _add_column(c, 'lessons', 'course_type_id', 'course_type_id INTEGER REFERENCES course_types(id)')
+    _add_column(c, 'lessons', 'subject_id', 'subject_id INTEGER REFERENCES subjects(id)')
+    _add_column(c, 'lessons', 'title_note', "title_note TEXT NOT NULL DEFAULT ''")
+    _add_column(c, 'students', 'course_type_id', 'course_type_id INTEGER REFERENCES course_types(id)')
+    _add_column(c, 'students', 'subject_id', 'subject_id INTEGER REFERENCES subjects(id)')
+    _add_column(c, 'students', 'course_note', "course_note TEXT NOT NULL DEFAULT ''")
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lesson_series'").fetchone():
+        _add_column(c, 'lesson_series', 'course_type_id', 'course_type_id INTEGER REFERENCES course_types(id)')
+        _add_column(c, 'lesson_series', 'subject_id', 'subject_id INTEGER REFERENCES subjects(id)')
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_rows'").fetchone():
+        _add_column(c, 'price_rows', 'course_type_id', 'course_type_id INTEGER REFERENCES course_types(id)')
+        _add_column(c, 'price_rows', 'placeholder', 'placeholder INTEGER NOT NULL DEFAULT 1')
+    _backfill_catalogs(c)
+
+
+def _id_by_name(c, table, name):
+    if not name:
+        return None
+    row = c.execute(f'SELECT id FROM {table} WHERE name=?', (name,)).fetchone()
+    if row:
+        return row['id']
+    if table == 'subjects' and name and len(name) <= 40:
+        return c.execute('INSERT INTO subjects(name, sort_order) VALUES(?, 500)', (name,)).lastrowid
+    return None
+
+
+def _backfill_catalogs(c):
+    for row in c.execute("SELECT id, title, title_note FROM lessons WHERE course_type_id IS NULL OR subject_id IS NULL"):
+        count = c.execute('SELECT COUNT(*) FROM lesson_students WHERE lesson_id=?', (row['id'],)).fetchone()[0]
+        subject, kind, original = parse_label(row['title'], count)
+        if not row['title_note']:
+            c.execute('UPDATE lessons SET title_note=? WHERE id=?', (original, row['id']))
+        if kind and not c.execute('SELECT course_type_id FROM lessons WHERE id=?', (row['id'],)).fetchone()['course_type_id']:
+            c.execute('UPDATE lessons SET course_type_id=? WHERE id=? AND course_type_id IS NULL', (_id_by_name(c, 'course_types', kind), row['id']))
+        if subject:
+            c.execute('UPDATE lessons SET subject_id=? WHERE id=? AND subject_id IS NULL', (_id_by_name(c, 'subjects', subject), row['id']))
+    for row in c.execute('SELECT id, course, course_note FROM students WHERE course_type_id IS NULL OR subject_id IS NULL'):
+        subject, kind, original = parse_label(row['course'], None)
+        if not row['course_note']:
+            c.execute('UPDATE students SET course_note=? WHERE id=?', (original, row['id']))
+        if kind:
+            c.execute('UPDATE students SET course_type_id=? WHERE id=? AND course_type_id IS NULL', (_id_by_name(c, 'course_types', kind), row['id']))
+        if subject:
+            c.execute('UPDATE students SET subject_id=? WHERE id=? AND subject_id IS NULL', (_id_by_name(c, 'subjects', subject), row['id']))
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lesson_series'").fetchone():
+        c.execute('''UPDATE lesson_series SET
+            course_type_id=COALESCE(course_type_id, (SELECT course_type_id FROM lessons WHERE series_id=lesson_series.id AND course_type_id IS NOT NULL ORDER BY occurrence_index LIMIT 1)),
+            subject_id=COALESCE(subject_id, (SELECT subject_id FROM lessons WHERE series_id=lesson_series.id AND subject_id IS NOT NULL ORDER BY occurrence_index LIMIT 1))
+            WHERE course_type_id IS NULL OR subject_id IS NULL''')
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_rows'").fetchone():
+        for row in c.execute('SELECT id, product FROM price_rows WHERE course_type_id IS NULL'):
+            kind = TYPE_ALIASES.get(row['product']) or TYPE_ALIASES.get(str(row['product']).casefold())
+            if kind:
+                c.execute('UPDATE price_rows SET course_type_id=? WHERE id=?', (_id_by_name(c, 'course_types', kind), row['id']))
+
+
+def catalog_lists(c):
+    types = [dict(r) for r in c.execute('SELECT * FROM course_types ORDER BY sort_order, id')]
+    subjects = [dict(r) for r in c.execute('SELECT * FROM subjects ORDER BY sort_order, id')]
+    return types, subjects
+
+
+def save_catalog_item(c, user, table, data, text_value):
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以修改课程类型和科目。')
+    if table not in ('course_types', 'subjects'):
+        raise ValueError('列表无效。')
+    name = text_value(data.get('name'), '名称', 40)
+    active = 0 if data.get('active') in (False, 0, '0') else 1
+    item_id = int(data.get('id') or 0)
+    if item_id:
+        if c.execute(f'SELECT 1 FROM {table} WHERE name=? AND id!=?', (name, item_id)).fetchone():
+            raise ValueError('这个名称已经有了。')
+        c.execute(f'UPDATE {table} SET name=?, active=? WHERE id=?', (name, active, item_id))
+        return {'ok': True, 'id': item_id}
+    if c.execute(f'SELECT 1 FROM {table} WHERE name=?', (name,)).fetchone():
+        raise ValueError('这个名称已经有了。')
+    sort = c.execute(f'SELECT COALESCE(MAX(sort_order),0)+10 FROM {table}').fetchone()[0]
+    new_id = c.execute(f'INSERT INTO {table}(name, sort_order, active) VALUES(?,?,?)', (name, sort, active)).lastrowid
+    return {'ok': True, 'id': new_id}
+
+
+def resolve_catalog(c, data, student_count, fallback_text=''):
+    """Use the chosen ids. Older callers that only send a label are parsed, not left as free text."""
+    type_id = int(data.get('course_type_id') or 0)
+    subject_id = int(data.get('subject_id') or 0)
+    if not type_id or not subject_id:
+        subject_name, type_name, _original = parse_label(data.get('title') or data.get('course') or fallback_text, student_count if not type_id else None)
+        if not type_id and type_name:
+            type_id = _id_by_name(c, 'course_types', type_name) or 0
+        if not subject_id and subject_name:
+            subject_id = _id_by_name(c, 'subjects', subject_name) or 0
+    if not type_id:
+        type_id = _id_by_name(c, 'course_types', infer_type_name(student_count if student_count is not None else 0)) or 0
+    if type_id and not c.execute('SELECT 1 FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone():
+        raise ValueError('请选择课程类型。')
+    if subject_id and not c.execute('SELECT 1 FROM subjects WHERE id=? AND active=1', (subject_id,)).fetchone():
+        raise ValueError('请选择科目。')
+    return type_id or None, subject_id or None
 
 def staff_or_admin(user):
     if user['role'] not in ('owner','admin','teacher'):
@@ -107,7 +275,7 @@ def state_for(c,user):
         where,params=(' WHERE t.user_id=?',(user['id'],))
     elif role=='parent':
         where,params=(' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=l.id AND s.parent_id=?)',(user['id'],))
-    lessons=[dict(x) for x in c.execute('SELECT l.*,(SELECT version FROM lesson_series WHERE id=l.series_id) series_version,(SELECT endless FROM lesson_series WHERE id=l.series_id) repeats_forever,u.name teacher_name FROM lessons l JOIN teachers t ON l.teacher_id=t.id JOIN users u ON t.user_id=u.id'+where+' ORDER BY l.starts_at,l.id',params)]
+    lessons=[dict(x) for x in c.execute('SELECT l.*, ct.name course_type_name, sb.name subject_name, (SELECT version FROM lesson_series WHERE id=l.series_id) series_version,(SELECT endless FROM lesson_series WHERE id=l.series_id) repeats_forever,(SELECT course_type_id FROM lesson_series WHERE id=l.series_id) series_course_type_id, u.name teacher_name FROM lessons l JOIN teachers t ON l.teacher_id=t.id JOIN users u ON t.user_id=u.id LEFT JOIN course_types ct ON ct.id=l.course_type_id LEFT JOIN subjects sb ON sb.id=l.subject_id'+where+' ORDER BY l.starts_at,l.id',params)]
     for lesson in lessons:
         member_where=' AND s.parent_id=?' if role=='parent' else ''
         member_params=(lesson['id'],user['id']) if role=='parent' else (lesson['id'],)
@@ -130,7 +298,8 @@ def state_for(c,user):
     if role=='parent':
         for lesson in lessons:lesson['reports']=[r for r in lesson['reports'] if not r.get('reversed_by')]
         lessons=[l for l in lessons if l['status']!='completed' or l['reports']]
-    return {'recurrence_warnings':[r['error'] for r in c.execute("SELECT error FROM lesson_series WHERE error!=''")] if role in ('owner','admin') else [],'schedule_options':[dict(x) for x in c.execute('SELECT * FROM schedule_options ORDER BY kind,id')] if role in ('owner','admin','teacher') else [],'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
+    types, subjects = catalog_lists(c)
+    return {'recurrence_warnings':[r['error'] for r in c.execute("SELECT error FROM lesson_series WHERE error!=''")] if role in ('owner','admin') else [],'schedule_options':[dict(x) for x in c.execute('SELECT * FROM schedule_options ORDER BY kind,id')] if role in ('owner','admin','teacher') else [],'course_types':types,'subjects':subjects,'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
 
 def create_teacher(c,user,data,phone_value,password_hash,text_value):
     if user['role'] not in ('owner','admin'):
@@ -190,7 +359,7 @@ def save_schedule(c,user,data,units,text_value):
     start=datetime_value(data.get('starts_at'))
     end=datetime_value(data.get('ends_at'))
     series_id=key
-    template={k:data[k] for k in ('title','teacher_id','starts_at','ends_at','amount','location','color','student_ids') if k in data}
+    template={k:data[k] for k in ('title','teacher_id','starts_at','ends_at','amount','location','color','student_ids','course_type_id','subject_id') if k in data}
     c.execute('INSERT INTO lesson_series(id,interval_days,endless,next_index,stop_index,template,created_by) VALUES(?,?,?,?,?,?,?)',(series_id,7 if repeat=='weekly' else 14,int(forever),count,None if forever else count,json.dumps(template),user['id']))
     ids=[]
     for i in range(count):
@@ -202,6 +371,9 @@ def save_schedule(c,user,data,units,text_value):
         except ValueError as e:
             raise ValueError(item['starts_at'][:10]+'：'+str(e)) from e
         c.execute('UPDATE lessons SET series_id=?,occurrence_index=? WHERE id=?',(series_id,i,ids[-1]))
+    first = c.execute('SELECT course_type_id, subject_id FROM lessons WHERE id=?', (ids[0],)).fetchone()
+    if first:
+        c.execute('UPDATE lesson_series SET course_type_id=?, subject_id=? WHERE id=?', (first['course_type_id'], first['subject_id'], series_id))
     return {'ok':True,'lesson_id':ids[0],'lesson_ids':ids,'created_count':len(ids)}
 
 def save_lesson(c,user,data,units,text_value):
@@ -222,6 +394,12 @@ def save_lesson(c,user,data,units,text_value):
     color=data.get('color',old['color'] if lesson_id else 'green')
     if color not in ('green','blue','purple','pink','orange','yellow','gray'):
         raise ValueError('请选择有效的课程颜色。')
+    raw_students=data.get('student_ids') if isinstance(data.get('student_ids'), list) else []
+    type_id, subject_id = resolve_catalog(c, data, len(set(raw_students)), data.get('title') or '')
+    type_name = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone()
+    subject_name = c.execute('SELECT name FROM subjects WHERE id=?', (subject_id,)).fetchone() if subject_id else None
+    if not data.get('title') and type_name:
+        data = {**data, 'title': ((subject_name['name'] + ' · ') if subject_name else '') + type_name['name']}
     title=text_value(data.get('title'),'课程名称',80)
     teacher_id=int(data.get('teacher_id',0))
     if not c.execute('SELECT 1 FROM teachers t JOIN users u ON t.user_id=u.id WHERE t.id=? AND u.active=1',(teacher_id,)).fetchone():
@@ -268,7 +446,10 @@ def save_lesson(c,user,data,units,text_value):
         c.execute(f'DELETE FROM lesson_reports WHERE lesson_id=? AND student_id NOT IN ({marks})',(lesson_id,*members))
     else:
         lesson_id=c.execute('INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,created_by,request_id) VALUES(?,?,?,?,?,?,?,?)',(teacher_id,title,start,end,amount,location,user['id'],key)).lastrowid
-    c.execute('UPDATE lessons SET color=? WHERE id=?',(color,lesson_id))
+    note = str(data.get('title_note') or '').strip()
+    c.execute('UPDATE lessons SET color=?, course_type_id=?, subject_id=? WHERE id=?', (color, type_id, subject_id, lesson_id))
+    if note:
+        c.execute('UPDATE lessons SET title_note=? WHERE id=? AND title_note=?', (note[:200], lesson_id, ''))
     c.executemany('INSERT INTO lesson_students VALUES(?,?)',[(lesson_id,sid) for sid in members])
     return {'ok':True,'lesson_id':lesson_id}
 

@@ -95,7 +95,7 @@ def update_future(c,user,data,units,text_value):
         for k in shift:item[k]=(dt.datetime.fromisoformat(l[k])+shift[k]).strftime('%Y-%m-%dT%H:%M')
         teaching.save_lesson(c,user,item,units,text_value)
     template=json.loads(rule['template'])
-    for k in ('title','teacher_id','amount','location','color','student_ids'):
+    for k in ('title','teacher_id','amount','location','color','student_ids','course_type_id','subject_id'):
         if k in data:template[k]=data[k]
     for k in shift:template[k]=(dt.datetime.fromisoformat(template[k])+shift[k]).strftime('%Y-%m-%dT%H:%M')
     c.execute("UPDATE lesson_series SET template=?,created_by=?,version=version+1,error='' WHERE id=?",(json.dumps(template),user['id'],rule['id']))

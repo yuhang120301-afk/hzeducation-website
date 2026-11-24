@@ -250,6 +250,8 @@ def seed_portal_cast(c):
         ('Christina', ['林晓'], 4, '17:00', '18:00', 'scheduled', '1:1'),
         ('Helen', ['李沐阳'], 5, '10:00', '11:30', 'scheduled', '1:1'),
         ('Christina', ['林晓'], 6, '09:00', '10:00', 'scheduled', '1:1'),
+        ('Helen', ['李沐阳', '林晓', '周可'], 1, '11:00', '12:30', 'scheduled', '小班课'),
+        ('Angela', ['陈一诺'], 2, '14:00', '15:00', 'scheduled', '试听 · 一对一'),
     ]
     for who, names, offset, start, end, status, kind in plan:
         starts, ends, day = at(offset, start, end)
@@ -373,6 +375,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/prices':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    return self.response(200, pricing.list_prices(c, user))
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
         if path in ('/api/finance', '/api/finance.xlsx', '/api/finance.pdf'):
             with connect() as c:
                 user=self.current(c)
@@ -426,7 +435,11 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role']=='teacher':
                     condition=' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN lessons tl ON ls.lesson_id=tl.id WHERE ls.student_id=s.id AND tl.teacher_id=?)'
                     params=(user['teacher_id'],)
-                students = [dict(x) for x in c.execute('SELECT s.*,u.name parent_name,u.phone,u.contact_phone FROM students s JOIN users u ON s.parent_id=u.id'+condition+' ORDER BY s.id',params)]
+                students = [dict(x) for x in c.execute('''SELECT s.*,u.name parent_name,u.phone,u.contact_phone,
+                    ct.name course_type_name, sb.name subject_name
+                    FROM students s JOIN users u ON s.parent_id=u.id
+                    LEFT JOIN course_types ct ON ct.id=s.course_type_id
+                    LEFT JOIN subjects sb ON sb.id=s.subject_id'''+condition+' ORDER BY s.id',params)]
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
@@ -557,6 +570,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 if self.path == '/api/students':
                     return self.add_student(c,user,data)
+                if self.path in ('/api/course-types', '/api/subjects'):
+                    c.execute('BEGIN IMMEDIATE')
+                    table = 'course_types' if self.path.endswith('course-types') else 'subjects'
+                    result = teaching.save_catalog_item(c, user, table, data, text_value)
+                    c.commit()
+                    return self.response(200, result)
+                if self.path == '/api/prices':
+                    return self.response(200, pricing.list_prices(c, user))
+                if self.path == '/api/prices/save':
+                    c.execute('BEGIN IMMEDIATE')
+                    result = pricing.save_type_price(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
                 if self.path == '/api/prices/quote':
                     return self.response(200, pricing.quote(c,user,data.get('student_id'),data.get('product'),data.get('lesson_minutes'),data.get('paid_lessons'),data.get('date') or teaching.now_local().date().isoformat(),data.get('terms')))
                 if self.path == '/api/audit/undo':
@@ -608,7 +634,13 @@ class Handler(BaseHTTPRequestHandler):
         import payroll
         payroll.reject_original_flag(user, data)
         name = text_value(data.get('name'),'学生姓名',40)
-        course = text_value(data.get('course'),'课程名称',80)
+        if data.get('subject_id'):
+            subject = c.execute('SELECT name FROM subjects WHERE id=? AND active=1', (int(data.get('subject_id') or 0),)).fetchone()
+            if not subject:
+                raise ValueError('请选择科目。')
+            course = subject['name']
+        else:
+            course = text_value(data.get('course'),'课程名称',80)
         birthday,grade,notes=profiles.fields(data)
         billing_unit=profiles.billing_unit(data.get('billing_unit','lesson'))
         phone = phone_value(data.get('phone'))
@@ -625,7 +657,8 @@ class Handler(BaseHTTPRequestHandler):
             pid = c.execute('INSERT INTO users(phone,name,password,role) VALUES(?,?,?,?)',(phone,text_value(data.get('parent_name') or name+'家长','家长姓名',40),password_hash(password),'parent')).lastrowid
         profile_id=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
         sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
-        c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=? WHERE id=?',(birthday,grade,notes,billing_unit,sid))
+        type_id, subject_id = teaching.resolve_catalog(c, data, None, course)
+        c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=?,course_type_id=?,subject_id=?,course_note=? WHERE id=?',(birthday,grade,notes,billing_unit,type_id,subject_id,course,sid))
         c.commit()
         return self.response(201,{'ok':True,'student_id':sid})
 

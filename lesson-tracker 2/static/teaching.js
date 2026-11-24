@@ -143,7 +143,7 @@ function timeCalendar(rows){
 const lessonColors=[['green','绿色'],['blue','蓝色'],['purple','紫色'],['pink','粉色'],['orange','橙色'],['yellow','黄色'],['gray','灰色']];
 function lessonCard(l){
  const owner=state.user.role==='owner',color=lessonColors.some(([v])=>v===l.color)?l.color:'green',students=l.students.map(s=>userHTML(s.name)).join('、');
- return `<button class="lesson-card ${l.status} ${owner?'owner-lesson color-'+color:''}" data-lesson-detail="${l.id}" ${owner&&l.status==='scheduled'?'draggable="true" title="拖动到其他日期可调整课程"':''}>${owner?`<strong class="lesson-students">${students}</strong>`:''}<div class="lesson-time">${l.starts_at.slice(11)}–${l.ends_at.slice(11)}</div><strong class="lesson-subject">${userHTML(l.title)}</strong><span>${userHTML(l.teacher_name)}</span>${owner?'':`<span class="lesson-students">${students}</span>`}<div class="lesson-card-foot"><span class="lesson-state">${lessonStatus(l)}</span><span>${lessonChargeLabel(l)}</span></div></button>`;
+ return `<button class="lesson-card ${l.status} ${owner?'owner-lesson color-'+color:''}" data-lesson-detail="${l.id}" ${owner&&l.status==='scheduled'?'draggable="true" title="拖动到其他日期可调整课程"':''}>${owner?`<strong class="lesson-students">${students}</strong>`:''}<div class="lesson-time">${l.starts_at.slice(11)}–${l.ends_at.slice(11)} ${typeBadge(l.course_type_name)}</div><strong class="lesson-subject">${userHTML(l.subject_name||l.title)}</strong><span>${userHTML(l.teacher_name)}</span>${owner?'':`<span class="lesson-students">${students}</span>`}<div class="lesson-card-foot"><span class="lesson-state">${lessonStatus(l)}</span><span>${lessonChargeLabel(l)}</span></div></button>`;
 }
 function lessonColorPicker(l){return `<fieldset class="lesson-color-picker"><legend>课程颜色</legend>${lessonColors.map(([v,label])=>`<label class="color-choice color-${v}" title="${label}"><input type="radio" name="color" value="${v}" ${(l?.color||'green')===v?'checked':''}><span>${label}</span></label>`).join('')}</fieldset>`;}
 
@@ -163,7 +163,7 @@ function teacherModal(existing=null){
 function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
  if(!state.students.length){toast('请先添加学生，再安排课程。');if(['owner','admin'].includes(state.user.role))return studentModal();return;}
  const l=existing,request_id=crypto.randomUUID(),day=slot?slot.slice(0,10):state.today,initialStart=slot||day+'T16:00',initialEnd=slotEnd||shiftScheduleTime(initialStart,60);
- modal(l?'调整课程':'新增排课',`<div class="form-context">${escapeHTML(state.timezone)} · 排课不会提前扣课时</div>${state.user.role==='owner'?lessonColorPicker(l):''}<label class="field">课程名称<select name="title" required>${scheduleOptions("course",l?.title||state.students.find(s=>s.id==studentId)?.course||"")}</select></label><label class="field">任课老师<select name="teacher_id">${state.teachers.filter(t=>t.active||t.id===l?.teacher_id).map(t=>`<option data-user-content ${t.active?'':'disabled'} value="${t.id}" ${(l?.teacher_id||teacherFilter||state.user.teacher_id)==t.id?'selected':''}>${escapeHTML(t.name)} · ${escapeHTML(t.subject)}</option>`).join('')}</select></label><div class="two-cols schedule-time-fields">${scheduleTimeField("starts_at","开始时间",l?.starts_at||initialStart)}${scheduleTimeField("ends_at","结束时间",l?.ends_at||initialEnd)}</div><p class="footnote">结束时间默认往后一小时，可手动调整。手动调整时长后，更改开始时间会保留该时长。</p><div class="two-cols"><label class="field">按课时学生：预计每人扣除课时<input name="amount" type="number" min="0.01" max="10000" step="0.01" value="${l?l.planned_units/100:1}" required></label><label class="field">上课地点（选填）<select name="location">${scheduleOptions("location",l?.location||"")}</select></label></div>${l?(l.status!=='scheduled'?'<p class="form-context">编辑时间和课程信息不会自动改动已扣余额；如需更正数量，请编辑单据或课后记录。</p>':repeatScopeFields(l)):'<div class="two-cols"><label class="field">重复安排<select name="repeat"><option value="none">不重复</option><option value="weekly">每周重复</option><option value="fortnightly">每两周重复</option></select></label><label class="field" id="repeat-end-field" hidden>结束方式<select name="repeat_end" disabled><option value="count">指定次数</option><option value="forever">永久重复</option></select></label><label class="field" id="repeat-count-field" hidden>总课次数（包含本次）<input name="repeat_count" type="number" min="2" max="52" step="1" value="10" disabled required></label></div><p id="repeat-help" class="form-context" hidden>按机构当地时间重复。可指定 2–52 次，或选择永久重复。永久课程会自动延续，也可随时调整或取消本次及后续课程。</p>'}<label class="field">搜索学生<input id="schedule-student-search" type="search" placeholder="输入学生姓名、课程或家长手机号" autocomplete="off"></label><div id="schedule-selected" class="schedule-selected" aria-live="polite"></div><fieldset class="student-picker" id="schedule-student-picker"><legend>选择学生及扣课科目 · 同一学生只选一个科目</legend><p id="schedule-search-empty" hidden>没有找到匹配的学生。</p>${state.students.map(s=>`<label><input type="checkbox" name="student_ids" value="${s.id}" ${(l?.students.some(x=>x.id===s.id)||studentId==s.id)?'checked':''}><span>${userHTML(s.name)}<small>${userHTML(s.course)} · 剩余 ${fmt(s.balance)} ${unitFor(s)}</small></span></label>`).join('')}</fieldset>`,'保存排课',async data=>{data.student_ids=[...document.querySelectorAll('[name=student_ids]:checked')].map(x=>Number(x.value));const result=await api('lessons',{...data,request_id,lesson_id:l?.id,version:l?.version,series_version:l?.series_version});weekStart=monday(data.starts_at.slice(0,10));view='schedule';toast(l?'课程已更新。':data.repeat_end==='forever'?'永久重复排课已保存，将自动延续。':result.created_count?`已安排 ${result.created_count} 次课程，课时暂不扣除。`:'排课已保存，课时暂不扣除。');});
+ modal(l?'调整课程':'新增排课',`<div class="form-context">${escapeHTML(state.timezone)} · 排课不会提前扣课时</div>${state.user.role==='owner'?lessonColorPicker(l):''}<div class="two-cols"><label class="field">科目${catalogSelect(state.subjects,'subject_id',l?.subject_id,'请选择科目')}</label><label class="field">课程类型${catalogSelect(state.course_types,'course_type_id',l?.course_type_id,'请选择课程类型')}</label></div><label class="field">任课老师<select name="teacher_id">${state.teachers.filter(t=>t.active||t.id===l?.teacher_id).map(t=>`<option data-user-content ${t.active?'':'disabled'} value="${t.id}" ${(l?.teacher_id||teacherFilter||state.user.teacher_id)==t.id?'selected':''}>${escapeHTML(t.name)} · ${escapeHTML(t.subject)}</option>`).join('')}</select></label><div class="two-cols schedule-time-fields">${scheduleTimeField("starts_at","开始时间",l?.starts_at||initialStart)}${scheduleTimeField("ends_at","结束时间",l?.ends_at||initialEnd)}</div><p class="footnote">结束时间默认往后一小时，可手动调整。手动调整时长后，更改开始时间会保留该时长。</p><div class="two-cols"><label class="field">按课时学生：预计每人扣除课时<input name="amount" type="number" min="0.01" max="10000" step="0.01" value="${l?l.planned_units/100:1}" required></label><label class="field">上课地点（选填）<select name="location">${scheduleOptions("location",l?.location||"")}</select></label></div>${l?(l.status!=='scheduled'?'<p class="form-context">编辑时间和课程信息不会自动改动已扣余额；如需更正数量，请编辑单据或课后记录。</p>':repeatScopeFields(l)):'<div class="two-cols"><label class="field">重复安排<select name="repeat"><option value="none">不重复</option><option value="weekly">每周重复</option><option value="fortnightly">每两周重复</option></select></label><label class="field" id="repeat-end-field" hidden>结束方式<select name="repeat_end" disabled><option value="count">指定次数</option><option value="forever">永久重复</option></select></label><label class="field" id="repeat-count-field" hidden>总课次数（包含本次）<input name="repeat_count" type="number" min="2" max="52" step="1" value="10" disabled required></label></div><p id="repeat-help" class="form-context" hidden>按机构当地时间重复。可指定 2–52 次，或选择永久重复。永久课程会自动延续，也可随时调整或取消本次及后续课程。</p>'}<label class="field">搜索学生<input id="schedule-student-search" type="search" placeholder="输入学生姓名、课程或家长手机号" autocomplete="off"></label><div id="schedule-selected" class="schedule-selected" aria-live="polite"></div><fieldset class="student-picker" id="schedule-student-picker"><legend>选择学生及扣课科目 · 同一学生只选一个科目</legend><p id="schedule-search-empty" hidden>没有找到匹配的学生。</p>${state.students.map(s=>`<label><input type="checkbox" name="student_ids" value="${s.id}" ${(l?.students.some(x=>x.id===s.id)||studentId==s.id)?'checked':''}><span>${userHTML(s.name)}<small>${userHTML(s.course)} · 剩余 ${fmt(s.balance)} ${unitFor(s)}</small></span></label>`).join('')}</fieldset>`,'保存排课',async data=>{data.student_ids=[...document.querySelectorAll('[name=student_ids]:checked')].map(x=>Number(x.value));const subjectName=document.querySelector('[name=subject_id] option:checked')?.textContent||'';const typeName=document.querySelector('[name=course_type_id] option:checked')?.textContent||'';data.title=`${subjectName} · ${typeName}`;data.course_type_id=Number(data.course_type_id);data.subject_id=Number(data.subject_id);if(l?.series_id){const scope=await askSeriesScope(l);if(!scope) return;data.scope=scope;}const result=await api('lessons',{...data,request_id,lesson_id:l?.id,version:l?.version,series_version:l?.series_version});weekStart=monday(data.starts_at.slice(0,10));view='schedule';toast(l?'课程已更新。':data.repeat_end==='forever'?'永久重复排课已保存，将自动延续。':result.created_count?`已安排 ${result.created_count} 次课程，课时暂不扣除。`:'排课已保存，课时暂不扣除。');});
  $('#modal').classList.add('wide');
  initScheduleStudentSearch();
  initScheduleTimes();
@@ -172,7 +172,7 @@ function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
 function lessonDetail(id){
  if(Date.now()<calendarClickSuppressedUntil)return;
  const l=lessonById(id),admin=['owner','admin'].includes(state.user.role),staff=isStaff();lastFocus=document.activeElement;$('#modal').classList.add('wide');
- $('#modal-body').innerHTML=`<div class="modal-inner"><div class="modal-head"><h2 id="modal-title">${userHTML(l.title)}</h2><button type="button" class="close" aria-label="关闭">×</button></div><div class="lesson-detail-meta"><span class="badge ${l.status==='scheduled'?'low':''}">${lessonStatus(l)}</span><p>${escapeHTML(l.starts_at.replace('T',' '))} — ${l.ends_at.slice(11)}<br>${userHTML(l.teacher_name)} · ${escapeHTML(l.location||'地点未填写')}</p><p>${l.students.map(s=>userHTML(s.name)).join('、')} · 预计 ${lessonChargeLabel(l)}</p></div>${l.status==='cancelled'?`<div class="form-context">取消原因：${userHTML(l.cancel_reason)}<br>本次课程未扣课时。</div>`:l.status==='completed'?l.reports.map(r=>reportCard(l,r,false)).join(''):`<div class="form-context">${staff?(l.reports.length?'已保存课后记录草稿，家长暂不可见。':'完成课程后，填写学习内容、作业和反馈，再确认扣课。'):'课程结束后，老师会在这里发布学习内容、作业与反馈。'}</div>`}<div class="detail-actions">${admin&&(l.status==='scheduled'||state.user.role==='owner')?'<button class="btn" id="edit-schedule">调整排课</button>':''}${admin&&l.status==='scheduled'?'<button class="btn" id="cancel-schedule">取消课程</button>':''}${admin&&l.status==='scheduled'&&l.ends_at<=state.now?'<button class="btn primary" id="quick-close">这节课已上</button>':''}${staff&&l.status!=='cancelled'?`<button class="btn" id="write-report">${l.status==='completed'?'修改课后记录':'填写作业和反馈'}</button>`:''}<button class="btn" id="close-detail">关闭</button></div></div>`;
+ $('#modal-body').innerHTML=`<div class="modal-inner"><div class="modal-head"><h2 id="modal-title">${userHTML(l.subject_name||l.title)} ${typeBadge(l.course_type_name)}</h2><button type="button" class="close" aria-label="关闭">×</button></div><div class="lesson-detail-meta"><span class="badge ${l.status==='scheduled'?'low':''}">${lessonStatus(l)}</span><p>${escapeHTML(l.starts_at.replace('T',' '))} — ${l.ends_at.slice(11)}<br>${userHTML(l.teacher_name)} · ${escapeHTML(l.location||'地点未填写')}</p><p>${l.students.map(s=>userHTML(s.name)).join('、')} · 预计 ${lessonChargeLabel(l)}</p>${l.title_note&&l.title_note!==l.title?`<p class="footnote">原名称：${userHTML(l.title_note)}</p>`:''}</div>${l.status==='cancelled'?`<div class="form-context">取消原因：${userHTML(l.cancel_reason)}<br>本次课程未扣课时。</div>`:l.status==='completed'?l.reports.map(r=>reportCard(l,r,false)).join(''):`<div class="form-context">${staff?(l.reports.length?'已保存课后记录草稿，家长暂不可见。':'完成课程后，填写学习内容、作业和反馈，再确认扣课。'):'课程结束后，老师会在这里发布学习内容、作业与反馈。'}</div>`}<div class="detail-actions">${admin&&(l.status==='scheduled'||state.user.role==='owner')?'<button class="btn" id="edit-schedule">调整排课</button>':''}${admin&&l.status==='scheduled'?'<button class="btn" id="cancel-schedule">取消课程</button>':''}${admin&&l.status==='scheduled'&&l.ends_at<=state.now?'<button class="btn primary" id="quick-close">这节课已上</button>':''}${staff&&l.status!=='cancelled'?`<button class="btn" id="write-report">${l.status==='completed'?'修改课后记录':'填写作业和反馈'}</button>`:''}<button class="btn" id="close-detail">关闭</button></div></div>`;
  const close=()=>$('#modal').close();$('.close').onclick=close;$('#close-detail').onclick=close;
  if($('#edit-schedule'))$('#edit-schedule').onclick=()=>{close();scheduleModal(l);};
  if($('#cancel-schedule'))$('#cancel-schedule').onclick=()=>{close();cancelModal(l);};
@@ -180,7 +180,12 @@ function lessonDetail(id){
  if($('#write-report'))$('#write-report').onclick=()=>{close();reportModal(l);};
  $('#modal').showModal();
 }
-function cancelModal(l){modal('取消这节课',`<div class="form-context">${userHTML(l.title)}<br>${escapeHTML(l.starts_at.replace('T',' '))} · ${userHTML(l.teacher_name)}<br>取消后保留课程记录，不扣课时。</div>${repeatScopeFields(l)}<label class="field">取消原因（选填）<span class="quick"><button type="button" data-cancel-reason="学生请假">学生请假</button><button type="button" data-cancel-reason="老师请假">老师请假</button><button type="button" data-cancel-reason="改期">改期</button><button type="button" data-cancel-reason="临时停课">临时停课</button></span><textarea name="reason" maxlength="250" placeholder="可以留空"></textarea></label>`,'确认取消课程',async data=>{await api('lessons/cancel',{...data,lesson_id:l.id,version:l.version,series_version:l.series_version});toast('课程已取消，没有扣课时。');},true);document.querySelectorAll('[data-cancel-reason]').forEach(button=>button.onclick=()=>{$('[name=reason]').value=button.dataset.cancelReason;});}
+async function cancelModal(l){
+ const scope=await askSeriesScope(l);
+ if(!scope) return;
+ modal('取消这节课',`<div class="form-context">${userHTML(l.title)}<br>${escapeHTML(l.starts_at.replace('T',' '))} · ${userHTML(l.teacher_name)}<br>${scope==='future'?'将取消本次及以后所有未上的课。':'只取消这一次。'} 不扣课时。</div><label class="field">取消原因（选填）<span class="quick"><button type="button" data-cancel-reason="学生请假">学生请假</button><button type="button" data-cancel-reason="老师请假">老师请假</button><button type="button" data-cancel-reason="改期">改期</button><button type="button" data-cancel-reason="临时停课">临时停课</button></span><textarea name="reason" maxlength="250" placeholder="可以留空"></textarea></label>`,'确认取消课程',async data=>{await api('lessons/cancel',{...data,scope,lesson_id:l.id,version:l.version,series_version:l.series_version});toast(scope==='future'?'本次及以后的课已取消，没有扣课时。':'课程已取消，没有扣课时。');},true);
+ document.querySelectorAll('[data-cancel-reason]').forEach(button=>button.onclick=()=>{$('[name=reason]').value=button.dataset.cancelReason;});
+}
 function expectedUnits(l,s){return unitFor(s)==='小时'?Math.round((Date.parse(l.ends_at+'Z')-Date.parse(l.starts_at+'Z'))/36000):l.planned_units;}
 function lessonChargeLabel(l){const units=[...new Set(l.students.map(s=>`${fmt(expectedUnits(l,s))} ${unitFor(s)}`))];return units.length===1?units[0]+'/人':'按学生计费方式扣除';}
 function reportFields(l){
@@ -210,13 +215,27 @@ function renderFeedback(){
  $('#student-filter').onchange=e=>{selected=e.target.value;renderFeedback();};bindLessons();document.querySelectorAll('[data-edit-report]').forEach(b=>b.onclick=()=>reportModal(lessonById(b.dataset.editReport)));
 }
 
+function typeBadge(name){
+ const label=name||'';
+ const kind=label==='一对一'?'one':label==='一对二'?'two':'small';
+ return label?`<span class="type-badge type-${kind}">${escapeHTML(label)}</span>`:'';
+}
+function catalogSelect(list, field, current, placeholder){
+ const rows=(list||[]).filter(item=>item.active||String(item.id)===String(current));
+ return `<select name="${field}" required><option value="">${placeholder}</option>${rows.map(item=>`<option value="${item.id}" ${String(item.id)===String(current)?'selected':''}>${escapeHTML(item.name)}</option>`).join('')}</select>`;
+}
 function scheduleOptions(kind,current){
  const options=(state.schedule_options||[]).filter(o=>o.kind===kind&&o.active).map(o=>o.name);
  if(current&&!options.includes(current))options.unshift(current);
  return `<option value="">${kind==='course'?'请选择课程':'不指定地点'}</option>`+options.map(name=>`<option data-user-content value="${escapeHTML(name)}" ${name===current?'selected':''}>${escapeHTML(name)}</option>`).join('');
 }
 function renderScheduleSettings(){
- $('#surface').innerHTML=`<p class="form-context">添加后即可在排课时选择。修改或停用选项不会更改已排课程的名称和地点。</p><div class="feedback-grid">${[['course','课程名称','添加课程'],['location','上课地点','添加地点']].map(([kind,title,add])=>`<section class="feedback-card"><div class="section-head"><h2>${title}</h2><button class="btn primary" data-option-add="${kind}">${add}</button></div>${(state.schedule_options||[]).filter(o=>o.kind===kind).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-option-edit="${o.id}">编辑</button><button class="btn" data-option-toggle="${o.id}">${o.active?'停用':'启用'}</button></div></div>`).join('')||'<p class="muted">尚未设置，请点击添加。</p>'}</section>`).join('')}</div>`;
+ $('#surface').innerHTML=`<p class="form-context">科目和课程类型从列表里选。停用后不能再选，已经排好的课不受影响。</p><div class="feedback-grid"><section class="feedback-card"><div class="section-head"><h2>课程类型</h2><button class="btn primary" id="add-course-type">添加类型</button></div>${(state.course_types||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-type-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>科目</h2><button class="btn primary" id="add-subject">添加科目</button></div>${(state.subjects||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-subject-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>上课地点</h2><button class="btn primary" data-option-add="location">添加地点</button></div>${(state.schedule_options||[]).filter(o=>o.kind==='location').map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-option-edit="${o.id}">编辑</button><button class="btn" data-option-toggle="${o.id}">${o.active?'停用':'启用'}</button></div></div>`).join('')||'<p class="muted">尚未设置，请点击添加。</p>'}</section></div>`;
+ const editCatalog=(path,item)=>modal(item?'编辑':'添加',`<label class="field">名称<input name="name" required maxlength="40" value="${escapeHTML(item?.name||'')}"></label><label><input type="checkbox" name="active" ${!item||item.active?'checked':''}> 使用中</label>`,'保存',async data=>{data.active=!!document.querySelector('[name=active]').checked;await api(path,{...data,id:item?.id});toast('已保存。');});
+ $('#add-course-type').onclick=()=>editCatalog('course-types');
+ $('#add-subject').onclick=()=>editCatalog('subjects');
+ document.querySelectorAll('[data-type-edit]').forEach(b=>b.onclick=()=>editCatalog('course-types',state.course_types.find(o=>o.id==b.dataset.typeEdit)));
+ document.querySelectorAll('[data-subject-edit]').forEach(b=>b.onclick=()=>editCatalog('subjects',state.subjects.find(o=>o.id==b.dataset.subjectEdit)));
  document.querySelectorAll('[data-option-add]').forEach(b=>b.onclick=()=>optionModal(b.dataset.optionAdd));
  document.querySelectorAll('[data-option-edit]').forEach(b=>b.onclick=()=>{const o=state.schedule_options.find(o=>o.id==b.dataset.optionEdit);optionModal(o.kind,o);});
  document.querySelectorAll('[data-option-toggle]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{const o=state.schedule_options.find(o=>o.id==b.dataset.optionToggle);await api('schedule-options',{...o,active:!o.active});await refresh();toast('选项已更新。');}catch(e){b.disabled=false;toast(e.message);}});
@@ -244,7 +263,22 @@ function initScheduleStudentSearch(){
 
 let calendarClickSuppressedUntil=0;
 async function changeScheduleWeek(day){
- try{const next=await api('state?through='+encodeURIComponent(datePlus(day,6)));state=next;weekStart=day;renderSchedule();}catch(e){toast(e.message);}
+ const through=calendarSpan==='month'?datePlus(monthStart(gcalDay||day), 41):datePlus(day, calendarSpan==='day'?0:6);
+ try{const next=await api('state?through='+encodeURIComponent(through));state=next;weekStart=monday(day);renderSchedule();}catch(e){toast(e.message);}
+}
+function askSeriesScope(lesson){
+ if(!lesson?.series_id || lesson.status!=='scheduled') return Promise.resolve('single');
+ return new Promise(resolve=>{
+  let settled=false;
+  const finish=value=>{if(settled) return; settled=true; $('#modal').close(); resolve(value);};
+  $('#modal').classList.remove('wide');
+  $('#modal-body').innerHTML=`<div class="modal-inner scope-dialog"><div class="modal-head"><h2 id="modal-title">重复课程</h2></div><p>这次改动要应用到哪里？</p><div class="scope-actions"><button type="button" class="btn primary" id="scope-single">只改本次</button><button type="button" class="btn" id="scope-future">本次及以后所有</button><button type="button" class="btn" id="scope-cancel">取消</button></div></div>`;
+  $('#scope-single').onclick=()=>finish('single');
+  $('#scope-future').onclick=()=>finish('future');
+  $('#scope-cancel').onclick=()=>finish(null);
+  $('#modal').addEventListener('cancel', event=>{event.preventDefault(); finish(null);}, {once:true});
+  $('#modal').showModal();
+ });
 }
 function repeatScopeFields(l){return l?.series_id&&l.status==='scheduled'?`<fieldset class="repeat-scope"><legend>应用范围</legend><label><input type="radio" name="scope" value="single" checked>仅本次课程</label><label><input type="radio" name="scope" value="future">本次及后续所有课程</label><small>已完成和已取消的课程保持不变。</small></fieldset>`:'';}
 async function moveCalendarLesson(l,day,endsAt){
@@ -253,14 +287,25 @@ async function moveCalendarLesson(l,day,endsAt){
  if(endsAt){
   starts_at=day; ends_at=endsAt;
   if(starts_at===l.starts_at && ends_at===l.ends_at) return;
+  const scope=await askSeriesScope(l);
+  if(!scope) return;
+  try{
+   await api('lessons',{lesson_id:l.id,version:l.version,series_version:l.series_version,scope,title:l.title,teacher_id:l.teacher_id,starts_at,ends_at,amount:l.planned_units/100,location:l.location,color:l.color||'green',student_ids:l.students.map(s=>s.id),course_type_id:l.course_type_id,subject_id:l.subject_id});
+   weekStart=monday(starts_at.slice(0,10));
+   toast(scope==='future'?'本次及以后都已改时间':'已改到 '+(typeof weekdayName==='function'?weekdayName(starts_at.slice(0,10))+' ':'')+starts_at.slice(11,16));
+   await refresh();
+  }catch(error){toast(error.message);}
+  return;
  }else{
   if(day===l.starts_at.slice(0,10))return;
   const delta=Math.round((new Date(day+'T00:00:00Z')-new Date(l.starts_at.slice(0,10)+'T00:00:00Z'))/86400000);
   starts_at=day+'T'+l.starts_at.slice(11); ends_at=datePlus(l.ends_at.slice(0,10),delta)+'T'+l.ends_at.slice(11);
  }
  const label=`${typeof weekdayName==='function'?weekdayName(starts_at.slice(0,10)):''} ${starts_at.slice(11,16)}`;
+ const scope=await askSeriesScope(l);
+ if(!scope) return;
  try{
-  await api('lessons',{lesson_id:l.id,version:l.version,series_version:l.series_version,scope:'single',title:l.title,teacher_id:l.teacher_id,starts_at,ends_at,amount:l.planned_units/100,location:l.location,color:l.color||'green',student_ids:l.students.map(s=>s.id)});
+  await api('lessons',{lesson_id:l.id,version:l.version,series_version:l.series_version,scope,title:l.title,teacher_id:l.teacher_id,starts_at,ends_at,amount:l.planned_units/100,location:l.location,color:l.color||'green',student_ids:l.students.map(s=>s.id),course_type_id:l.course_type_id,subject_id:l.subject_id});
   weekStart=monday(starts_at.slice(0,10));
   toast('已改到 '+label);
  }catch(error){toast(error.message);}

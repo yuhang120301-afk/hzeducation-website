@@ -114,10 +114,12 @@ def reconciliation(c,user,period,day):
     start,end=bounds(period,day)
     rows=[dict(r) for r in c.execute('''SELECT l.*,s.name student_name,s.course,s.billing_unit,u.name actor_name,
         original.kind original_kind, original.lesson_date original_date,original.id original_id,
-        reversal.id reversed_by,cash.cash_delta,cash.payment_method,cash.reference FROM ledger l JOIN students s ON l.student_id=s.id
+        reversal.id reversed_by,cash.cash_delta,cash.payment_method,cash.reference,cash.handed_over,cash.received_by,
+        recv.name receiver_name, l.created_at recorded_at FROM ledger l JOIN students s ON l.student_id=s.id
         JOIN users u ON l.actor_id=u.id LEFT JOIN ledger original ON l.reversal_of=original.id
         LEFT JOIN ledger reversal ON reversal.reversal_of=l.id
         LEFT JOIN cash_entries cash ON cash.ledger_id=l.id
+        LEFT JOIN users recv ON recv.id=cash.received_by
         WHERE l.lesson_date>=? AND l.lesson_date<=? ORDER BY l.lesson_date DESC,l.id DESC''',(start.isoformat(),end.isoformat()))]
     totals=blank_totals();daily={}
     day_value=start
@@ -142,6 +144,7 @@ def reconciliation(c,user,period,day):
         'unit_balances':unit_balances,'opening_units':opening,'closing_units':opening+totals['net_units'],
         'totals':totals,'daily':list(daily.values()),'rows':rows,'balance_check':mismatches==0,
         'by_method':cash['by_method'],'by_receiver':cash['by_receiver'],'unhanded':cash['unhanded'],
+        'arrears': __import__('finance').arrears_rows(c),
         'generated_at':now_local().isoformat(timespec='seconds')}
 
 def money(raw):
