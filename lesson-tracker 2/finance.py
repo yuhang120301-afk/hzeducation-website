@@ -31,8 +31,8 @@ def unhanded(c):
         JOIN students s ON s.id=l.student_id
         LEFT JOIN users u ON u.id=cash.received_by
         WHERE cash.handed_over=0 AND cash.cash_delta>0
-          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=l.id)
-        ORDER BY l.lesson_date, cash.ledger_id''')]
+          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=l.id)'''
+        + __import__('vouchers').hide_sql(c, 'l') + ' ORDER BY l.lesson_date, cash.ledger_id''')]
 
 
 def arrears_rows(c):
