@@ -64,8 +64,15 @@ def low_balance(c):
 
 def statement(c, user, period, day, start, end):
     payroll.require_owner(user)
-    bounds = payroll.period_bounds(period, day, start, end)
-    start, end = bounds
+    if period == 'custom':
+        start = payroll.day_value(start, '请选择开始日期。')
+        end = payroll.day_value(end, '请选择结束日期。')
+        if end < start:
+            raise ValueError('结束日期不能早于开始日期。')
+        if (end - start).days > 3660:
+            raise ValueError('一次最多查询 10 年。')
+    else:
+        start, end = accounting.bounds(period, day or now_local().date().isoformat())
     pay = payroll.report(c, user, 'custom', None, start.isoformat(), end.isoformat())
     owner_ids = {row['user_id'] for row in c.execute('SELECT user_id FROM organization_owners')}
     teacher_users = {row['id']: row['user_id'] for row in c.execute('SELECT id, user_id FROM teachers')}
