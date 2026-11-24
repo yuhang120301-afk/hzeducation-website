@@ -563,6 +563,11 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
                     c.commit()
                     return self.response(200,{'ok':True})
+                if self.path == '/api/students/course/stop':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=deletion.stop_course(c,user,data)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path in ('/api/profiles/delete','/api/profiles/restore'):
                     c.execute('BEGIN IMMEDIATE')
                     result=deletion.restore(c,user,data) if self.path.endswith('/restore') else deletion.remove(c,user,data)
