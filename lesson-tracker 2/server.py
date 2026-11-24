@@ -316,6 +316,13 @@ class Handler(BaseHTTPRequestHandler):
                     result=deletion.restore(c,user,data) if self.path.endswith('/restore') else deletion.remove(c,user,data)
                     c.commit()
                     return self.response(200,result)
+                if self.path == '/api/backup':
+                    import backup
+                    if user['role'] != 'owner':
+                        return self.response(403, {'error':'只有老板可以下载数据库备份。'})
+                    blob = backup.snapshot_bytes(DB_PATH)
+                    name = 'lessons-'+teaching.now_local().date().isoformat()+'.sqlite3'
+                    return self.response(200, blob, content_type='application/vnd.sqlite3', extra=[('Content-Disposition', f'attachment; filename="{name}"')])
                 if self.path.startswith('/api/pay/'):
                     c.execute('BEGIN IMMEDIATE')
                     result=payroll.handle_post(c,user,self.path,data)

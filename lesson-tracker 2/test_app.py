@@ -25,6 +25,13 @@ class Client:
         try: r=self.opener.open(req)
         except urllib.error.HTTPError as e: r=e
         return r.status,json.loads(r.read())
+    def raw(self, path, data=None, csrf=True):
+        headers={'Content-Type':'application/json'}
+        if csrf: headers['X-CSRF-Token']=self.csrf
+        req=urllib.request.Request('http://127.0.0.1:8766/api/'+path, data=b'{}' if data is None else json.dumps(data).encode(), headers=headers)
+        try: r=self.opener.open(req)
+        except urllib.error.HTTPError as e: r=e
+        return r.status, r.read(), r.headers
     def login(self,phone,password):
         status,_=self.request('login',{'phone':phone,'password':password})
         assert status==200
@@ -581,6 +588,26 @@ class AppTests(unittest.TestCase):
         self.assertEqual(admin.request('students/profile', {'student_id':sid,'name':'测试学生','billing_unit':'lesson','helen_original':False})[0], 403)
         self.assertEqual(admin.request('students', {'name':'偷偷标原有','course':'测试课程','phone':'0400000001','helen_original':True})[0], 403)
         self.assertEqual(next(s for s in self.admin.request('state')[1]['students'] if s['id']==sid)['helen_original'], 1)
+
+    def test_only_owner_can_download_database_backup(self):
+        import sqlite3
+        status, body, headers = self.admin.raw('backup')
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b'SQLite format 3\x00'))
+        self.assertIn('lessons-', headers.get('Content-Disposition',''))
+        copy=self.tmp.name+'/downloaded.sqlite3'
+        with open(copy,'wb') as handle: handle.write(body)
+        with sqlite3.connect(copy) as db:
+            self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+            self.assertGreater(db.execute('SELECT COUNT(*) FROM students').fetchone()[0], 0)
+            live=next(s['balance'] for s in self.admin.request('state')[1]['students'] if s['name']=='陈一诺')
+            self.assertEqual(db.execute("SELECT balance FROM students WHERE name='陈一诺'").fetchone()[0], live)
+        admin=Client(); admin.login('0400000004','AdminDemo2026!')
+        teacher=Client(); teacher.login('0400000003','TutorDemo2026!')
+        for client in (admin, teacher, self.parent):
+            status, body, _ = client.raw('backup')
+            self.assertEqual(status, 403)
+            self.assertFalse(body.startswith(b'SQLite format 3'))
 
     def test_teacher_scope_enforced_server_side(self):
         tid,t1=self.new_teacher();tid2,t2=self.new_teacher();s1=self.new_student();s2=self.new_student()

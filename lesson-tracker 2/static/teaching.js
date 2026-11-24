@@ -38,9 +38,23 @@ function headerActions(){
  if(view==='schedule' || (role==='admin' && !['settings','accounting'].includes(view))) return `<div class="head-actions">${schedule}</div>`;
  return '';
 }
+async function downloadDatabaseBackup(){
+ try{
+  const response=await fetch('/api/backup',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf||''},body:'{}'});
+  if(!response.ok){let message='备份没有下载。'; try{message=(await response.json()).error||message;}catch{} throw new Error(message);}
+  const blob=await response.blob();
+  const link=document.createElement('a');
+  link.href=URL.createObjectURL(blob);
+  link.download='lessons-backup.sqlite3';
+  link.click();
+  URL.revokeObjectURL(link.href);
+  toast('备份已下载。请把它存到电脑上的私人位置。');
+ }catch(error){toast(error.message);}
+}
 function renderSetup(){
- $('#surface').innerHTML=`<div class="feedback-grid"><button class="feedback-card setup-card" data-view="teachers"><h2>老师</h2><p>开通账号、科目和在职状态。</p></button><button class="feedback-card setup-card" data-view="settings"><h2>课程与地点</h2><p>排课时可选的名称和上课地点。</p></button><button class="feedback-card setup-card" data-view="administrators"><h2>管理员</h2><p>协助处理学生、排课和收款的账号。</p></button></div><p class="footnote">日常先看今天、课表和确认课时。老师、课程和管理员放在这里，不占每天的菜单。</p>`;
+ $('#surface').innerHTML=`<div class="feedback-grid"><button class="feedback-card setup-card" data-view="teachers"><h2>老师</h2><p>开通账号、科目和在职状态。</p></button><button class="feedback-card setup-card" data-view="settings"><h2>课程与地点</h2><p>排课时可选的名称和上课地点。</p></button><button class="feedback-card setup-card" data-view="administrators"><h2>管理员</h2><p>协助处理学生、排课和收款的账号。</p></button></div><p class="footnote">日常先看今天、课表和确认课时。老师、课程和管理员放在这里，不占每天的菜单。</p><p><button class="btn" id="download-backup" type="button">下载数据库备份</button></p><p class="footnote">这是整份数据库的副本，含学生姓名和余额。请保存到自己的电脑，不要留在聊天或邮箱里。下载不会改动正在使用的数据。</p>`;
  document.querySelectorAll('#surface [data-view]').forEach(button=>button.onclick=()=>{view=button.dataset.view;document.querySelector('.shell')?.classList.remove('nav-open');render();});
+ $('#download-backup').onclick=downloadDatabaseBackup;
 }
 function dashboard(){
  if(!weekStart)weekStart=monday(state.today);
