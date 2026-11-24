@@ -161,7 +161,7 @@ button{cursor:default}
 .sums .card{grid-column:span 3}
 .sums .card:nth-child(n+5){grid-column:span 4}
 .sums .n{font-size:26px;font-weight:600;color:var(--green);margin:6px 0 2px;letter-spacing:-0.02em;font-variant-numeric:tabular-nums}
-.sums .focus{border-left:4px solid var(--gold);background:var(--gold-soft)}
+.sums .focus,.pay-sums .focus{border-left:4px solid var(--gold);background:var(--gold-soft)}
 .fin-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}
 .trow{display:flex;align-items:center;gap:12px;background:var(--fill,#fff);border:1px solid var(--line);border-left:5px solid var(--tone,var(--line));border-radius:8px;padding:10px 14px;margin-bottom:8px}
 .trow .grow{flex:1;min-width:0;font-size:15px}
@@ -170,6 +170,27 @@ button{cursor:default}
 .alert{display:flex;justify-content:space-between;gap:12px;align-items:center;background:var(--gold-soft);border:1px solid #E7D7A4;border-left:5px solid var(--gold);border-radius:8px;padding:12px 14px;margin:0 0 16px}
 .alert b{color:var(--gold-text);font-variant-numeric:tabular-nums}
 .alert small{display:block;color:var(--muted);font-weight:500;margin-top:3px}
+.pay-tools{display:flex;gap:12px;align-items:center;margin-bottom:14px}
+.pay-tools .search{flex:1;margin:0}
+.pay-sums{display:grid;grid-template-columns:0.9fr 1.3fr 1.15fr 1.15fr;gap:12px;margin-bottom:14px}
+.pay-sums .line{display:flex;justify-content:space-between;gap:8px;padding:2px 0;font-size:13px}
+.pay-sums .line b{color:var(--green);font-weight:600;font-variant-numeric:tabular-nums}
+.pay-sums .hand{margin-top:8px;height:34px;padding:0 12px;border-radius:6px;border:1px solid var(--green);background:#fff;color:var(--green)}
+.daylabel{margin:12px 0 8px;color:var(--muted);font-weight:600;font-size:14px}
+.subtotal{display:flex;justify-content:flex-end;gap:8px;padding:2px 12px 10px;color:var(--muted);font-size:14px}
+.subtotal b{color:var(--green);font-variant-numeric:tabular-nums}
+.prow{display:grid;grid-template-columns:64px 1.25fr 1.35fr 96px 72px 118px 78px;gap:8px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:14px}
+.prow.head{background:transparent;border:0;color:var(--muted);font-size:12px;padding:0 12px;margin:0 0 4px}
+.prow .who{display:flex;align-items:center;gap:8px;min-width:0}
+.prow .who b{font-weight:600}
+.prow .money{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;margin-left:6px;background:var(--gold-soft);color:var(--gold-text);border-radius:999px;padding:1px 7px;font-size:12px}
+.tick{display:inline-flex;align-items:center;gap:5px;color:var(--gold-text);white-space:nowrap}
+.tick i{width:16px;height:16px;border:1.5px solid currentColor;border-radius:4px;display:inline-grid;place-items:center;font-style:normal;font-size:11px}
+.tick.on{color:var(--green)}
+.tick.on i{background:var(--green);color:#fff;border-color:var(--green)}
+.owe-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.owe-row .trow{margin:0}
 .block h2,.block .lead{color:#204F40}
 .shade{position:fixed;inset:0;background:rgba(22,27,34,.46);display:grid;place-items:center;padding:24px}
 .sheet{width:min(640px,100%);background:#fff;border-radius:20px;padding:22px 22px 18px;box-shadow:0 24px 80px rgba(0,0,0,.2);max-height:calc(100vh - 48px);overflow:auto}
@@ -190,6 +211,7 @@ body[data-page="today"] [data-page="today"],
 body[data-page="pay"] [data-page="pay"],
 body[data-page="payday"] [data-page="payday"],
 body[data-page="finance"] [data-page="finance"],
+body[data-page="cash"] section[data-page="cash"],
 body[data-page="calendar"] [data-page="calendar"],
 body[data-page="package"] section[data-page="package"]{display:block}
 .shade{display:none}
@@ -221,6 +243,21 @@ body[data-page="package"] section[data-page="package"]{display:block}
   body[data-page="finance"] .sums .card{padding:12px 12px 10px}
   body[data-page="finance"] .sums .n{font-size:22px}
   body[data-page="finance"] .sums{gap:8px;margin:10px 0 12px}
+  .pay-tools{flex-direction:column;align-items:stretch}
+  body[data-page="cash"] .fin-top{grid-template-columns:1fr}
+  body[data-page="cash"] .exports button{height:40px;padding:0 10px;white-space:nowrap}
+  .pay-sums,.owe-row{grid-template-columns:1fr 1fr}
+  .pay-sums .card:first-child{order:1}
+  .pay-sums .focus{order:2}
+  .pay-sums .methods{order:3}
+  .pay-sums .receivers{order:4}
+  .pay-sums .methods,.pay-sums .receivers{grid-column:1 / -1}
+  .prow{display:flex;flex-wrap:wrap;gap:6px 8px}
+  .prow.head{display:none}
+  .prow .who{flex:1}
+  .prow .money{margin-left:auto}
+  .prow .for{flex:1 1 100%;color:var(--muted);font-size:13px}
+  .prow time{color:var(--muted);font-size:13px}
   .cal-wrap{grid-template-columns:1fr}
   .mini{display:none}
   .phonemonth{display:block!important}
@@ -245,7 +282,7 @@ h1,h2,h3,.top h1,.section h2,.sheet h2,.block h2,.staff h3,.gcal-tools h2{font-w
 .section h2,.block h2,.sheet h2{font-size:16px}
 .card .n,.metrics .n,.block .lead{font-size:22px;font-weight:600;letter-spacing:-0.02em}
 button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row b,.mark,.avatar,.day,.back,.field,.exports button,.foot button,.todaybtn,.action .count,.who b,.nav button.active,.gviews .on,.tabbar button.active,.card .k,.lrow .num span,.metrics .k,.lesson time,.lesson time small,.lrow .grow small{font-weight:500}
-.num,.card .n,.metrics .n,.money,.lrow .num,.lesson time,.row b,.block .lead,.sums .n,.trow .num,.split b,.alert b{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.num,.card .n,.metrics .n,.money,.lrow .num,.lesson time,.row b,.block .lead,.sums .n,.trow .num,.split b,.alert b,.pay-sums .line b,.subtotal b,.prow .money{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
 .lrow .num,.metrics .n,.money{text-align:right}
 .brand div,.brand strong{display:none}
 .lrow{font-size:15px}
@@ -268,7 +305,7 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
     <button data-tab="finance">财务</button>
     <div class="more">更多</div>
     <button class="quiet">课后记录</button>
-    <button class="quiet">收款与欠费</button>
+    <button class="quiet" data-tab="cash">收款与欠费</button>
     <button class="quiet">价格表</button>
     <button class="quiet">操作日志</button>
     <button class="quiet">设置</button>
@@ -394,6 +431,57 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
       </div>
     </section>
 
+    <section data-page="cash">
+      <div class="top fin-top"><h1>收款与欠费</h1>
+        <div class="exports"><button class="primary">+ 记一笔收款</button><button>导出 Excel</button><button>导出 PDF</button></div>
+        <p>11月23日–29日 · 演示数字</p>
+      </div>
+      <div class="pay-tools">
+        <div class="seg"><button>日</button><button class="on">周</button><button>双周</button><button>月</button><button>自定义</button></div>
+        <label class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input placeholder="搜索学生、老师或收款人" aria-label="搜索收款"></label>
+      </div>
+      <div class="pay-sums">
+        <div class="card"><div class="k">总收款</div><div class="n">$9,895.00</div><div class="s">本周 7 笔 · 2 笔未核对</div></div>
+        <div class="card methods"><div class="k">按方式</div>
+          <div class="line"><span>银行转账</span><b>$2,975.00</b></div>
+          <div class="line"><span>刷卡</span><b>$980.00</b></div>
+          <div class="line"><span>支付宝</span><b>$2,400.00</b></div>
+          <div class="line"><span>微信</span><b>$1,700.00</b></div>
+          <div class="line"><span>现金</span><b>$1,840.00</b></div>
+        </div>
+        <div class="card receivers"><div class="k">按收款人</div>
+          <div class="line"><span>Helen</span><b>$6,995.00</b></div>
+          <div class="line"><span>Angela · 已上交</span><b>$1,700.00</b></div>
+          <div class="line"><span>Kelsey · 未上交</span><b>$1,200.00</b></div>
+        </div>
+        <div class="card focus"><div class="k">老师代收未上交</div><div class="n">$1,200.00</div><div class="s">Kelsey · 现金代收</div><button class="hand">标为已上交</button></div>
+      </div>
+      <div class="section">
+        <h2>欠费</h2>
+        <div class="owe-row">
+          <article class="trow t-kelsey"><span class="pill">Kelsey</span><div class="grow">王星然<small>剩余 0 节 · 周四 16:00 仍有课</small></div><div class="num">仍排着</div></article>
+          <article class="trow t-christina"><span class="pill">Christina</span><div class="grow">林晓<small>补课费还没付</small></div><div class="num">$80.00</div></article>
+        </div>
+      </div>
+      <div class="section">
+        <h2>收款明细</h2>
+        <div class="prow head"><span>时间</span><span>学生</span><span>项目</span><span>金额</span><span>方式</span><span>收款人</span><span>核对</span></div>
+        <div class="daylabel">周二 11月24日</div>
+        <article class="prow"><time>10:05</time><div class="who"><span class="pill t-helen">Helen</span><b>李沐阳</b></div><div class="for">本人 1.5 小时 · 8 节</div><b class="money">$2,400.00</b><div class="method">支付宝</div><div class="recv">Helen</div><div class="tick"><i></i>未核对</div></article>
+        <article class="prow"><time>14:18</time><div class="who"><span class="pill t-kelsey">Kelsey</span><b>王星然</b></div><div class="for">1:1 · 20 节</div><b class="money">$1,200.00</b><div class="method">现金</div><div class="recv">Kelsey <span class="tag">未上交</span></div><div class="tick on"><i>✓</i>已核对</div></article>
+        <article class="prow"><time>15:46</time><div class="who"><span class="pill t-angela">Angela</span><b>赵恩希</b></div><div class="for">1:1 · 20 节 + 赠 1 节</div><b class="money">$1,700.00</b><div class="method">微信</div><div class="recv">Angela</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <article class="prow"><time>18:05</time><div class="who"><span class="pill t-christina">Christina</span><b>林晓</b></div><div class="for">1:1 · 8 节</div><b class="money">$640.00</b><div class="method">现金</div><div class="recv">Helen</div><div class="tick"><i></i>未核对</div></article>
+        <div class="subtotal">当日小计 <b>$5,940.00</b></div>
+        <div class="daylabel">周一 11月23日</div>
+        <article class="prow"><time>09:12</time><div class="who"><span class="pill t-angela">Angela</span><b>陈一诺</b></div><div class="for">1:1 · 20 节 + 赠 1 节</div><b class="money">$1,700.00</b><div class="method">银行转账</div><div class="recv">Helen</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <article class="prow"><time>16:40</time><div class="who"><span class="pill t-vincent">Vincent</span><b>周可</b></div><div class="for">1:1 · 续费 10 节</div><b class="money">$980.00</b><div class="method">刷卡</div><div class="recv">Helen</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <div class="subtotal">当日小计 <b>$2,680.00</b></div>
+        <div class="daylabel">周四 11月26日</div>
+        <article class="prow"><time>11:30</time><div class="who"><span class="pill t-ethan">Ethan</span><b>陈子墨</b></div><div class="for">1:1 · 15 节</div><b class="money">$1,275.00</b><div class="method">银行转账</div><div class="recv">Helen</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <div class="subtotal">当日小计 <b>$1,275.00</b></div>
+      </div>
+    </section>
+
     <section data-page="calendar">
       <div class="cal-wrap">
         <div class="mini">
@@ -514,11 +602,12 @@ button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row
 <script>
 const page=new URLSearchParams(location.search).get('page')||'today';
 document.body.dataset.page=page;
-if(page==='finance'){
+const phoneLabel={finance:['finance','财务'],cash:['cash','收款']};
+if(phoneLabel[page]){
   const more=document.querySelector('.tabbar button:last-child');
-  if(more){more.dataset.tab='finance';more.textContent='财务';}
+  if(more){more.dataset.tab=phoneLabel[page][0];more.textContent=phoneLabel[page][1];}
 }
-const tab={payday:'pay',finance:'finance',calendar:'calendar',package:'package',pay:'pay',today:'today'}[page];
+const tab={payday:'pay',finance:'finance',calendar:'calendar',package:'package',pay:'pay',today:'today',cash:'cash'}[page];
 document.querySelectorAll('[data-tab]').forEach(b=>{if(b.dataset.tab===tab)b.classList.add('active');});
 </script>
 </body>
