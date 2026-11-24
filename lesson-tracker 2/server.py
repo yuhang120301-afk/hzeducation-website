@@ -479,15 +479,23 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
+                if user['role'] == 'owner':
+                    for person in students:
+                        offer=pricing.legacy_price(c, person)
+                        person['legacy']=offer['legacy']
+                        person['list_hourly_cents']=offer['list_hourly_cents']
+                        person['custom_hourly_cents']=offer['custom_hourly_cents']
                 if user['role'] == 'teacher':
                     for person in students:
-                        for key in ('parent_email', 'phone', 'contact_phone'):
+                        for key in ('parent_email', 'phone', 'contact_phone', 'legacy', 'list_hourly_cents', 'custom_hourly_cents'):
                             person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('total_cents', None)
                             batch.pop('unit_fees', None)
                 if user['role'] == 'parent':
                     for person in students:
+                        for key in ('legacy', 'list_hourly_cents', 'custom_hourly_cents'):
+                            person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
                 archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
@@ -639,6 +647,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/prices/validity':
                     c.execute('BEGIN IMMEDIATE')
                     result = pricing.save_validity(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
+                if self.path == '/api/prices/legacy':
+                    c.execute('BEGIN IMMEDIATE')
+                    result = pricing.save_legacy_price(c, user, data)
                     c.commit()
                     return self.response(200, result)
                 if self.path == '/api/prices/quote':

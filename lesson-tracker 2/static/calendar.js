@@ -1,7 +1,7 @@
 /* Time grid for the people who schedule lessons. Times are read from the
    stored local clock text, so the click position cannot drift with timezones. */
 const GCAL_PX = 64;
-const GCAL_START = 9;
+const GCAL_START = 7;
 const GCAL_END = 21;
 let gcalScroll = null;
 let gcalDay = '';
@@ -96,7 +96,8 @@ function lessonIsOpen(lesson){
 function lessonDone(lesson){
  const status=String(lesson.status||'').toLowerCase();
  if(['completed','attended','done','redeemed','已完成','已上了'].includes(status)) return true;
- return (lesson.reports||[]).length>0;
+ if(lesson.recorded) return true;
+ return (lesson.reports||[]).some(report=>report.ledger_id || [report.content,report.homework,report.feedback].some(text=>String(text||'').trim()));
 }
 function clockLabel(value, compact){
  const hour=Number(value.slice(0,2)), minute=Number(value.slice(3,5));
@@ -179,7 +180,7 @@ function renderTimeGrid(){
   return `<div class="gcal-col ${day===state.today?'is-today':''}" data-day="${day}">${items.map(gcalEvent).join('')}${now}</div>`;
  }).join('');
  const mobileDays = window.matchMedia('(max-width:760px)').matches ? `<div class="gcal-daystrip">${Array.from({length:7},(_,i)=>datePlus(weekStart,i)).map(day=>`<button type="button" class="gcal-daybtn ${day===days[0]?'selected':''} ${day===state.today?'is-today':''}" data-gcal-day="${day}">${weekday[(new Date(day+'T12:00:00Z').getUTCDay()+6)%7]} ${Number(day.slice(8))}</button>`).join('')}</div>` : '';
- $('#surface').innerHTML = `<div class="calendar-toolbar"><label class="calendar-search"><input id="calendar-search" type="search" placeholder="搜索学生或老师" aria-label="搜索学生或老师" value="${escapeHTML(calendarSearch)}"></label><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上一周">‹</button><strong>${formatDate(weekStart)} — ${formatDate(datePlus(weekStart,6))}<small>${week.filter(lesson=>lesson.status!=='cancelled').length} 节 · 已完成 ${done.length} · ${Number(duration.toFixed(2))} 小时</small></strong><button class="btn icon-button" id="next-week" aria-label="下一周">›</button><button class="btn" id="this-week">本周</button></div>${miniPickerButton()}<div class="calendar-filters"><div class="period-switch" role="group" aria-label="日周月"><button type="button" id="span-day" class="${calendarSpan==='day'?'selected':''}">日</button><button type="button" id="span-week" class="${calendarSpan==='week'?'selected':''}">周</button><button type="button" id="span-month" class="${calendarSpan==='month'?'selected':''}">月</button></div><div class="period-switch" role="group" aria-label="日历显示"><button type="button" id="mode-lessons" class="${calendarMode==='lessons'?'selected':''}">课程</button><button type="button" id="mode-availability" class="${calendarMode==='availability'?'selected':''}">空档</button></div><select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(teacher=>`<option data-user-content value="${teacher.id}" ${teacherFilter==teacher.id?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select><select id="status-filter" aria-label="按课程状态筛选">${[['all','全部状态'],['scheduled','待上课 / 待记录'],['completed','已完成']].map(([value,label])=>`<option value="${value}" ${value===scheduleStatus?'selected':''}>${label}</option>`).join('')}</select></div></div>${mobileDays}<p class="gcal-hint">${calendarMode==='availability'?(teacherFilter?'空白是这位老师可以排课的时间，色块是已经占用的时段。':'空白是还没有课程的时间。选择一位老师后，只看这位老师的空档。'):'点击空白处排一小时，拖动可选更长的时间。拖动课程可改时间。'}</p><div class="gcal ${calendarMode==='availability'?'is-availability':''}" style="--days:${days.length}"><div class="gcal-head"><div class="gcal-corner">时间</div>${days.map(day=>`<div class="gcal-dayhead ${day===state.today?'is-today':''}"><span>${weekday[(new Date(day+'T12:00:00Z').getUTCDay()+6)%7]}</span><strong>${Number(day.slice(8))}${day===state.today?'<small>今天</small>':''}</strong></div>`).join('')}</div><div class="gcal-scroll" id="gcal-scroll"><div class="gcal-body"><div class="gcal-gutter">${Array.from({length:GCAL_END-GCAL_START},(_,i)=>`<div class="gcal-hour"><span>${String(GCAL_START+i).padStart(2,'0')}:00</span></div>`).join('')}</div>${columns}</div></div></div><p class="footnote">时间以 ${escapeHTML(state.timezone)} 为准。排课不扣课时；确认完成并发布记录后才扣除，并进入老师工资。</p>`;
+ $('#surface').innerHTML = `<div class="calendar-toolbar"><label class="calendar-search"><input id="calendar-search" type="search" placeholder="搜索学生或老师" aria-label="搜索学生或老师" value="${escapeHTML(calendarSearch)}"></label><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上一周">‹</button><strong>${formatDate(weekStart)} — ${formatDate(datePlus(weekStart,6))}<small>${week.filter(lesson=>lesson.status!=='cancelled').length} 节 · 已完成 ${done.length} · ${Number(duration.toFixed(2))} 小时</small></strong><button class="btn icon-button" id="next-week" aria-label="下一周">›</button><button class="btn" id="this-week">本周</button></div>${miniPickerButton()}<div class="calendar-filters"><div class="period-switch" role="group" aria-label="日周月"><button type="button" id="span-day" class="${calendarSpan==='day'?'selected':''}">日</button><button type="button" id="span-week" class="${calendarSpan==='week'?'selected':''}">周</button><button type="button" id="span-month" class="${calendarSpan==='month'?'selected':''}">月</button></div><div class="period-switch" role="group" aria-label="日历显示"><button type="button" id="mode-lessons" class="${calendarMode==='lessons'?'selected':''}">课程</button><button type="button" id="mode-availability" class="${calendarMode==='availability'?'selected':''}">空档</button></div><select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(teacher=>`<option data-user-content value="${teacher.id}" ${teacherFilter==teacher.id?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select><select id="status-filter" aria-label="按课程状态筛选">${[['all','全部状态'],['scheduled','待上课 / 待记录'],['completed','已完成']].map(([value,label])=>`<option value="${value}" ${value===scheduleStatus?'selected':''}>${label}</option>`).join('')}</select></div></div>${mobileDays}<p class="gcal-hint">${calendarMode==='availability'?(teacherFilter?'空白是这位老师可以排课的时间，色块是已经占用的时段。':'空白是还没有课程的时间。选择一位老师后，只看这位老师的空档。'):'点击空白处排一小时，拖动可选更长的时间。拖动课程可改时间。'}</p><div class="gcal ${calendarMode==='availability'?'is-availability':''}" style="--days:${days.length};--gcal-span:${GCAL_END-GCAL_START}"><div class="gcal-head"><div class="gcal-corner">时间</div>${days.map(day=>`<div class="gcal-dayhead ${day===state.today?'is-today':''}"><span>${weekday[(new Date(day+'T12:00:00Z').getUTCDay()+6)%7]}</span><strong>${Number(day.slice(8))}${day===state.today?'<small>今天</small>':''}</strong></div>`).join('')}</div><div class="gcal-scroll" id="gcal-scroll"><div class="gcal-body"><div class="gcal-gutter">${Array.from({length:GCAL_END-GCAL_START},(_,i)=>`<div class="gcal-hour"><span>${String(GCAL_START+i).padStart(2,'0')}:00</span></div>`).join('')}</div>${columns}</div></div></div><p class="footnote">时间以 ${escapeHTML(state.timezone)} 为准。排课不扣课时；确认完成并发布记录后才扣除，并进入老师工资。</p>`;
  $('#prev-week').onclick=()=>stepCalendar(-1);
  $('#next-week').onclick=()=>stepCalendar(1);
  $('#this-week').onclick=()=>focusCalendar(state.today);
@@ -195,12 +196,12 @@ function renderTimeGrid(){
  document.querySelectorAll('[data-gcal-day]').forEach(button=>button.onclick=()=>{gcalDay=button.dataset.gcalDay;renderSchedule();});
  const scroller = $('#gcal-scroll');
  if(gcalScroll==null){
-  let hour = 8;
+  let hour = GCAL_START;
   if(state.today>=weekStart && state.today<end && state.now){
    const current = Number(state.now.slice(11,13))+Number(state.now.slice(14,16))/60;
-   if(current>=8 && current<=21) hour = Math.max(7, current-1);
+   if(current>=GCAL_START && current<=GCAL_END) hour = Math.max(GCAL_START, current-1);
   }
-  gcalScroll = hour*GCAL_PX;
+  gcalScroll = (hour-GCAL_START)*GCAL_PX;
  }
  const applyScroll=()=>{if(scroller) scroller.scrollTop=gcalScroll;};
  applyScroll();
@@ -382,7 +383,7 @@ async function renderToday(){
   const who=(lesson.students||[]).map(student=>[student.name,student.grade].filter(Boolean).join(' · ')).join(' · ')||lesson.title;
   const kind=lesson.course_type_name||'';
   const mine=(lesson.teacher_name||'').toLowerCase().includes('helen')?'本人 · ':'';
-  const done=lesson.status==='completed';
+  const done=lessonDone(lesson);
   return `<article class="today-lesson ${done?'done':''} t-${tone}"><time>${lesson.starts_at.slice(11,16)}<small>${durationLabel(lesson)}</small></time><div class="who2"><span class="mark">${userHTML((lesson.teacher_name||'?').slice(0,1))}</span><div>${userHTML(who)}<span>${userHTML(lesson.teacher_name)} · ${mine}${userHTML(kind)}</span></div></div><div class="taps">${done?'<button type="button" class="go" disabled>已上了</button>':`<button type="button" class="go" data-today-done="${lesson.id}">上了</button><button type="button" data-today-leave="${lesson.id}">请假</button>`}</div></article>`;
  }).join('')||'<p class="muted">今天还没有课。</p>'}</div><div class="section"><h2>要处理</h2><div class="today-actions" id="today-actions"><div class="today-action"><h3>正在读取</h3></div></div></div></div>`;
  const box=$('#today-search'), hits=$('#today-hits');

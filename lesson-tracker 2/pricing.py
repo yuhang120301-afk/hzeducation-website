@@ -171,12 +171,15 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
                 'each_millis': prices[0], 'unit_fees': prices, 'terms': [], 'product': product,
                 'discount_percent': 0, 'validity': '永久有效'})
     source = 'table'
+    hourly = band['hourly_cents']
     if student and student['profile_id']:
         custom = c.execute('SELECT per_lesson_cents, lesson_minutes FROM student_prices WHERE profile_id=? AND product=?',
             (student['profile_id'], product)).fetchall()
         if custom:
             source = 'custom'
             by_minutes = {row['lesson_minutes']: row['per_lesson_cents'] for row in custom}
+            if by_minutes.get(60):
+                hourly = by_minutes[60]
             for package in packages:
                 each = by_minutes.get(package['lesson_minutes'])
                 if each is None and package['product'] == 'term':
@@ -195,8 +198,94 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
                 kind = name or PRODUCT_LABELS.get(package['product'], '')
                 package['label'] = f"{kind} {'20+1 节' if package['gift_lessons'] else package['label']} · 老学员价 · 每节 {money_millis(prices[0])}"
     return {'level': level, 'course_type': name, 'product': product, 'product_label': PRODUCT_LABELS[product],
-        'hourly_cents': band['hourly_cents'], 'lesson_minutes': band['lesson_minutes'], 'packages': packages,
+        'hourly_cents': hourly, 'lesson_minutes': band['lesson_minutes'], 'packages': packages,
         'validity': validity, 'source': source, 'reason': ''}
+
+
+def legacy_price(c, student, on=None):
+    """A student is legacy only when Helen stored a per-lesson price that is not the 2027 list."""
+    on = on or now_local().date()
+    student = annotate(dict(student), on)
+    name = student.get('course_type_name') or ''
+    if not name and student.get('course_type_id'):
+        kind = c.execute('SELECT name FROM course_types WHERE id=?', (student['course_type_id'],)).fetchone()
+        name = kind['name'] if kind else ''
+    product = TYPE_PRODUCT.get(name)
+    level = student.get('level_now') or ''
+    table = table_on(c, on.isoformat())
+    rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+    band = matching_row(rows, product, level) if product and level else None
+    list_hourly = band['hourly_cents'] if band else None
+    customs = []
+    if student.get('profile_id') and product and product != 'helen':
+        customs = c.execute('SELECT lesson_minutes, per_lesson_cents FROM student_prices WHERE profile_id=? AND product=?',
+            (student['profile_id'], product)).fetchall()
+    custom_hourly = None
+    legacy = False
+    for row in customs:
+        if row['lesson_minutes'] == 60:
+            custom_hourly = row['per_lesson_cents']
+        if list_hourly is None or row['per_lesson_cents'] != per_lesson_cents(list_hourly, row['lesson_minutes']):
+            legacy = True
+    if custom_hourly is None and customs:
+        sample = customs[0]
+        minutes = sample['lesson_minutes'] or 60
+        custom_hourly = int((Decimal(sample['per_lesson_cents']) * 60 / Decimal(minutes)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return {'legacy': bool(customs) and legacy, 'list_hourly_cents': list_hourly,
+        'custom_hourly_cents': custom_hourly if customs else None, 'product': product, 'level': level,
+        'course_type': name}
+
+
+def save_legacy_price(c, user, data):
+    require_owner(user)
+    import accounting
+    student = c.execute('''SELECT s.*, ct.name course_type_name FROM students s
+        LEFT JOIN course_types ct ON ct.id=s.course_type_id WHERE s.id=? AND s.archived=0''',
+        (int(data.get('student_id') or 0),)).fetchone()
+    if not student:
+        raise ValueError('学生不存在。')
+    info = legacy_price(c, student)
+    product = info['product']
+    if not product:
+        raise ValueError('请先选择课程类型。')
+    if data.get('clear') is True or str(data.get('hourly') or '').strip() == '':
+        c.execute('DELETE FROM student_prices WHERE profile_id=? AND product=?', (student['profile_id'], product))
+        return {'ok': True, 'legacy': False}
+    cents = accounting.money(data.get('hourly'))
+    if info['product'] == 'term':
+        minutes_list = [150]
+        table = table_on(c, now_local().date().isoformat())
+        if table and info['level']:
+            rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))]
+            band = matching_row(rows, 'term', info['level'])
+            if band:
+                minutes_list = [int(band['lesson_minutes'] or 150)]
+    else:
+        minutes_list = [60, 90]
+    for minutes in minutes_list:
+        each = per_lesson_cents(cents, minutes)
+        c.execute('''INSERT INTO student_prices(profile_id,product,lesson_minutes,per_lesson_cents,note,updated_by)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(profile_id,product,lesson_minutes) DO UPDATE SET
+            per_lesson_cents=excluded.per_lesson_cents, note=excluded.note, updated_by=excluded.updated_by''',
+            (student['profile_id'], product, minutes, each, '老学员', user['id']))
+    return {'ok': True, 'legacy': cents != info['list_hourly_cents']}
+
+
+def charged_fee_cents(c, student_id, lesson, amount_units):
+    """Use Helen's locked hourly price when a lesson has no package cash price."""
+    student = c.execute('''SELECT s.*, ct.name course_type_name FROM students s
+        LEFT JOIN course_types ct ON ct.id=s.course_type_id WHERE s.id=?''', (student_id,)).fetchone()
+    if not student:
+        return None
+    hourly = legacy_price(c, student)['custom_hourly_cents']
+    if not hourly:
+        return None
+    start = dt.datetime.fromisoformat(lesson['starts_at'])
+    end = dt.datetime.fromisoformat(lesson['ends_at'])
+    minutes = max(1, int((end - start).total_seconds() // 60))
+    each = per_lesson_cents(hourly, minutes)
+    return int((Decimal(each) * Decimal(amount_units) / Decimal(100)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
 
 
 def save_band(c, user, data):

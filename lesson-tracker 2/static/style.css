@@ -113,7 +113,7 @@
 .gcal-gutter{position:sticky;left:0;z-index:2;background:#f7faf8}
 .gcal-hour{height:64px;border-bottom:1px solid #e7eee9;position:relative}
 .gcal-hour span{position:absolute;top:-8px;right:6px;font-size:12px;color:var(--muted);background:#f7faf8;padding:0 2px}
-.gcal-col{position:relative;height:768px;border-left:1px solid var(--line);background-image:linear-gradient(to bottom,transparent 63px,#e7eee9 63px);background-size:100% 64px}
+.gcal-col{position:relative;height:calc(var(--gcal-span, 14) * 64px);border-left:1px solid var(--line);background-image:linear-gradient(to bottom,transparent 63px,#e7eee9 63px);background-size:100% 64px}
 .gcal-col.is-today{background-color:#f4faf6}
 .gcal.is-availability .gcal-col{background-color:#f3faf6}
 .gcal-event,.gcal-preview{position:absolute;overflow:hidden;border:0;border-left:4px solid var(--event-edge,#34845b);border-radius:6px;background:var(--event-bg,#d9eee2);color:var(--event-ink,#174b35);text-align:left;padding:4px 6px;z-index:2;font-size:12px;line-height:1.3}
@@ -132,6 +132,10 @@
 .drag-tip{position:absolute;top:-24px;left:0;background:#204F40;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;white-space:nowrap;font-style:normal}
 .pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer}
 .pay-card h2{margin:0;font-size:22px}
+.legacy-badge{display:inline-block;margin-left:8px;background:#F8F3E4;color:#8A6D1F;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600;vertical-align:middle}
+.legacy-price{margin:0 0 12px}
+.record-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.record-tools h2{margin-right:auto}
 .package-presets .btn{margin:0 8px 8px 0}
 .year-level select{font-size:18px}
 .profile-group{margin:10px 0;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:#fff}
