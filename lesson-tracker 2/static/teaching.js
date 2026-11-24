@@ -1,4 +1,4 @@
-let weekStart='', teacherFilter='', scheduleStatus='all';
+let weekStart='', teacherFilter='', scheduleStatus='all', profileId='';
 const statusName={scheduled:'待上课',completed:'已完成',cancelled:'已取消'};
 const datePlus=(day,n)=>{const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
 const monday=day=>{const n=new Date(day+'T12:00:00Z').getUTCDay();return datePlus(day,-((n+6)%7));};
@@ -12,7 +12,7 @@ function navigationItems(){
   ['每天',[['today','今天','clock'],['schedule','课表排课','grid'],['feedback','确认课时','check']]],
   ['学生',[['overview','学生与余额','users'],['records','余额明细','book']]],
   ['财务',[['pay','老师工资','book'],['accounting','收款与欠费','grid'],['finance','财务报表','book']]],
-  ['设置',[['setup','设置','users']]]
+  ['设置',[['setup','设置','users'],['audit','操作日志','book']]]
  ];
  const items=[['schedule',role==='admin'?'排课日历':role==='teacher'?'我的课程':'孩子的课表','clock'],['feedback','课后记录','book'],['overview',role==='admin'?'学生与课时':role==='teacher'?'我的学生':'剩余余额','grid'],['records','余额明细','book']];
  if(role==='admin') items.push(['teachers','老师管理','users'],['settings','课程与地点设置','grid']);
@@ -24,6 +24,7 @@ function flatNavigation(){
   if(view==='teachers') items.push(['teachers','老师','users']);
   if(view==='settings') items.push(['settings','课程与地点','grid']);
   if(view==='administrators') items.push(['administrators','管理员','users']);
+  if(view==='profile') items.push(['profile','学生档案','users']);
  }
  return items;
 }
@@ -63,7 +64,7 @@ function dashboard(){
  view=current[0];
  const center=role==='owner'?'Helen校长端':admin?'机构管理':staff?'老师中心':'家长中心';
  const shown=['teachers','settings','administrators'].includes(view)?'setup':view;
- const subtitles={today:'今天的课、需要续费的学生，以及本周收到的钱。',schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'查看余额、充值和退款。':staff?'查看学生余额，按各自计费方式管理。':'剩余余额与学习记录，随时查看。',records:'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'这是收款、退款和课时变动，不是利润，也不是老师工资。',pay:'按已确认并扣过课时的课程计算。这里只显示数字，不会打款。',setup:'老师、课程名称和管理员。'};
+ const subtitles={today:'今天的课、需要续费的学生，以及本周收到的钱。',schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'查看余额、充值和退款。':staff?'查看学生余额，按各自计费方式管理。':'剩余余额与学习记录，随时查看。',records:'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'核对每天收到的家长付款，以及还没上交的代收。',pay:'按已经上完、扣过课时的课计算。数字供核对，不会自动打款。',finance:'营业额、成本、机构利润和 Helen 净利润。',audit:'可以查看并撤销还没有被别人改过的操作。',profile:'课程和课后记录按日期排列。',setup:'老师、课程名称、管理员和每日备份。'};
  const navHtml=nav.map(([label,items])=>`${label?`<p class="nav-label">${label}</p>`:''}${items.map(item=>`<button class="nav-item ${shown===item[0]?'active':''}" data-view="${item[0]}">${icon(item[2])}${item[1]}</button>`).join('')}`).join('');
  $('#app').innerHTML=`<div class="shell"><aside class="sidebar">${brand()}<nav>${navHtml}</nav><div class="side-foot"><strong>HZ Education Melbourne</strong>把每一次进步，认真记下来。</div></aside><button type="button" class="nav-backdrop" id="nav-backdrop" aria-label="关闭菜单"></button><main class="main">${state.demo?'<div class="demo-banner">本机演示版 · 虚构数据 · 可分别体验Helen校长端、管理员、任课老师和家长账号</div>':''}<header class="topbar"><button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开菜单"><span></span><span></span><span></span></button><div class="breadcrumb">${center}<span>/　${current[1]}</span></div><div class="account"><span class="avatar">${userHTML(state.user.name.slice(0,1))}</span><span>${userHTML(state.user.name)}</span><span class="role-label">${role==='owner'?'Helen校长端':admin?'管理员':staff?'任课老师':'家长'}</span><button class="text-btn" id="password">修改密码</button><button class="text-btn logout" id="logout">退出</button></div></header><div class="content"><div class="page-head"><div><h1>${current[1]}</h1><p>${escapeHTML(subtitles[view]||'')}</p></div>${headerActions()}</div><div id="surface"></div></div></main></div>`;
  const closeNav=()=>document.querySelector('.shell')?.classList.remove('nav-open');
@@ -80,6 +81,8 @@ function dashboard(){
  if(view==='accounting')renderAccounting();
  if(view==='pay')renderPay();
  if(view==='finance')renderFinance();
+ if(view==='audit')renderAudit();
+ if(view==='profile')renderProfile();
  if(view==='setup')renderSetup();
  if(view==='administrators')renderAdministrators();
  if(view==='settings')renderScheduleSettings();
@@ -96,7 +99,7 @@ function studentFilter(){return `<select id="student-filter" class="select-filte
 function renderOverview(){
  const students=state.students,total=students.reduce((n,s)=>n+regularHours(s),0),staff=isStaff();
  $('#surface').innerHTML=`<section class="stats"><div class="stat featured"><div class="stat-label">${staff?'学生剩余余额':'孩子剩余余额'}${icon('clock')}</div><div class="stat-value">${balanceSummary(students)}</div><div class="stat-note">赠送 ${balanceSummary(students,true)}</div></div><div class="stat"><div class="stat-label">${staff?'关联学生':'关联孩子'}${icon('users')}</div><div class="stat-value">${studentGroups().length}<small>位</small></div><div class="stat-note">${staff?'可在课表中查看课程安排':'仅显示自己孩子的信息'}</div></div><div class="stat"><div class="stat-label">需要续费</div><div class="stat-value">${studentGroups().filter(g=>g.some(s=>needsRenewal(s))).length}<small>位</small></div><div class="stat-note">至少一个科目的余额不足 3 课时／小时，请续费</div></div></section>${staff?'<div class="section-head"><h2>学生课时</h2><input id="search" class="search" type="search" placeholder="搜索学生、课程或手机号" aria-label="搜索学生"></div><div id="student-list"></div>':parentCards()}<section class="recent"><div class="section-head"><h2>最近课时记录</h2><button class="action" id="all-records">全部记录 →</button></div><div id="records-list"></div></section>`;
- if(staff){if(['owner','admin'].includes(state.user.role)){$('#search').insertAdjacentHTML('afterend',`<select id="student-status-filter" class="select-filter" aria-label="按学生课时状态筛选"><option value="all">全部状态</option><option value="normal">正常（余额不少于 3）</option><option value="renewal">需续费（余额不足 3）</option></select>`);$('#student-status-filter').value=studentStatus;$('#student-status-filter').onchange=e=>{studentStatus=e.target.value;renderStudents();};}$('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderStudents();};renderStudents();}
+ if(staff){if(['owner','admin'].includes(state.user.role)){$('#search').insertAdjacentHTML('afterend',`<select id="student-status-filter" class="select-filter" aria-label="按学生课时状态筛选"><option value="all">全部状态</option><option value="normal">正常（余额不少于 3）</option><option value="renewal">需续费（余额不足 3）</option></select>`);$('#student-status-filter').value=studentStatus;$('#student-status-filter').onchange=e=>{studentStatus=e.target.value;renderStudents();};}$('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderStudents();};renderStudents();document.querySelectorAll('.student-profile h3').forEach(heading=>heading.onclick=()=>{const student=state.students.find(item=>item.name===heading.textContent);if(!student)return;profileId=String(student.id);view='profile';render();});}
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=()=>{view='records';selected=b.dataset.child;render();});
  $('#all-records').onclick=()=>{view='records';selected='';render();};renderRecords();
 }
@@ -244,14 +247,23 @@ async function changeScheduleWeek(day){
  try{const next=await api('state?through='+encodeURIComponent(datePlus(day,6)));state=next;weekStart=day;renderSchedule();}catch(e){toast(e.message);}
 }
 function repeatScopeFields(l){return l?.series_id&&l.status==='scheduled'?`<fieldset class="repeat-scope"><legend>应用范围</legend><label><input type="radio" name="scope" value="single" checked>仅本次课程</label><label><input type="radio" name="scope" value="future">本次及后续所有课程</label><small>已完成和已取消的课程保持不变。</small></fieldset>`:'';}
-function moveCalendarLesson(l,day){
- if(!l||l.status!=='scheduled'||day===l.starts_at.slice(0,10))return;
- const delta=Math.round((new Date(day+'T00:00:00Z')-new Date(l.starts_at.slice(0,10)+'T00:00:00Z'))/86400000);
- const starts_at=day+'T'+l.starts_at.slice(11),ends_at=datePlus(l.ends_at.slice(0,10),delta)+'T'+l.ends_at.slice(11);
- modal('移动课程',`<div class="form-context"><strong>${l.students.map(s=>userHTML(s.name)).join('、')}</strong><p>${userHTML(l.title)}</p><p>${escapeHTML(l.starts_at.replace('T',' '))} → <strong>${escapeHTML(starts_at.replace('T',' '))}</strong></p><small>上课时间和时长保持不变，仅移动日期。</small></div>${repeatScopeFields(l)}`,'确认移动',async data=>{
-  await api('lessons',{...data,lesson_id:l.id,version:l.version,series_version:l.series_version,title:l.title,teacher_id:l.teacher_id,starts_at,ends_at,amount:l.planned_units/100,location:l.location,color:l.color||'green',student_ids:l.students.map(s=>s.id)});
-  weekStart=monday(day);toast(data.scope==='future'?'本次及后续课程已移动。':'课程已移动。');
- });
+async function moveCalendarLesson(l,day,endsAt){
+ if(!l||l.status!=='scheduled')return;
+ let starts_at, ends_at;
+ if(endsAt){
+  starts_at=day; ends_at=endsAt;
+  if(starts_at===l.starts_at && ends_at===l.ends_at) return;
+ }else{
+  if(day===l.starts_at.slice(0,10))return;
+  const delta=Math.round((new Date(day+'T00:00:00Z')-new Date(l.starts_at.slice(0,10)+'T00:00:00Z'))/86400000);
+  starts_at=day+'T'+l.starts_at.slice(11); ends_at=datePlus(l.ends_at.slice(0,10),delta)+'T'+l.ends_at.slice(11);
+ }
+ const label=`${typeof weekdayName==='function'?weekdayName(starts_at.slice(0,10)):''} ${starts_at.slice(11,16)}`;
+ try{
+  await api('lessons',{lesson_id:l.id,version:l.version,series_version:l.series_version,scope:'single',title:l.title,teacher_id:l.teacher_id,starts_at,ends_at,amount:l.planned_units/100,location:l.location,color:l.color||'green',student_ids:l.students.map(s=>s.id)});
+  weekStart=monday(starts_at.slice(0,10));
+  toast('已改到 '+label);
+ }catch(error){toast(error.message);}
 }
 function initCalendarDragging(){
  if(state.user.role!=='owner')return;

@@ -109,7 +109,7 @@ def state_for(c,user):
     for lesson in lessons:
         member_where=' AND s.parent_id=?' if role=='parent' else ''
         member_params=(lesson['id'],user['id']) if role=='parent' else (lesson['id'],)
-        lesson['students']=[dict(x) for x in c.execute('SELECT s.id,s.name,s.course,s.balance,s.billing_unit FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=?'+member_where+' ORDER BY s.id',member_params)]
+        lesson['students']=[dict(x) for x in c.execute('SELECT s.id,s.name,s.course,s.balance,s.billing_unit,s.grade FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=?'+member_where+' ORDER BY s.id',member_params)]
         if role=='parent' and lesson['status']!='completed':
             lesson['reports']=[]
         else:

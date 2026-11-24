@@ -114,7 +114,7 @@ function deleteProfileModal(kind,item){
 }
 
 function unitFor(s={}){const account=(state.students||[]).concat(state.archived_students||[]).find(x=>x.id==(s.student_id||s.id));return (s.billing_unit||account?.billing_unit)==='hour'?'小时':'课时';}
-function billingField(s={}){return `<label class="field">计费方式<select name="billing_unit"><option value="lesson" ${s.billing_unit!=='hour'?'selected':''}>按课时</option><option value="hour" ${s.billing_unit==='hour'?'selected':''}>按小时（按实际时长扣费）</option></select></label>`;}
+function billingField(){return `<input type="hidden" name="billing_unit" value="lesson">`;}
 function balanceSummary(students,gift=false){return ['lesson','hour'].map(unit=>{const rows=students.filter(s=>(s.billing_unit||'lesson')===unit);return rows.length?`${fmt(rows.reduce((n,s)=>n+(gift?s.gift_balance||0:regularHours(s)),0))} <small>${unit==='hour'?'小时':'课时'}</small>`:'';}).filter(Boolean).join(' / ')||'0';}
 function editEntryModal(e){
  if(state.user.role!=='owner')return;

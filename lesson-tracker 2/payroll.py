@@ -17,6 +17,7 @@ from teaching import now_local
 SEED_KEY = 'pay_seed_v1'
 # Name fragment, rule type, percent in basis points, hourly floor cents or None.
 SEED_RULES = (
+    ('helen', 'percent', 0, None),
     ('angela', 'percent', 4000, 3500),
     ('kelsey', 'percent', 4000, None),
     ('ethan', 'percent', 4000, None),

@@ -135,6 +135,118 @@ def initialize():
         payroll.schema(c)
         pricing.schema(c)
         auditlog.schema(c)
+        if DEMO:
+            seed_portal_cast(c)
+
+def seed_portal_cast(c):
+    """Demo teachers and students from the approved mockups. Additive and skipped once recorded."""
+    if c.execute("SELECT 1 FROM app_meta WHERE key='portal_cast_v1'").fetchone():
+        return
+    helen = c.execute("SELECT id FROM users WHERE phone='0400000000'").fetchone()
+    if not helen:
+        return
+    def teacher(phone, name):
+        row = c.execute('SELECT id FROM users WHERE phone=?', (phone,)).fetchone()
+        uid = row['id'] if row else c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'parent')", (phone, name, password_hash('TutorDemo2026!'))).lastrowid
+        existing = c.execute('SELECT id FROM teachers WHERE user_id=?', (uid,)).fetchone()
+        if existing:
+            return existing['id']
+        return c.execute("INSERT INTO teachers(user_id,subject,subjects) VALUES(?,?,'[\"数学\"]')", (uid, '数学')).lastrowid
+    helen_teacher = c.execute('SELECT id FROM teachers WHERE user_id=?', (helen['id'],)).fetchone()
+    cast = {
+        'Helen': helen_teacher['id'] if helen_teacher else c.execute("INSERT INTO teachers(user_id,subject,subjects) VALUES(?,?,'[\"数学\"]')", (helen['id'], '数学')).lastrowid,
+        'Vincent': teacher('0400000011', 'Vincent'),
+        'Angela': teacher('0400000012', 'Angela'),
+        'Kelsey': teacher('0400000013', 'Kelsey'),
+        'Ethan': teacher('0400000014', 'Ethan'),
+        'Christina': teacher('0400000015', 'Christina'),
+    }
+    for name, tid in cast.items():
+        if c.execute('SELECT 1 FROM pay_rules WHERE teacher_id=?', (tid,)).fetchone():
+            continue
+        folded = name.casefold()
+        for fragment, kind, bp, floor in payroll.SEED_RULES:
+            if fragment in folded:
+                c.execute('''INSERT INTO pay_rules(teacher_id,rule_type,percent_bp,hourly_floor_cents,hourly_rate_cents,effective_from,note,created_by)
+                    VALUES(?,?,?,?,NULL,'2000-01-01','初始规则',?)''', (tid, kind, bp, floor, helen['id']))
+                if fragment == 'vincent' and not c.execute('SELECT 1 FROM partner_share_rules WHERE teacher_id=?', (tid,)).fetchone():
+                    c.execute('''INSERT INTO partner_share_rules(teacher_id,percent_bp,effective_from,note,created_by)
+                        VALUES(?,3000,'2000-01-01','新学生课酬减去共同成本后的分成',?)''', (tid, helen['id']))
+    parent = c.execute("SELECT id FROM users WHERE phone='0400000001'").fetchone()
+    if not parent:
+        return
+    def student(name, grade, level, balance):
+        row = c.execute('SELECT id FROM students WHERE name=?', (name,)).fetchone()
+        if row:
+            c.execute('UPDATE students SET billing_unit=?,grade=?,level_code=?,level_year=? WHERE id=?', ('lesson', grade, level, 2026, row['id']))
+            return row['id']
+        profile = c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+        sid = c.execute('''INSERT INTO students(name,course,parent_id,profile_id,balance,billing_unit,grade,level_code,level_year)
+            VALUES(?,?,?,?,?,'lesson',?,?,?)''', (name, '数学', parent['id'], profile, balance, grade, level, 2026)).lastrowid
+        if balance:
+            c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'credit',?,'演示余额',?,?)",
+                (sid, balance, '2026-11-01', helen['id'], secrets.token_hex(16)))
+            c.execute("INSERT INTO credit_batches(student_id,purchased,gifted,paid_left,gift_left,credited_on,legacy) VALUES(?,?,0,?,0,'',1)", (sid, balance, balance))
+        return sid
+    kids = {
+        '陈一诺': student('陈一诺', 'Y6', 'Y6', 200),
+        '赵恩希': student('赵恩希', 'Y6', 'Y6', 300),
+        '王星然': student('王星然', 'Y4', 'Y4', 0),
+        '周可': student('周可', 'Y11', 'Y11', 1200),
+        '李沐阳': student('李沐阳', 'Y12', 'Y12', 800),
+        '陈子墨': student('陈子墨', 'Y3', 'Y3', 1500),
+        '林晓': student('林晓', 'Y8', 'Y8', 600),
+    }
+    today = teaching.now_local().date()
+    monday = today - dt.timedelta(days=today.weekday())
+    def at(offset, start, end):
+        day = monday + dt.timedelta(days=offset)
+        return f'{day.isoformat()}T{start}', f'{day.isoformat()}T{end}', day.isoformat()
+    plan = [
+        ('Angela', ['陈一诺'], 0, '16:00', '17:00', 'scheduled', '1:1'),
+        ('Kelsey', ['王星然', '陈子墨'], 0, '16:00', '17:30', 'scheduled', '1:2'),
+        ('Vincent', ['周可'], 0, '18:00', '19:00', 'scheduled', '1:1'),
+        ('Angela', ['赵恩希'], today.weekday(), '15:00', '16:00', 'completed', '1:1'),
+        ('Angela', ['陈一诺'], today.weekday(), '16:00', '17:00', 'scheduled', '1:1'),
+        ('Kelsey', ['王星然'], today.weekday(), '17:00', '18:30', 'scheduled', '1:2'),
+        ('Helen', ['李沐阳'], today.weekday(), '18:30', '20:00', 'scheduled', '1:1'),
+        ('Ethan', ['陈子墨'], 2, '15:30', '17:00', 'scheduled', '1:1'),
+        ('Vincent', ['周可'], 3, '16:00', '17:00', 'scheduled', '1:1'),
+        ('Christina', ['林晓'], 4, '17:00', '18:00', 'scheduled', '1:1'),
+        ('Helen', ['李沐阳'], 5, '10:00', '11:30', 'scheduled', '1:1'),
+        ('Christina', ['林晓'], 6, '09:00', '10:00', 'scheduled', '1:1'),
+    ]
+    for who, names, offset, start, end, status, kind in plan:
+        starts, ends, day = at(offset, start, end)
+        if c.execute('SELECT 1 FROM lessons WHERE teacher_id=? AND starts_at=? AND title=?', (cast[who], starts, f'数学 · {kind}')).fetchone():
+            continue
+        lid = c.execute('''INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,status,created_by,request_id)
+            VALUES(?,?,?,?,100,'教室',?,?,?)''', (cast[who], f'数学 · {kind}', starts, ends, status, helen['id'], secrets.token_hex(16))).lastrowid
+        for name in names:
+            c.execute('INSERT INTO lesson_students VALUES(?,?)', (lid, kids[name]))
+        if status == 'completed':
+            sid = kids[names[0]]
+            ledger = c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,'已上了',?,?)",
+                (sid, -100, day, helen['id'], secrets.token_hex(16))).lastrowid
+            c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,ledger_id,updated_by)
+                VALUES(?,?,100,'分数运算','练习册第 3 页','今天的课已上完。',?,?)''', (lid, sid, ledger, helen['id']))
+            c.execute('UPDATE students SET balance=MAX(balance-100,0) WHERE id=?', (sid,))
+    samples = [
+        ('陈一诺', 170000, 'bank', 1),
+        ('王星然', 120000, 'cash', 0),
+        ('赵恩希', 170000, 'wechat', 1),
+    ]
+    kelsey_user = c.execute('SELECT user_id FROM teachers WHERE id=?', (cast['Kelsey'],)).fetchone()['user_id']
+    for name, cents, method, handed in samples:
+        sid = kids[name]
+        ledger = c.execute("SELECT id FROM ledger WHERE student_id=? AND kind='credit' ORDER BY id LIMIT 1", (sid,)).fetchone()
+        if not ledger or c.execute('SELECT 1 FROM cash_entries WHERE ledger_id=?', (ledger['id'],)).fetchone():
+            continue
+        recv = helen['id'] if handed else kelsey_user
+        c.execute('''INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by,received_by,handed_over)
+            VALUES(?,?,?,?,?,?,?)''', (ledger['id'], cents, method, '', helen['id'], recv, handed))
+    c.execute("INSERT INTO audit_log(actor_id,action,summary,ops_json) VALUES(?,?,'演示：登记陈一诺的课时包','[]')", (helen['id'], 'purchase'))
+    c.execute("INSERT INTO app_meta VALUES('portal_cast_v1','1')")
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
