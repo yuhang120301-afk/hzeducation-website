@@ -8,22 +8,65 @@ const formatDate=day=>day.slice(5).replace('-',' / ');
 const lessonStatus=l=>l.status==='scheduled'&&l.ends_at<state.now?'待写课后记录':statusName[l.status];
 function navigationItems(){
  const role=state.user.role;
- return [...(role==='owner'?[['accounting','账目总结','grid'],['administrators','管理员','users']]:[]),['schedule',['owner','admin'].includes(role)?'排课日历':role==='teacher'?'我的课程':'孩子的课表','clock'],['feedback','课后记录','book'],['overview',['owner','admin'].includes(role)?'学生与课时':role==='teacher'?'我的学生':'剩余余额','grid'],['records','余额明细','book'],...(['owner','admin'].includes(role)?[['teachers','老师管理','users'],['settings','课程与地点设置','grid']]:[])];
+ if(role==='owner') return [
+  ['每天',[['today','今天','clock'],['schedule','课表排课','grid'],['feedback','确认课时','check']]],
+  ['学生',[['overview','学生与余额','users'],['records','余额明细','book']]],
+  ['财务',[['pay','老师工资','book'],['accounting','收款记录','grid']]],
+  ['设置',[['setup','设置','users']]]
+ ];
+ const items=[['schedule',role==='admin'?'排课日历':role==='teacher'?'我的课程':'孩子的课表','clock'],['feedback','课后记录','book'],['overview',role==='admin'?'学生与课时':role==='teacher'?'我的学生':'剩余余额','grid'],['records','余额明细','book']];
+ if(role==='admin') items.push(['teachers','老师管理','users'],['settings','课程与地点设置','grid']);
+ return [['',items]];
+}
+function flatNavigation(){
+ const items=navigationItems().flatMap(group=>group[1]);
+ if(state.user.role==='owner'){
+  if(view==='teachers') items.push(['teachers','老师','users']);
+  if(view==='settings') items.push(['settings','课程与地点','grid']);
+  if(view==='administrators') items.push(['administrators','管理员','users']);
+ }
+ return items;
+}
+function headerActions(){
+ const role=state.user.role;
+ if(!['owner','admin'].includes(role)) return '';
+ const schedule=`<button class="btn primary" id="add-schedule">${icon('plus')}新增排课</button>`;
+ const student=`<button class="btn" id="add-student">${icon('plus')}添加学生</button>`;
+ if(view==='teachers') return `<div class="head-actions"><button class="btn primary" id="add-teacher">${icon('plus')}添加老师</button></div>`;
+ if(view==='administrators') return `<div class="head-actions"><button class="btn primary" id="add-admin">${icon('plus')}添加管理员</button></div>`;
+ if(view==='overview') return `<div class="head-actions">${student}${schedule}</div>`;
+ if(view==='schedule' || (role==='admin' && !['settings','accounting'].includes(view))) return `<div class="head-actions">${schedule}</div>`;
+ return '';
+}
+function renderSetup(){
+ $('#surface').innerHTML=`<div class="feedback-grid"><button class="feedback-card setup-card" data-view="teachers"><h2>老师</h2><p>开通账号、科目和在职状态。</p></button><button class="feedback-card setup-card" data-view="settings"><h2>课程与地点</h2><p>排课时可选的名称和上课地点。</p></button><button class="feedback-card setup-card" data-view="administrators"><h2>管理员</h2><p>协助处理学生、排课和收款的账号。</p></button></div><p class="footnote">日常先看今天、课表和确认课时。老师、课程和管理员放在这里，不占每天的菜单。</p>`;
+ document.querySelectorAll('#surface [data-view]').forEach(button=>button.onclick=()=>{view=button.dataset.view;document.querySelector('.shell')?.classList.remove('nav-open');render();});
 }
 function dashboard(){
  if(!weekStart)weekStart=monday(state.today);
- const admin=['owner','admin'].includes(state.user.role),staff=isStaff(),nav=navigationItems(),current=nav.find(n=>n[0]===view)||nav[0];view=current[0];
- const subtitles={settings:'管理排课时可选择的课程名称和上课地点。',accounting:'核对收款、退款与课时变动，每笔数字都有明细。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',schedule:`按机构时间显示 · ${state.timezone}`,feedback:staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:staff?'查看学生余额，按各自计费方式管理。':'剩余余额与学习记录，随时查看。',records:'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。'};
- $('#app').innerHTML=`<div class="shell"><aside class="sidebar">${brand()}<nav><p class="nav-label">${admin?'机构管理':staff?'老师中心':'家长中心'}</p>${nav.map(n=>`<button class="nav-item ${view===n[0]?'active':''}" data-view="${n[0]}">${icon(n[2])}${n[1]}</button>`).join('')}</nav><div class="side-foot"><strong>HELEN’S MATH SECRETS</strong>把每一次进步，认真记下来。</div></aside><main class="main">${state.demo?'<div class="demo-banner">本机演示版 · 虚构数据 · 可分别体验老板、管理员、任课老师和家长账号</div>':''}<header class="topbar"><div class="breadcrumb">${admin?'机构管理':staff?'老师中心':'家长中心'}<span>/　${current[1]}</span></div><div class="account"><span class="avatar">${userHTML(state.user.name.slice(0,1))}</span><span>${userHTML(state.user.name)}</span><span class="role-label">${state.user.role==='owner'?'老板':admin?'管理员':staff?'任课老师':'家长'}</span><button class="text-btn" id="password">修改密码</button><button class="text-btn logout" id="logout">退出</button></div></header><div class="content"><div class="page-head"><div><h1>${current[1]}</h1><p>${escapeHTML(subtitles[view])}</p></div>${admin?`<div class="head-actions">${['accounting','settings'].includes(view)?'':view==='administrators'?'<button class="btn primary" id="add-admin">'+icon('plus')+'添加管理员</button>':view==='teachers'?'<button class="btn primary" id="add-teacher">'+icon('plus')+'添加老师</button>':`${view==='overview'?'<button class="btn" id="add-student">'+icon('plus')+'添加学生</button>':''}<button class="btn primary" id="add-schedule">${icon('plus')}新增排课</button>`}</div>`:''}</div><div id="surface"></div></div></main></div>`;
- document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{view=b.dataset.view;selected='';render();});
+ const role=state.user.role, admin=['owner','admin'].includes(role), staff=isStaff();
+ const nav=navigationItems(), flat=flatNavigation(), current=flat.find(item=>item[0]===view)||flat[0];
+ view=current[0];
+ const center=role==='owner'?'老板工作台':admin?'机构管理':staff?'老师中心':'家长中心';
+ const shown=['teachers','settings','administrators'].includes(view)?'setup':view;
+ const subtitles={today:'今天的课、需要续费的学生，以及本周收到的钱。',schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'查看余额、充值和退款。':staff?'查看学生余额，按各自计费方式管理。':'剩余余额与学习记录，随时查看。',records:'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'这是收款、退款和课时变动，不是利润，也不是老师工资。',pay:'按已确认并扣过课时的课程计算。这里只显示数字，不会打款。',setup:'老师、课程名称和管理员。'};
+ const navHtml=nav.map(([label,items])=>`${label?`<p class="nav-label">${label}</p>`:''}${items.map(item=>`<button class="nav-item ${shown===item[0]?'active':''}" data-view="${item[0]}">${icon(item[2])}${item[1]}</button>`).join('')}`).join('');
+ $('#app').innerHTML=`<div class="shell"><aside class="sidebar">${brand()}<nav>${navHtml}</nav><div class="side-foot"><strong>HELEN’S MATH SECRETS</strong>把每一次进步，认真记下来。</div></aside><button type="button" class="nav-backdrop" id="nav-backdrop" aria-label="关闭菜单"></button><main class="main">${state.demo?'<div class="demo-banner">本机演示版 · 虚构数据 · 可分别体验老板、管理员、任课老师和家长账号</div>':''}<header class="topbar"><button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开菜单"><span></span><span></span><span></span></button><div class="breadcrumb">${center}<span>/　${current[1]}</span></div><div class="account"><span class="avatar">${userHTML(state.user.name.slice(0,1))}</span><span>${userHTML(state.user.name)}</span><span class="role-label">${role==='owner'?'老板':admin?'管理员':staff?'任课老师':'家长'}</span><button class="text-btn" id="password">修改密码</button><button class="text-btn logout" id="logout">退出</button></div></header><div class="content"><div class="page-head"><div><h1>${current[1]}</h1><p>${escapeHTML(subtitles[view]||'')}</p></div>${headerActions()}</div><div id="surface"></div></div></main></div>`;
+ const closeNav=()=>document.querySelector('.shell')?.classList.remove('nav-open');
+ document.querySelectorAll('.sidebar [data-view]').forEach(button=>button.onclick=()=>{view=button.dataset.view;selected='';closeNav();render();});
+ $('#nav-toggle').onclick=()=>document.querySelector('.shell').classList.toggle('nav-open');
+ $('#nav-backdrop').onclick=closeNav;
  $('#password').onclick=passwordModal;
- $('#logout').onclick=async()=>{try{await api('logout',{});state={demo:state.demo,organization:state.organization};weekStart='';teacherFilter='';scheduleStatus='all';studentStatus='all';search='';render();}catch(e){toast(e.message);}};
+ $('#logout').onclick=async()=>{try{await api('logout',{});state={demo:state.demo,organization:state.organization};weekStart='';teacherFilter='';scheduleStatus='all';studentStatus='all';search='';view='home';render();}catch(error){toast(error.message);}};
  if($('#add-schedule'))$('#add-schedule').onclick=()=>scheduleModal();
  if($('#add-student'))$('#add-student').onclick=studentModal;
  if($('#add-admin'))$('#add-admin').onclick=administratorModal;
- if(view==='accounting')renderAccounting();
- if(view==='administrators')renderAdministrators();
  if($('#add-teacher'))$('#add-teacher').onclick=teacherModal;
+ if(view==='today')renderToday();
+ if(view==='accounting')renderAccounting();
+ if(view==='pay')renderPay();
+ if(view==='setup')renderSetup();
+ if(view==='administrators')renderAdministrators();
  if(view==='settings')renderScheduleSettings();
  if(view==='schedule')renderSchedule();
  if(view==='feedback')renderFeedback();
@@ -31,7 +74,7 @@ function dashboard(){
  if(view==='overview')renderOverview();
  if(view==='records'){
   $('#surface').innerHTML=`<div class="section-head"><h2>余额变动记录</h2>${studentFilter()}</div><div id="records-list"></div><p class="footnote">${state.user.role==='parent'?'仅显示当前有效的记录。':'已排课不会提前扣除余额；撤销和修改历史仅后台保留。'}</p>`;
-  $('#student-filter').onchange=e=>{selected=e.target.value;renderRecords();};renderRecords();
+  $('#student-filter').onchange=event=>{selected=event.target.value;renderRecords();};renderRecords();
  }
 }
 function studentFilter(){return `<select id="student-filter" class="select-filter" aria-label="按学生筛选"><option value="">全部学生</option>${state.students.map(s=>`<option data-user-content value="${s.id}" ${selected==s.id?'selected':''}>${escapeHTML(s.name)} · ${escapeHTML(s.course)}</option>`).join('')}</select>`;}
@@ -42,7 +85,7 @@ function renderOverview(){
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=()=>{view='records';selected=b.dataset.child;render();});
  $('#all-records').onclick=()=>{view='records';selected='';render();};renderRecords();
 }
-function renderSchedule(){
+function renderListSchedule(){
  const admin=['owner','admin'].includes(state.user.role),end=datePlus(weekStart,7);
  const week=state.lessons.filter(l=>l.status!=='cancelled'&&l.starts_at>=weekStart&&l.starts_at<end&&(state.user.role!=='teacher'||l.teacher_id==state.user.teacher_id)&&(!admin||!teacherFilter||l.teacher_id==teacherFilter));
  const rows=week.filter(l=>scheduleStatus==='all'||l.status===scheduleStatus);
@@ -96,9 +139,9 @@ function teacherModal(existing=null){
  const choices=[...new Set([...selected,...(state.schedule_options||[]).filter(o=>o.kind==='course'&&o.active).map(o=>o.name)])];
  modal(t?'编辑老师':'添加任课老师',`${managed?'<div class="form-context">此账号兼任管理职务，这里仅修改教学科目。</div>':`<label class="field">老师姓名<input name="name" required maxlength="40" value="${escapeHTML(t?.name||'')}"></label><label class="field">登录手机号<input name="phone" type="tel" required maxlength="24" value="${escapeHTML(t?.phone||'')}"></label><label class="field">${t?'重置密码（选填）':'初始密码'}<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" ${t?'':'required'}><small>${t?'留空保留原密码；修改手机号或密码后需重新登录。':'至少 10 位，请单独告知老师。'}</small></label>`}<fieldset class="student-picker"><legend>教学科目 · 可多选</legend>${choices.map(name=>`<label><input type="checkbox" name="subjects" value="${escapeHTML(name)}" ${selected.includes(name)?'checked':''}>${userHTML(name)}</label>`).join('')}</fieldset><p class="footnote">更多科目可在课程与地点设置中添加。</p>`,'保存老师',async data=>{data.subjects=[...document.querySelectorAll('[name=subjects]:checked')].map(e=>e.value);delete data.subject;await api(t?'teachers/edit':'teachers',{...data,teacher_id:t?.id});toast('老师资料已保存。');});
 }
-function scheduleModal(existing=null,studentId='',slot=''){
+function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
  if(!state.students.length){toast('请先添加学生，再安排课程。');if(['owner','admin'].includes(state.user.role))return studentModal();return;}
- const l=existing,request_id=crypto.randomUUID(),day=slot?slot.slice(0,10):state.today,initialStart=slot||day+'T16:00',initialEnd=shiftScheduleTime(initialStart,60);
+ const l=existing,request_id=crypto.randomUUID(),day=slot?slot.slice(0,10):state.today,initialStart=slot||day+'T16:00',initialEnd=slotEnd||shiftScheduleTime(initialStart,60);
  modal(l?'调整课程':'新增排课',`<div class="form-context">${escapeHTML(state.timezone)} · 排课不会提前扣课时</div>${state.user.role==='owner'?lessonColorPicker(l):''}<label class="field">课程名称<select name="title" required>${scheduleOptions("course",l?.title||state.students.find(s=>s.id==studentId)?.course||"")}</select></label><label class="field">任课老师<select name="teacher_id">${state.teachers.filter(t=>t.active||t.id===l?.teacher_id).map(t=>`<option data-user-content ${t.active?'':'disabled'} value="${t.id}" ${(l?.teacher_id||teacherFilter||state.user.teacher_id)==t.id?'selected':''}>${escapeHTML(t.name)} · ${escapeHTML(t.subject)}</option>`).join('')}</select></label><div class="two-cols schedule-time-fields">${scheduleTimeField("starts_at","开始时间",l?.starts_at||initialStart)}${scheduleTimeField("ends_at","结束时间",l?.ends_at||initialEnd)}</div><p class="footnote">结束时间默认往后一小时，可手动调整。手动调整时长后，更改开始时间会保留该时长。</p><div class="two-cols"><label class="field">按课时学生：预计每人扣除课时<input name="amount" type="number" min="0.01" max="10000" step="0.01" value="${l?l.planned_units/100:1}" required></label><label class="field">上课地点（选填）<select name="location">${scheduleOptions("location",l?.location||"")}</select></label></div>${l?(l.status!=='scheduled'?'<p class="form-context">编辑时间和课程信息不会自动改动已扣余额；如需更正数量，请编辑单据或课后记录。</p>':repeatScopeFields(l)):'<div class="two-cols"><label class="field">重复安排<select name="repeat"><option value="none">不重复</option><option value="weekly">每周重复</option><option value="fortnightly">每两周重复</option></select></label><label class="field" id="repeat-end-field" hidden>结束方式<select name="repeat_end" disabled><option value="count">指定次数</option><option value="forever">永久重复</option></select></label><label class="field" id="repeat-count-field" hidden>总课次数（包含本次）<input name="repeat_count" type="number" min="2" max="52" step="1" value="10" disabled required></label></div><p id="repeat-help" class="form-context" hidden>按机构当地时间重复。可指定 2–52 次，或选择永久重复。永久课程会自动延续，也可随时调整或取消本次及后续课程。</p>'}<label class="field">搜索学生<input id="schedule-student-search" type="search" placeholder="输入学生姓名、课程或家长手机号" autocomplete="off"></label><div id="schedule-selected" class="schedule-selected" aria-live="polite"></div><fieldset class="student-picker" id="schedule-student-picker"><legend>选择学生及扣课科目 · 同一学生只选一个科目</legend><p id="schedule-search-empty" hidden>没有找到匹配的学生。</p>${state.students.map(s=>`<label><input type="checkbox" name="student_ids" value="${s.id}" ${(l?.students.some(x=>x.id===s.id)||studentId==s.id)?'checked':''}><span>${userHTML(s.name)}<small>${userHTML(s.course)} · 剩余 ${fmt(s.balance)} ${unitFor(s)}</small></span></label>`).join('')}</fieldset>`,'保存排课',async data=>{data.student_ids=[...document.querySelectorAll('[name=student_ids]:checked')].map(x=>Number(x.value));const result=await api('lessons',{...data,request_id,lesson_id:l?.id,version:l?.version,series_version:l?.series_version});weekStart=monday(data.starts_at.slice(0,10));view='schedule';toast(l?'课程已更新。':data.repeat_end==='forever'?'永久重复排课已保存，将自动延续。':result.created_count?`已安排 ${result.created_count} 次课程，课时暂不扣除。`:'排课已保存，课时暂不扣除。');});
  $('#modal').classList.add('wide');
  initScheduleStudentSearch();
@@ -108,14 +151,15 @@ function scheduleModal(existing=null,studentId='',slot=''){
 function lessonDetail(id){
  if(Date.now()<calendarClickSuppressedUntil)return;
  const l=lessonById(id),admin=['owner','admin'].includes(state.user.role),staff=isStaff();lastFocus=document.activeElement;$('#modal').classList.add('wide');
- $('#modal-body').innerHTML=`<div class="modal-inner"><div class="modal-head"><h2 id="modal-title">${userHTML(l.title)}</h2><button type="button" class="close" aria-label="关闭">×</button></div><div class="lesson-detail-meta"><span class="badge ${l.status==='scheduled'?'low':''}">${lessonStatus(l)}</span><p>${escapeHTML(l.starts_at.replace('T',' '))} — ${l.ends_at.slice(11)}<br>${userHTML(l.teacher_name)} · ${escapeHTML(l.location||'地点未填写')}</p><p>${l.students.map(s=>userHTML(s.name)).join('、')} · 预计 ${lessonChargeLabel(l)}</p></div>${l.status==='cancelled'?`<div class="form-context">取消原因：${userHTML(l.cancel_reason)}<br>本次课程未扣课时。</div>`:l.status==='completed'?l.reports.map(r=>reportCard(l,r,false)).join(''):`<div class="form-context">${staff?(l.reports.length?'已保存课后记录草稿，家长暂不可见。':'完成课程后，填写学习内容、作业和反馈，再确认扣课。'):'课程结束后，老师会在这里发布学习内容、作业与反馈。'}</div>`}<div class="detail-actions">${admin&&(l.status==='scheduled'||state.user.role==='owner')?'<button class="btn" id="edit-schedule">调整排课</button>':''}${admin&&l.status==='scheduled'?'<button class="btn" id="cancel-schedule">取消课程</button>':''}${staff&&l.status!=='cancelled'?`<button class="btn primary" id="write-report">${l.status==='completed'?'修改课后记录':'填写课后记录'}</button>`:''}<button class="btn" id="close-detail">关闭</button></div></div>`;
+ $('#modal-body').innerHTML=`<div class="modal-inner"><div class="modal-head"><h2 id="modal-title">${userHTML(l.title)}</h2><button type="button" class="close" aria-label="关闭">×</button></div><div class="lesson-detail-meta"><span class="badge ${l.status==='scheduled'?'low':''}">${lessonStatus(l)}</span><p>${escapeHTML(l.starts_at.replace('T',' '))} — ${l.ends_at.slice(11)}<br>${userHTML(l.teacher_name)} · ${escapeHTML(l.location||'地点未填写')}</p><p>${l.students.map(s=>userHTML(s.name)).join('、')} · 预计 ${lessonChargeLabel(l)}</p></div>${l.status==='cancelled'?`<div class="form-context">取消原因：${userHTML(l.cancel_reason)}<br>本次课程未扣课时。</div>`:l.status==='completed'?l.reports.map(r=>reportCard(l,r,false)).join(''):`<div class="form-context">${staff?(l.reports.length?'已保存课后记录草稿，家长暂不可见。':'完成课程后，填写学习内容、作业和反馈，再确认扣课。'):'课程结束后，老师会在这里发布学习内容、作业与反馈。'}</div>`}<div class="detail-actions">${admin&&(l.status==='scheduled'||state.user.role==='owner')?'<button class="btn" id="edit-schedule">调整排课</button>':''}${admin&&l.status==='scheduled'?'<button class="btn" id="cancel-schedule">取消课程</button>':''}${admin&&l.status==='scheduled'&&l.ends_at<=state.now?'<button class="btn primary" id="quick-close">这节课已上</button>':''}${staff&&l.status!=='cancelled'?`<button class="btn" id="write-report">${l.status==='completed'?'修改课后记录':'填写作业和反馈'}</button>`:''}<button class="btn" id="close-detail">关闭</button></div></div>`;
  const close=()=>$('#modal').close();$('.close').onclick=close;$('#close-detail').onclick=close;
  if($('#edit-schedule'))$('#edit-schedule').onclick=()=>{close();scheduleModal(l);};
  if($('#cancel-schedule'))$('#cancel-schedule').onclick=()=>{close();cancelModal(l);};
+ if($('#quick-close'))$('#quick-close').onclick=()=>{close();quickCloseModal(l);};
  if($('#write-report'))$('#write-report').onclick=()=>{close();reportModal(l);};
  $('#modal').showModal();
 }
-function cancelModal(l){modal('取消这节课',`<div class="form-context">${userHTML(l.title)}<br>${escapeHTML(l.starts_at.replace('T',' '))} · ${userHTML(l.teacher_name)}<br>取消后保留课程记录，不扣课时。</div>${repeatScopeFields(l)}<label class="field">取消原因<textarea name="reason" required maxlength="250" placeholder="例如：学生请假，另约时间"></textarea></label>`,'确认取消课程',async data=>{await api('lessons/cancel',{...data,lesson_id:l.id,version:l.version,series_version:l.series_version});toast('课程已取消，没有扣课时。');},true);}
+function cancelModal(l){modal('取消这节课',`<div class="form-context">${userHTML(l.title)}<br>${escapeHTML(l.starts_at.replace('T',' '))} · ${userHTML(l.teacher_name)}<br>取消后保留课程记录，不扣课时。</div>${repeatScopeFields(l)}<label class="field">取消原因（选填）<span class="quick"><button type="button" data-cancel-reason="学生请假">学生请假</button><button type="button" data-cancel-reason="老师请假">老师请假</button><button type="button" data-cancel-reason="改期">改期</button><button type="button" data-cancel-reason="临时停课">临时停课</button></span><textarea name="reason" maxlength="250" placeholder="可以留空"></textarea></label>`,'确认取消课程',async data=>{await api('lessons/cancel',{...data,lesson_id:l.id,version:l.version,series_version:l.series_version});toast('课程已取消，没有扣课时。');},true);document.querySelectorAll('[data-cancel-reason]').forEach(button=>button.onclick=()=>{$('[name=reason]').value=button.dataset.cancelReason;});}
 function expectedUnits(l,s){return unitFor(s)==='小时'?Math.round((Date.parse(l.ends_at+'Z')-Date.parse(l.starts_at+'Z'))/36000):l.planned_units;}
 function lessonChargeLabel(l){const units=[...new Set(l.students.map(s=>`${fmt(expectedUnits(l,s))} ${unitFor(s)}`))];return units.length===1?units[0]+'/人':'按学生计费方式扣除';}
 function reportFields(l){

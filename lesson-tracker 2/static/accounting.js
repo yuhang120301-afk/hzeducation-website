@@ -23,10 +23,11 @@ function administratorModal(){modal('添加管理员',`<div class="form-context"
 async function renderAccounting(){
  if(!accountingDate)accountingDate=state.today;
  const request=++accountingRequest;
- $('#surface').innerHTML=`<div class="accounting-controls"><div class="period-switch" role="group" aria-label="汇总周期">${[['day','每日'],['week','每周'],['month','每月']].map(([p,t])=>`<button class="${p===accountingPeriod?'selected':''}" data-period="${p}">${t}</button>`).join('')}</div><label>选择日期<input id="accounting-date" type="date" value="${accountingDate}" aria-label="对账日期"></label><button class="btn" id="accounting-today">今天</button></div><div id="accounting-result" aria-live="polite"><div class="panel empty">正在汇总账目…</div></div>`;
+ $('#surface').innerHTML=`<div class="accounting-controls"><div class="period-switch" role="group" aria-label="汇总周期">${[['day','每日'],['week','每周'],['month','每月']].map(([p,t])=>`<button class="${p===accountingPeriod?'selected':''}" data-period="${p}">${t}</button>`).join('')}</div><label>选择日期<input id="accounting-date" type="date" value="${accountingDate}" aria-label="对账日期"></label><button class="btn" id="accounting-today">今天</button><button class="btn" id="accounting-export">导出 CSV</button></div><div id="accounting-result" aria-live="polite"><div class="panel empty">正在汇总账目…</div></div>`;
  document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{accountingPeriod=b.dataset.period;renderAccounting();});
  $('#accounting-date').onchange=e=>{if(e.target.value){accountingDate=e.target.value;renderAccounting();}};
  $('#accounting-today').onclick=()=>{accountingDate=state.today;renderAccounting();};
+ $('#accounting-export').onclick=async()=>{try{await downloadCsv(`/api/reconciliation.csv?period=${accountingPeriod}&date=${encodeURIComponent(accountingDate)}`,'accounting.csv');}catch(error){toast(error.message);}};
  try{
   const data=await api(`reconciliation?period=${accountingPeriod}&date=${encodeURIComponent(accountingDate)}`);
   if(view!=='accounting'||request!==accountingRequest)return;

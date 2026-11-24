@@ -20,6 +20,7 @@ import record_edits
 import credit_batches
 import accounting
 import deletion
+import payroll
 from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parent
@@ -27,6 +28,10 @@ DB_PATH = os.environ.get('LESSON_DB', str(ROOT / 'data' / 'lessons.sqlite3'))
 DEMO = os.environ.get('LESSON_DEMO') == '1'
 SECURE = os.environ.get('LESSON_SECURE_COOKIE') == '1'
 ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HELEN’S MATH SECRETS')[:60]
+NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HELEN’S MATH SECRETS</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
+
+def contact_details():
+    return {'phone':os.environ.get('LESSON_CONTACT_PHONE','').strip()[:40],'email':os.environ.get('LESSON_CONTACT_EMAIL','').strip()[:80],'wechat':os.environ.get('LESSON_CONTACT_WECHAT','').strip()[:60]}
 
 def connect():
     c = sqlite3.connect(DB_PATH, timeout=20)
@@ -123,21 +128,45 @@ def initialize():
                 uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'admin')",('0400000004','Amy 管理员',password_hash('AdminDemo2026!'))).lastrowid
                 c.execute('INSERT INTO teachers(user_id) VALUES(?)',(uid,))
             c.execute("INSERT INTO app_meta VALUES('owner_demo_v1','1')")
+        payroll.schema(c)
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # Never log request bodies, passwords, or sessions.
         pass
 
-    def response(self, status, value, cookie=None, content_type='application/json; charset=utf-8'):
+    def client_proto(self):
+        return (self.headers.get('X-Forwarded-Proto') or '').split(',')[0].strip().lower()
+
+    def redirect_to_https(self):
+        # Only when a proxy says the visitor used http. Direct health checks have no forwarded proto.
+        if self.client_proto() != 'http' or self.path.split('?')[0] == '/health':
+            return False
+        host = (self.headers.get('X-Forwarded-Host') or self.headers.get('Host') or '').split(',')[0].strip()
+        if not host or any(ch in host for ch in ' \r\n'):
+            return False
+        self.send_response(301)
+        self.send_header('Location', 'https://'+host+self.path)
+        self.send_header('Content-Length', '0')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        return True
+
+    def response(self, status, value, cookie=None, content_type='application/json; charset=utf-8', extra=None):
         data = json.dumps(value, ensure_ascii=False).encode() if isinstance(value,(dict,list)) else value
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Robots-Tag', 'noindex, nofollow')
         self.send_header('Referrer-Policy', 'same-origin')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
+        if self.client_proto() == 'https':
+            self.send_header('Strict-Transport-Security', 'max-age=15552000')
+        if extra:
+            for key, item in extra:
+                self.send_header(key, item)
         if cookie:
             self.send_header('Set-Cookie', cookie)
         self.end_headers()
@@ -152,14 +181,20 @@ class Handler(BaseHTTPRequestHandler):
         return c.execute("SELECT u.id,u.name,u.phone,u.password,CASE WHEN o.user_id IS NOT NULL THEN 'owner' WHEN u.role='admin' THEN 'admin' WHEN t.id IS NOT NULL THEN 'teacher' ELSE 'parent' END role,t.id teacher_id,s.csrf,s.token_hash FROM sessions s JOIN users u ON s.user_id=u.id LEFT JOIN teachers t ON t.user_id=u.id LEFT JOIN organization_owners o ON o.user_id=u.id WHERE s.token_hash=? AND s.expires>? AND u.active=1",(hashlib.sha256(token.encode()).hexdigest(),time.time())).fetchone()
 
     def do_GET(self):
+        if self.redirect_to_https():
+            return
         path = self.path.split('?')[0]
-        if path == '/api/reconciliation':
+        if path in ('/api/reconciliation', '/api/reconciliation.csv'):
             with connect() as c:
                 user=self.current(c)
                 if not user:return self.response(401,{'error':'请先登录。'})
                 try:
                     params=parse_qs(urlsplit(self.path).query)
-                    return self.response(200,accounting.reconciliation(c,user,params.get('period',['day'])[0],params.get('date',[teaching.now_local().date().isoformat()])[0]))
+                    result=accounting.reconciliation(c,user,params.get('period',['day'])[0],params.get('date',[teaching.now_local().date().isoformat()])[0])
+                    if path.endswith('.csv'):
+                        filename=f'accounting-{result["start"]}-to-{result["end"]}.csv'
+                        return self.response(200,payroll.accounting_csv(result),content_type='text/csv; charset=utf-8',extra=[('Content-Disposition',f'attachment; filename="{filename}"')])
+                    return self.response(200,result)
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/api/entries/history':
@@ -170,6 +205,21 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:return self.response(400,{'error':'单据编号无效。'})
                 rows=[dict(r) for r in c.execute('SELECT e.*,u.name actor_name FROM ledger_edits e JOIN users u ON u.id=e.actor_id WHERE e.ledger_id=? ORDER BY e.id DESC',(ident,))]
                 return self.response(200,{'edits':rows})
+        if path in ('/api/pay', '/api/pay.csv'):
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    result=payroll.report(c,user,params.get('period',['week'])[0],params.get('date',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])
+                    if path.endswith('.csv'):
+                        raw=params.get('teacher_id',[''])[0]
+                        blob=payroll.csv_bytes(result,int(raw) if raw else None)
+                        filename=f'teacher-pay-{result["start"]}-to-{result["end"]}.csv'
+                        return self.response(200,blob,content_type='text/csv; charset=utf-8',extra=[('Content-Disposition',f'attachment; filename="{filename}"')])
+                    return self.response(200,result)
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/health':
             with connect() as c:
                 c.execute('SELECT 1 FROM users LIMIT 1').fetchone()
@@ -178,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as c:
                 user = self.current(c)
                 if not user:
-                    return self.response(200, {'user':None,'demo':DEMO,'organization':ORG_NAME})
+                    return self.response(200, {'user':None,'demo':DEMO,'organization':ORG_NAME,'contact':contact_details()})
                 try:
                     requested=parse_qs(urlsplit(self.path).query).get('through',[teaching.now_local().date().isoformat()])[0]
                     horizon=max(teaching.now_local().date()+teaching.dt.timedelta(days=366),teaching.dt.date.fromisoformat(requested)+teaching.dt.timedelta(days=30))
@@ -197,6 +247,11 @@ class Handler(BaseHTTPRequestHandler):
                 credit_batches.enrich(c,students)
                 archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
                 students=[s for s in students if not s['archived']]
+                if user['role']!='owner':
+                    for person in students+archived_students:
+                        person.pop('helen_original', None)
+                        person.pop('origin_override', None)
+                        person.pop('created_on', None)
                 entry_condition=condition
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
@@ -207,9 +262,13 @@ class Handler(BaseHTTPRequestHandler):
                         for key in ('request_id','reversal_of','version'):e.pop(key,None)
                     for s in students:s.pop('credit_batches',None)
                 return self.response(200, {'user':{'id':user['id'],'name':user['name'],'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
-        files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
+        if path == '/robots.txt':
+            return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
+        files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
         if path not in files:
-            return self.response(404, {'error':'页面不存在。'})
+            if path.startswith('/api/'):
+                return self.response(404, {'error':'页面不存在。'})
+            return self.response(404, NOT_FOUND_PAGE.encode(), content_type='text/html; charset=utf-8')
         name = files[path]
         mime = {'html':'text/html; charset=utf-8','js':'application/javascript; charset=utf-8','css':'text/css; charset=utf-8','svg':'image/svg+xml','jpg':'image/jpeg'}[name.rsplit('.',1)[1]]
         content = (ROOT/'static'/name).read_bytes()
@@ -257,6 +316,11 @@ class Handler(BaseHTTPRequestHandler):
                     result=deletion.restore(c,user,data) if self.path.endswith('/restore') else deletion.remove(c,user,data)
                     c.commit()
                     return self.response(200,result)
+                if self.path.startswith('/api/pay/'):
+                    c.execute('BEGIN IMMEDIATE')
+                    result=payroll.handle_post(c,user,self.path,data)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/accounting/cash'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/administrators':result=accounting.add_administrator(c,user,data,phone_value,password_hash,text_value)
@@ -265,7 +329,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:result=accounting.supplement_cash(c,user,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/schedule-options','/api/teachers/edit','/api/teachers/status','/api/teachers','/api/lessons','/api/lessons/cancel','/api/reports/draft','/api/reports/complete','/api/reports/edit'):
+                if self.path in ('/api/schedule-options','/api/teachers/edit','/api/teachers/status','/api/teachers','/api/lessons','/api/lessons/cancel','/api/reports/draft','/api/reports/complete','/api/reports/close','/api/reports/edit'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/schedule-options':
                         result=teaching.save_option(c,user,data,text_value)
@@ -344,6 +408,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.response(200,{'ok':True},f'session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200'+('; Secure' if SECURE else ''))
 
     def add_student(self,c,user,data):
+        import payroll
+        payroll.reject_original_flag(user, data)
         name = text_value(data.get('name'),'学生姓名',40)
         course = text_value(data.get('course'),'课程名称',80)
         birthday,grade,notes=profiles.fields(data)

@@ -114,6 +114,10 @@ def state_for(c,user):
             lesson['reports']=[]
         else:
             lesson['reports']=[dict(x) for x in c.execute('SELECT r.*,s.name student_name,s.billing_unit,v.id reversed_by FROM lesson_reports r JOIN students s ON r.student_id=s.id LEFT JOIN ledger v ON v.reversal_of=r.ledger_id WHERE r.lesson_id=?'+member_where+' ORDER BY s.id',member_params)]
+            if role!='owner':
+                for report in lesson['reports']:
+                    report.pop('fee_cents', None)
+                    report.pop('fee_overridden', None)
     teachers=[]
     if role in ('owner','admin','teacher'):
         tw='' if role in ('owner','admin') else ' WHERE u.id=? AND u.active=1'
@@ -278,7 +282,9 @@ def cancel_lesson(c,user,data,text_value):
         if not lesson['series_id']:raise ValueError('这不是重复课程。')
         rule=c.execute('SELECT * FROM lesson_series WHERE id=?',(lesson['series_id'],)).fetchone()
         if int(data.get('series_version',0))!=rule['version']:raise ValueError('重复课程已被调整，请刷新后重试。')
-    reason=text_value(data.get('reason'),'取消原因',250)
+    reason=str(data.get('reason') or '').strip()
+    if len(reason)>250:
+        raise ValueError('取消原因不能超过 250 个字。')
     c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",(reason,lesson['id']))
     if scope=='future':
         c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1 WHERE series_id=? AND occurrence_index>? AND status='scheduled'",(reason,lesson['series_id'],lesson['occurrence_index']))
@@ -289,17 +295,20 @@ def cancel_lesson(c,user,data,text_value):
 
 def save_reports(c,user,data,units,action):
     lesson=allowed_lesson(c,user,data['lesson_id'])
-    if action=='complete' and lesson['status']=='completed':
+    closing=action in ('complete','close')
+    if closing and lesson['status']=='completed':
         return {'ok':True,'duplicate':True}
     check_version(lesson,data)
     if lesson['status']=='cancelled':
         raise ValueError('已取消的课程不能填写或发布课后记录。')
-    if action=='complete' and lesson['ends_at']>now_local().strftime('%Y-%m-%dT%H:%M'):
+    if closing and lesson['ends_at']>now_local().strftime('%Y-%m-%dT%H:%M'):
         raise ValueError('课程尚未结束，可先保存草稿，结束后再确认完成。')
     if action=='draft' and lesson['status']!='scheduled':
         raise ValueError('已完成课程请使用修改课后记录。')
     if action=='edit' and lesson['status']!='completed':
         raise ValueError('课程尚未完成，请先填写并确认完成。')
+    if action=='close' and user['role'] not in ('owner','admin'):
+        raise AccessError('只有老板或管理员可以这样确认上课。')
     members={x['student_id'] for x in c.execute('SELECT student_id FROM lesson_students WHERE lesson_id=?',(lesson['id'],))}
     raw=data.get('reports')
     if not isinstance(raw,list) or len(raw)!=len(members) or {int(x['student_id']) for x in raw}!=members:
@@ -312,7 +321,7 @@ def save_reports(c,user,data,units,action):
         feedback=str(item.get('feedback','')).strip()
         if any(len(x)>2000 for x in (content,homework,feedback)):
             raise ValueError('学习内容、今日作业和课后反馈各最多 2000 字。')
-        if action!='draft' and (not content or not homework or not feedback):
+        if action not in ('draft','close') and (not content or not homework or not feedback):
             raise ValueError('请填写学习内容、今日作业和课后反馈；没有作业可填写“今日无作业”。')
         account=c.execute('SELECT billing_unit FROM students WHERE id=?',(sid,)).fetchone()
         default_amount=round((dt.datetime.fromisoformat(lesson['ends_at'])-dt.datetime.fromisoformat(lesson['starts_at'])).total_seconds()/3600,2) if account['billing_unit']=='hour' else lesson['planned_units']/100
@@ -320,13 +329,13 @@ def save_reports(c,user,data,units,action):
         old=c.execute('SELECT * FROM lesson_reports WHERE lesson_id=? AND student_id=?',(lesson['id'],sid)).fetchone()
         if action=='edit' and (not old or (amount!=old['amount'] and user['role']!='owner')):
             raise ValueError('修改反馈不会改变课时。需要调整扣费请由管理员在账本中处理。')
-        if action=='complete':
+        if closing:
             student=c.execute('SELECT name,balance FROM students WHERE id=?',(sid,)).fetchone()
             if student['balance']<amount:
                 raise ValueError(student['name']+'的剩余课时不足。本次尚未扣除任何学生的课时，可先保存草稿。')
-        cleaned.append((sid,amount,content,homework,feedback))
+        cleaned.append((sid,amount,content,homework,feedback,item.get('fee_amount')))
     # All validation precedes writes; the caller commits all students atomically.
-    for sid,amount,content,homework,feedback in cleaned:
+    for sid,amount,content,homework,feedback,fee_amount in cleaned:
         if action=='edit' and user['role']=='owner':
             previous=c.execute('SELECT * FROM lesson_reports WHERE lesson_id=? AND student_id=?',(lesson['id'],sid)).fetchone()
             if previous and previous['amount']!=amount:
@@ -334,11 +343,17 @@ def save_reports(c,user,data,units,action):
                 entry=c.execute('SELECT * FROM ledger WHERE id=?',(previous['ledger_id'],)).fetchone()
                 record_edits.edit(c,user,{'entry_id':entry['id'],'version':entry['version'],'amount':str(amount/100),'date':entry['lesson_date'],'note':entry['note'],'reason':'老板修改课后记录扣除数量'},units,lambda raw,label,maximum: str(raw).strip())
         c.execute("INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,updated_by) VALUES(?,?,?,?,?,?,?) ON CONFLICT(lesson_id,student_id) DO UPDATE SET amount=excluded.amount,content=excluded.content,homework=excluded.homework,feedback=excluded.feedback,updated_by=excluded.updated_by,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",(lesson['id'],sid,amount,content,homework,feedback,user['id']))
-        if action=='complete':
+        if closing:
             ledger_id=c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,?,?,?)",(sid,-amount,lesson['starts_at'][:10],lesson['title']+' · 课后记录',user['id'],f"scheduled-{lesson['id']}-student-{sid}")).lastrowid
             credit_batches.apply(c,ledger_id,'lesson',{},units)
-            c.execute('UPDATE lesson_reports SET ledger_id=? WHERE lesson_id=? AND student_id=?',(ledger_id,lesson['id'],sid))
-    c.execute("UPDATE lessons SET status=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",('completed' if action in ('complete','edit') else 'scheduled',lesson['id']))
+            import payroll
+            computed,_,_=payroll.fee_for_ledger(c,ledger_id,amount)
+            if str(fee_amount or '').strip():
+                import accounting
+                c.execute('UPDATE lesson_reports SET ledger_id=?,fee_cents=?,fee_overridden=1 WHERE lesson_id=? AND student_id=?',(ledger_id,accounting.money(fee_amount),lesson['id'],sid))
+            else:
+                c.execute('UPDATE lesson_reports SET ledger_id=?,fee_cents=?,fee_overridden=0 WHERE lesson_id=? AND student_id=?',(ledger_id,computed,lesson['id'],sid))
+    c.execute("UPDATE lessons SET status=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",('completed' if action in ('complete','edit','close') else 'scheduled',lesson['id']))
     c.execute('INSERT INTO report_edits(lesson_id,actor_id,payload) VALUES(?,?,?)',(lesson['id'],user['id'],json.dumps({'action':action,'reports':raw},ensure_ascii=False)))
     return {'ok':True}
 

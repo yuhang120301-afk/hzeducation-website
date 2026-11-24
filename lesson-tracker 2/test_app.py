@@ -565,6 +565,23 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.schedule(tid2,[s1])[0],200)
         self.assertEqual(self.balance(s1),0)
 
+    def test_only_boss_can_view_or_change_original_student_flag(self):
+        sid=self.new_student()
+        student=next(s for s in self.admin.request('state')[1]['students'] if s['id']==sid)
+        self.assertEqual(student['helen_original'], 0)
+        self.assertEqual(self.admin.request('pay/students', {'profile_ids':[student['profile_id']], 'helen_original': True})[0], 200)
+        self.assertEqual(next(s for s in self.admin.request('state')[1]['students'] if s['id']==sid)['helen_original'], 1)
+        admin=Client(); admin.login('0400000004','AdminDemo2026!')
+        teacher=Client(); teacher.login('0400000003','TutorDemo2026!')
+        for client in (admin, teacher, self.parent):
+            visible=client.request('state')[1]['students']
+            self.assertTrue(visible)
+            self.assertTrue(all('helen_original' not in s for s in visible))
+            self.assertEqual(client.request('pay/students', {'profile_ids':[student['profile_id']], 'helen_original': False})[0], 403)
+        self.assertEqual(admin.request('students/profile', {'student_id':sid,'name':'测试学生','billing_unit':'lesson','helen_original':False})[0], 403)
+        self.assertEqual(admin.request('students', {'name':'偷偷标原有','course':'测试课程','phone':'0400000001','helen_original':True})[0], 403)
+        self.assertEqual(next(s for s in self.admin.request('state')[1]['students'] if s['id']==sid)['helen_original'], 1)
+
     def test_teacher_scope_enforced_server_side(self):
         tid,t1=self.new_teacher();tid2,t2=self.new_teacher();s1=self.new_student();s2=self.new_student()
         lid=self.schedule(tid,[s1])[1]['lesson_id'];other=self.schedule(tid2,[s2])[1]['lesson_id']
