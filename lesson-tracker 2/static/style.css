@@ -132,6 +132,7 @@
 .drag-tip{position:absolute;top:-24px;left:0;background:#204F40;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;white-space:nowrap;font-style:normal}
 .pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer}
 .pay-card h2{margin:0;font-size:22px}
+.package-presets .btn{margin:0 8px 8px 0}
 .pay-fold h3{margin:14px 0 8px;font-size:16px;color:#204F40}
 .pack-list{margin:4px 0 12px;padding-left:18px;color:#5b6b66}
 .pay-fold .num small{display:block;font-weight:500;color:#5b6b66;font-size:12px}

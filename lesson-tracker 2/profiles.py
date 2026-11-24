@@ -55,7 +55,9 @@ def update(c,user,data,text_value):
     birthday,grade,notes=fields(data)
     unit=billing_unit(data.get('billing_unit',s['billing_unit']))
     c.execute('UPDATE students SET billing_unit=? WHERE profile_id=?',(unit,s['profile_id']))
-    c.execute('UPDATE students SET name=?,birthday=?,grade=?,notes=? WHERE profile_id=?',(name,birthday,grade,notes,s['profile_id']))
+    import pricing
+    level_code, level_year = pricing.remember_level(data, grade)
+    c.execute('UPDATE students SET name=?,birthday=?,grade=?,notes=?,level_code=?,level_year=? WHERE profile_id=?',(name,birthday,grade,notes,level_code,level_year,s['profile_id']))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'profile_updated'))
     return {'ok':True}
 

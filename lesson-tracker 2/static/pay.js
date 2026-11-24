@@ -77,7 +77,36 @@ async function renderAudit(){
   $('#audit-search').oninput=event=>{const q=event.target.value.trim().toLowerCase();document.querySelectorAll('#audit-list p').forEach(line=>{line.hidden=q && !(line.dataset.auditText||'').toLowerCase().includes(q);});};
  }catch(error){if(view==='audit') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`;}
 }
-let financePeriod='month', financeDate='';
+let financePeriod='month', financeDate='', financeStart='', financeEnd='', financeReady=false;
+function loadFinanceChoice(){
+ if(financeReady) return;
+ financeReady=true;
+ try{
+  const saved=JSON.parse(localStorage.getItem('hz-finance-range')||'{}');
+  if(['day','week','month','last_month','year','custom'].includes(saved.period)) financePeriod=saved.period;
+  if(saved.start) financeStart=saved.start;
+  if(saved.end) financeEnd=saved.end;
+ }catch(error){}
+}
+function saveFinanceChoice(){
+ try{localStorage.setItem('hz-finance-range', JSON.stringify({period:financePeriod,start:financeStart,end:financeEnd}));}catch(error){}
+}
+function financeQuery(){
+ if(financePeriod==='custom') return `period=custom&start=${encodeURIComponent(financeStart)}&end=${encodeURIComponent(financeEnd)}`;
+ return `period=${financePeriod}&date=${encodeURIComponent(financeDate)}`;
+}
+function financeMonth(anchor, selected, which){
+ const start=anchor.slice(0,8)+'01';
+ const endDay=new Date(Date.UTC(Number(start.slice(0,4)), Number(start.slice(5,7)), 0)).getUTCDate();
+ const lead=(new Date(start+'T12:00:00Z').getUTCDay()+6)%7;
+ const cells=Array.from({length:lead},()=>'<td></td>').concat(Array.from({length:endDay},(_,i)=>{
+  const day=start.slice(0,8)+String(i+1).padStart(2,'0');
+  return `<td><button type="button" class="mini-day ${day===state.today?'is-today':''} ${day===selected?'selected':''}" data-fin-day="${day}" data-fin-which="${which}">${i+1}</button></td>`;
+ }));
+ let rows='';
+ for(let i=0;i<cells.length;i+=7) rows+=`<tr>${cells.slice(i,i+7).join('')}</tr>`;
+ return `<div class="mini-head"><button type="button" data-fin-move="-1" data-fin-which="${which}" aria-label="上个月">‹</button><strong>${start.slice(0,4)}年${Number(start.slice(5,7))}月</strong><button type="button" data-fin-move="1" data-fin-which="${which}" aria-label="下个月">›</button></div><table><thead><tr>${['一','二','三','四','五','六','日'].map(d=>`<th>${d}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+}
 function toneClass(name){
  const n=(name||'').toLowerCase();
  if(n.includes('helen')) return 'helen';
@@ -88,31 +117,74 @@ function toneClass(name){
  if(n.includes('christina')) return 'christina';
  return 'other';
 }
+let financeAnchor={start:'',end:''};
+function bindFinanceCalendar(which, selected){
+ const button=$('#fin-'+which), panel=$('#fin-'+which+'-cal');
+ if(!button||!panel) return;
+ if(!financeAnchor[which]) financeAnchor[which]=selected;
+ const paint=()=>{
+  panel.innerHTML=financeMonth(financeAnchor[which], which==='start'?financeStart:financeEnd, which);
+  panel.querySelectorAll('[data-fin-move]').forEach(item=>item.onclick=event=>{
+   event.stopPropagation();
+   const month=financeAnchor[which].slice(0,8)+'01';
+   const shifted=item.dataset.finMove==='1'?datePlus(month,32):datePlus(month,-1);
+   financeAnchor[which]=shifted.slice(0,8)+'01';
+   paint();
+   panel.hidden=false;
+  });
+  panel.querySelectorAll('[data-fin-day]').forEach(item=>item.onclick=()=>{
+   if(which==='start') financeStart=item.dataset.finDay; else financeEnd=item.dataset.finDay;
+   if(financeEnd<financeStart){const swap=financeStart; financeStart=financeEnd; financeEnd=swap;}
+   saveFinanceChoice();
+   renderFinance();
+  });
+ };
+ paint();
+ button.onclick=()=>{const open=panel.hidden; panel.hidden=!open; button.setAttribute('aria-expanded', String(open));};
+}
 async function renderPrices(){
  $('#surface').innerHTML='<div class="panel empty">正在读取价目…</div>';
  try{
   const prices=await api('prices');
   if(view!=='prices') return;
   const money=moneyPlain;
-  $('#surface').innerHTML=`<p class="mock-sub">每种课程各自的每小时价格，以及按 1 小时算出的 10 节、20 节课时包。标成暂定的是占位，保存后就按填写的数字。不含 GST。</p>${(prices.by_type||[]).map(kind=>{const hourly=kind.rows&&kind.rows[0]&&kind.rows[0].hourly_cents;const packs=hourly?`10 节 ${money(hourly*10)} · 20 节 ${money(hourly*20)}`:'先填每小时价格，课时包再算出来';return `<article class="trow"><span class="pill">${typeBadge(kind.name)}</span><div class="grow">${kind.placeholder?'暂定':'已填写'}<small>${hourly?money(hourly)+' / 小时 · '+packs:packs}</small></div><button class="btn" data-price-type="${kind.id}" type="button">改价格</button></article>`;}).join('')}<p class="footnote">要加集训营这类新类型，到设置里的课程类型添加。这里会多出一行，价格单独填。</p>`;
-  document.querySelectorAll('[data-price-type]').forEach(button=>button.onclick=()=>modal('填写价格',`<p class="footnote">这是这个课程类型的每小时价格。10 节和 20 节的课时包按这个价乘出来。不含 GST。</p><label class="field">每小时 AUD<input name="hourly" type="number" min="0" step="0.01" required></label>`,'保存',async form=>{await api('prices/save',{course_type_id:Number(button.dataset.priceType),hourly:form.hourly,effective_from:state.today});toast('价目已保存。');renderPrices();}));
+  const table=(prices.tables||[]).find(item=>item.effective_from==='2027-01-01')||(prices.tables||[])[0]||{rows:[], validity_note:''};
+  const labels={one_to_one:'一对一', one_to_two:'一对二', term:'小班课'};
+  const rows=(table.rows||[]).filter(row=>row.product!=='helen');
+  const packNote=row=>{
+   const hour=row.hourly_cents/100;
+   if(row.product==='term'){
+    const session=hour*row.lesson_minutes/60;
+    const counts={T1:8,T2:10,T3:9,T4:10};
+    return Object.entries(counts).map(([term,n])=>`${term} $${(session*n).toFixed(2)}`).join(' · ');
+   }
+   return `20×1小时 $${(hour*20).toFixed(2)} · 20×1.5小时 $${(hour*30).toFixed(2)} · 另赠 1 节`;
+  };
+  $('#surface').innerHTML=`<p class="mock-sub">2027 价目，不含 GST。价格按年级和课程类型锁定。一对一、一对二买 20 节赠 1 节；小班课按学期，不赠课。有效期可以先空着。</p><label class="field">课时包有效期（未定可留空）<input id="price-validity" maxlength="80" value="${escapeHTML(table.validity_note||'')}" placeholder="Helen 还没定"></label><button class="btn" id="save-validity" type="button">保存有效期</button>${rows.map(row=>`<article class="trow"><span class="pill">${labels[row.product]||row.product}</span><div class="grow">${escapeHTML(row.level_from)}–${escapeHTML(row.level_to)} · $${(row.hourly_cents/100).toFixed(2)} / 小时<small>${packNote(row)}</small></div><button class="btn" data-price-row="${row.id}" data-hourly="${row.hourly_cents/100}" type="button">改这一档</button></article>`).join('')}`;
+  $('#save-validity').onclick=async()=>{try{await api('prices/validity',{validity_note:$('#price-validity').value}); toast('有效期已保存。');}catch(error){toast(error.message);}};
+  document.querySelectorAll('[data-price-row]').forEach(button=>button.onclick=()=>modal('修改这一档的时薪',`<p class="footnote">只改这一年级、这一课型。不含 GST。学生充值会按改后的价自动带出课时包。</p><label class="field">每小时 AUD<input name="hourly" type="number" min="0" step="0.01" value="${escapeHTML(button.dataset.hourly)}" required></label>`,'保存',async form=>{await api('prices/row',{id:Number(button.dataset.priceRow),hourly:form.hourly}); toast('这一档已保存。'); renderPrices();}));
  }catch(error){if(view==='prices') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`;}
 }
 async function renderFinance(){
+ loadFinanceChoice();
  if(!financeDate) financeDate=state.today;
+ if(!financeStart) financeStart=state.today.slice(0,8)+'01';
+ if(!financeEnd) financeEnd=state.today;
  $('#surface').innerHTML='<div class="panel empty">正在汇总财务报表…</div>';
  try{
-  const query=`period=${financePeriod}&date=${encodeURIComponent(financeDate)}`;
+  const query=financeQuery();
   const data=await api('finance?'+query);
   if(view!=='finance') return;
   const money=moneyPlain;
   const margin=data.gross_margin_percent==null?'—':data.gross_margin_percent+'%';
   const unhanded=(data.unhanded||[])[0];
   const teachers=(data.teachers||[]).filter(teacher=>teacher.lessons||teacher.pay_cents);
-  $('#surface').innerHTML=`<div class="mock-top"><div><h1 class="mock-title">财务报表</h1><p class="mock-sub">${escapeHTML(data.start)} – ${escapeHTML(data.end)}</p></div><div class="exports"><button class="btn" id="finance-xlsx" type="button">导出 Excel</button><button class="btn primary" id="finance-pdf" type="button">导出 PDF</button></div></div><div class="period"><div class="seg">${[['day','日'],['week','周'],['fortnight','双周'],['month','月']].map(([value,label])=>`<button type="button" class="${value===financePeriod?'on':''}" data-fin-period="${value}">${label}</button>`).join('')}</div></div><div class="sums">${[['营业额',money(data.turnover_cents),'已上完的课'],['成本',money(data.operating_cost_cents),'房租、保险和其他'],['机构利润',money(data.organisation_profit_cents),'营业额 − 课酬 − 成本'],['利润率',margin,'（营业额 − 课酬）÷ 营业额']].map(([k,n,s])=>`<div class="card"><div class="k">${k}</div><div class="n">${n}</div><div class="s">${s}</div></div>`).join('')}</div><div class="sums sums-2"><div class="card"><div class="k">Vincent 分成</div><div class="n">${money((data.partner||{}).share_cents)}</div><div class="s">新学生利润的分成</div></div><div class="card"><div class="k">Helen 本人上课收入</div><div class="n">${money(data.helen_teaching_cents)}</div><div class="s">已含在营业额里</div></div><div class="card focus"><div class="k">Helen 净利润</div><div class="n">${money(data.helen_net_cents)}</div><div class="s">机构利润 − Vincent 分成</div></div></div>${unhanded?`<div class="alert"><div>老师代收未上交<small>${userHTML(unhanded.receiver_name||'')} · ${escapeHTML(unhanded.lesson_date||'')} · ${escapeHTML(unhanded.method_label||unhanded.payment_method||'')}<br>${userHTML(unhanded.student_name||'')}</small></div><b>${money(unhanded.cash_delta)}</b></div>`:''}<div class="fin-grid"><div class="section"><h2>按老师</h2>${teachers.map(teacher=>`<article class="trow t-${toneClass(teacher.name)}"><span class="pill">${userHTML(teacher.name)}</span><div class="grow">${teacher.is_helen?'本人上课，不另计工资':'课酬'}<small>${teacher.lessons} 节 · ${(teacher.minutes/60).toFixed(1)} 小时</small></div><div class="num">${money(teacher.is_helen?0:teacher.pay_cents)}</div></article>`).join('')||'<p class="muted">这个周期还没有已确认的课。</p>'}<h2>按课程类型</h2>${(data.by_type||[]).map(row=>`<article class="trow"><span class="pill">${typeBadge(row.name)}</span><div class="grow">${row.lessons} 节<small>${(row.minutes/60).toFixed(1)} 小时</small></div><div class="num">${money(row.fee_cents)}</div></article>`).join('')||'<p class="muted">还没有按类型汇总的课。</p>'}</div><div><div class="section"><h2>成本</h2><div class="block">${(data.costs||[]).map(cost=>`<div class="split"><span>${userHTML(cost.label)}</span><b>${money(cost.amount_cents)}</b></div>`).join('')||'<div class="split"><span>这个周期没有成本</span><b>$0.00</b></div>'}<div class="split"><span>合计</span><b>${money(data.operating_cost_cents)}</b></div></div></div><div class="section"><h2>收款方式</h2><div class="block">${(data.by_method||[]).map(row=>`<div class="split"><span>${escapeHTML(row.label)}</span><b>${money(row.cents)}</b></div>`).join('')||'<div class="split"><span>暂无收款</span><b>$0.00</b></div>'}</div></div><div class="section"><h2>谁收的</h2><div class="block">${(data.by_receiver||[]).map(row=>`<div class="split"><span>${userHTML(row.name)}${row.unhanded_cents?' · 未上交':''}</span><b>${money(row.cents)}</b></div>`).join('')||'<div class="split"><span>暂无</span><b>$0.00</b></div>'}</div></div><div class="section" id="price-types"><h2>课程类型价目 <small class="muted">暂定，Helen 稍后填写</small></h2><div class="panel empty">正在读取价目…</div></div></div></div>`;
+  $('#surface').innerHTML=`<div class="mock-top"><div><h1 class="mock-title">财务报表</h1><p class="mock-sub">${escapeHTML(data.start)} – ${escapeHTML(data.end)}</p></div><div class="exports"><button class="btn" id="finance-xlsx" type="button">导出 Excel</button><button class="btn primary" id="finance-pdf" type="button">导出 PDF</button></div></div><div class="period"><div class="seg">${[['day','今天'],['week','本周'],['month','本月'],['last_month','上月'],['year','今年'],['custom','自定义']].map(([value,label])=>`<button type="button" class="${value===financePeriod?'on':''}" data-fin-period="${value}">${label}</button>`).join('')}</div>${financePeriod==='custom'?`<div class="mini-wrap"><button type="button" class="btn" id="fin-start" aria-expanded="false">开始 ${escapeHTML(financeStart)}</button><div id="fin-start-cal" class="mini-cal" hidden></div></div><div class="mini-wrap"><button type="button" class="btn" id="fin-end" aria-expanded="false">结束 ${escapeHTML(financeEnd)}</button><div id="fin-end-cal" class="mini-cal" hidden></div></div>`:''}</div><div class="sums">${[['营业额',money(data.turnover_cents),'已上完的课'],['成本',money(data.operating_cost_cents),'房租、保险和其他'],['机构利润',money(data.organisation_profit_cents),'营业额 − 课酬 − 成本'],['利润率',margin,'（营业额 − 课酬）÷ 营业额']].map(([k,n,s])=>`<div class="card"><div class="k">${k}</div><div class="n">${n}</div><div class="s">${s}</div></div>`).join('')}</div><div class="sums sums-2"><div class="card"><div class="k">Vincent 分成</div><div class="n">${money((data.partner||{}).share_cents)}</div><div class="s">新学生利润的分成</div></div><div class="card"><div class="k">Helen 本人上课收入</div><div class="n">${money(data.helen_teaching_cents)}</div><div class="s">已含在营业额里</div></div><div class="card focus"><div class="k">Helen 净利润</div><div class="n">${money(data.helen_net_cents)}</div><div class="s">机构利润 − Vincent 分成</div></div></div>${unhanded?`<div class="alert"><div>老师代收未上交<small>${userHTML(unhanded.receiver_name||'')} · ${escapeHTML(unhanded.lesson_date||'')} · ${escapeHTML(unhanded.method_label||unhanded.payment_method||'')}<br>${userHTML(unhanded.student_name||'')}</small></div><b>${money(unhanded.cash_delta)}</b></div>`:''}<div class="fin-grid"><div class="section"><h2>按老师</h2>${teachers.map(teacher=>`<article class="trow t-${toneClass(teacher.name)}"><span class="pill">${userHTML(teacher.name)}</span><div class="grow">${teacher.is_helen?'本人上课，不另计工资':'课酬'}<small>${teacher.lessons} 节 · ${(teacher.minutes/60).toFixed(1)} 小时</small></div><div class="num">${money(teacher.is_helen?0:teacher.pay_cents)}</div></article>`).join('')||'<p class="muted">这个周期还没有已确认的课。</p>'}<h2>按课程类型</h2>${(data.by_type||[]).map(row=>`<article class="trow"><span class="pill">${typeBadge(row.name)}</span><div class="grow">${row.lessons} 节<small>${(row.minutes/60).toFixed(1)} 小时</small></div><div class="num">${money(row.fee_cents)}</div></article>`).join('')||'<p class="muted">还没有按类型汇总的课。</p>'}</div><div><div class="section"><h2>成本</h2><div class="block">${(data.costs||[]).map(cost=>`<div class="split"><span>${userHTML(cost.label)}</span><b>${money(cost.amount_cents)}</b></div>`).join('')||'<div class="split"><span>这个周期没有成本</span><b>$0.00</b></div>'}<div class="split"><span>合计</span><b>${money(data.operating_cost_cents)}</b></div></div></div><div class="section"><h2>收款方式</h2><div class="block">${(data.by_method||[]).map(row=>`<div class="split"><span>${escapeHTML(row.label)}</span><b>${money(row.cents)}</b></div>`).join('')||'<div class="split"><span>暂无收款</span><b>$0.00</b></div>'}</div></div><div class="section"><h2>谁收的</h2><div class="block">${(data.by_receiver||[]).map(row=>`<div class="split"><span>${userHTML(row.name)}${row.unhanded_cents?' · 未上交':''}</span><b>${money(row.cents)}</b></div>`).join('')||'<div class="split"><span>暂无</span><b>$0.00</b></div>'}</div></div><div class="section" id="price-types"><h2>课程类型价目 <small class="muted">暂定，Helen 稍后填写</small></h2><div class="panel empty">正在读取价目…</div></div></div></div>`;
   $('#finance-xlsx').onclick=async()=>{try{await downloadCsv('/api/finance.xlsx?'+query,'HZ-Education-Melbourne-finance.xlsx');}catch(error){toast(error.message);}};
   $('#finance-pdf').onclick=async()=>{try{await downloadCsv('/api/finance.pdf?'+query,'HZ-Education-Melbourne-finance.pdf');}catch(error){toast(error.message);}};
-  document.querySelectorAll('[data-fin-period]').forEach(button=>button.onclick=()=>{financePeriod=button.dataset.finPeriod;renderFinance();});
+  document.querySelectorAll('[data-fin-period]').forEach(button=>button.onclick=()=>{financePeriod=button.dataset.finPeriod;saveFinanceChoice();renderFinance();});
+  bindFinanceCalendar('start', financeStart);
+  bindFinanceCalendar('end', financeEnd);
   try{
    const prices=await api('prices');
    const host=$('#price-types');

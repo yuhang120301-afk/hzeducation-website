@@ -77,6 +77,10 @@ def schema(c):
     seed_2027(c)
     import teaching
     teaching.ensure_catalogs(c)
+    cols = {r['name'] for r in c.execute('PRAGMA table_info(price_tables)')}
+    if 'validity_note' not in cols:
+        c.execute("ALTER TABLE price_tables ADD COLUMN validity_note TEXT NOT NULL DEFAULT ''")
+    publish_seed(c)
 
 
 def seed_2027(c):
@@ -91,6 +95,115 @@ def seed_2027(c):
     c.executemany('''INSERT INTO price_rows(table_id,product,level_from,level_to,hourly_cents,lesson_minutes)
         VALUES(?,?,?,?,?,?)''', [(table_id, *row) for row in SEED_ROWS])
     c.execute('INSERT INTO app_meta(key,value) VALUES(?,?)', (SEED_KEY, '1'))
+
+
+def publish_seed(c):
+    """Attach the 2027 bands to course types and clear the 暂定 flag. Edited rows stay."""
+    import teaching
+    table = c.execute("SELECT id FROM price_tables WHERE effective_from='2027-01-01'").fetchone()
+    if not table:
+        return
+    names = {'one_to_one': '一对一', 'one_to_two': '一对二', 'term': '小班课'}
+    for product, label in names.items():
+        kind = c.execute('SELECT id FROM course_types WHERE name=?', (label,)).fetchone()
+        if not kind:
+            continue
+        c.execute('''UPDATE price_rows SET course_type_id=?, placeholder=0
+            WHERE table_id=? AND product=? AND IFNULL(placeholder,1)=1''', (kind['id'], table['id'], product))
+        c.execute('''UPDATE price_rows SET course_type_id=?
+            WHERE table_id=? AND product=? AND course_type_id IS NULL''', (kind['id'], table['id'], product))
+
+
+TYPE_PRODUCT = {'一对一': 'one_to_one', '一对二': 'one_to_two', '小班课': 'term'}
+
+
+def presets(c, user, student_id=None, level=None, course_type_id=None, day=None):
+    """Packages that match one year level and one course type. Helen's own rate is never included."""
+    require_owner(user)
+    on = dt.date.fromisoformat(str(day)) if day else now_local().date()
+    student = None
+    if student_id:
+        student = c.execute('SELECT * FROM students WHERE id=? AND archived=0', (int(student_id),)).fetchone()
+        if not student:
+            raise ValueError('学生不存在。')
+        level = annotate(dict(student), on)['level_now'] or level
+        course_type_id = course_type_id or student['course_type_id']
+    name = ''
+    if course_type_id:
+        kind = c.execute('SELECT name FROM course_types WHERE id=?', (int(course_type_id),)).fetchone()
+        name = kind['name'] if kind else ''
+    product = TYPE_PRODUCT.get(name)
+    table = table_on(c, on.isoformat())
+    validity = ''
+    if table and 'validity_note' in table.keys():
+        validity = table['validity_note'] or ''
+    if not level or not product:
+        return {'level': level or '', 'course_type': name, 'product': product, 'hourly_cents': None,
+            'packages': [], 'validity': validity, 'source': '', 'reason': '请先选择年级和课程类型。'}
+    rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+    band = matching_row(rows, product, level)
+    if not band:
+        return {'level': level, 'course_type': name, 'product': product, 'hourly_cents': None,
+            'packages': [], 'validity': validity, 'source': '', 'reason': '这个年级还没有价目。'}
+    packages = []
+    if product == 'term':
+        minutes = int(band['lesson_minutes'] or 150)
+        choices = [(['T1'], 'T1'), (['T2'], 'T2'), (['T3'], 'T3'), (['T4'], 'T4'),
+            (['T1', 'T2'], 'T1+T2'), (['T3', 'T4'], 'T3+T4'), (list(TERM_COUNTS), '四个学期')]
+        for terms, label in choices:
+            paid = sum(TERM_COUNTS[term] for term in terms)
+            each = per_lesson_cents(band['hourly_cents'], minutes)
+            total = apply_discount(each * paid, discount_percent(terms))
+            packages.append({'label': f'{label} · {length_label(minutes)}', 'paid_lessons': paid, 'gift_lessons': 0,
+                'lesson_minutes': minutes, 'total_cents': total, 'terms': terms, 'product': product,
+                'validity': '有效期为所选学期'})
+    else:
+        for minutes in (60, 90):
+            each = per_lesson_cents(band['hourly_cents'], minutes)
+            packages.append({'label': f'20 节 · {length_label(minutes)}', 'paid_lessons': 20, 'gift_lessons': 1,
+                'lesson_minutes': minutes, 'total_cents': each * 20, 'terms': [], 'product': product,
+                'validity': validity or '有效期未定'})
+    source = 'table'
+    if student and student['profile_id']:
+        custom = c.execute('SELECT per_lesson_cents, lesson_minutes FROM student_prices WHERE profile_id=? AND product=?',
+            (student['profile_id'], product)).fetchall()
+        if custom:
+            source = 'custom'
+            by_minutes = {row['lesson_minutes']: row['per_lesson_cents'] for row in custom}
+            for package in packages:
+                each = by_minutes.get(package['lesson_minutes'])
+                if each is None:
+                    continue
+                paid = package['paid_lessons']
+                package['total_cents'] = apply_discount(each * paid, discount_percent(package['terms']))
+                package['legacy'] = True
+    return {'level': level, 'course_type': name, 'product': product, 'product_label': PRODUCT_LABELS[product],
+        'hourly_cents': band['hourly_cents'], 'lesson_minutes': band['lesson_minutes'], 'packages': packages,
+        'validity': validity, 'source': source, 'reason': ''}
+
+
+def save_band(c, user, data):
+    """Edit one year-band hourly price. This is the number parents are charged from."""
+    require_owner(user)
+    import accounting
+    row = c.execute('SELECT * FROM price_rows WHERE id=?', (int(data.get('id') or 0),)).fetchone()
+    if not row or row['product'] == 'helen':
+        raise ValueError('这条价目不能修改。')
+    cents = accounting.money(data.get('hourly'))
+    c.execute('UPDATE price_rows SET hourly_cents=?, placeholder=0 WHERE id=?', (cents, row['id']))
+    return {'ok': True}
+
+
+def save_validity(c, user, data):
+    require_owner(user)
+    note = str(data.get('validity_note') or '').strip()
+    if len(note) > 80:
+        raise ValueError('有效期说明最多 80 个字。')
+    table = c.execute("SELECT id FROM price_tables WHERE effective_from='2027-01-01'").fetchone()
+    if not table:
+        raise ValueError('还没有 2027 价目。')
+    c.execute('UPDATE price_tables SET validity_note=? WHERE id=?', (note, table['id']))
+    return {'ok': True}
 
 
 def require_owner(user):
@@ -207,19 +320,27 @@ def gift_for(product, paid_lessons):
 
 
 def table_on(c, day):
-    return c.execute('SELECT * FROM price_tables WHERE effective_from<=? ORDER BY effective_from DESC, id DESC LIMIT 1', (day,)).fetchone()
+    row = c.execute('SELECT * FROM price_tables WHERE effective_from<=? ORDER BY effective_from DESC, id DESC LIMIT 1', (day,)).fetchone()
+    if row:
+        return row
+    # Before the first list starts, enrolment still needs a price. Use that first list.
+    return c.execute('SELECT * FROM price_tables ORDER BY effective_from, id LIMIT 1').fetchone()
 
 
 def matching_row(rows, product, level):
+    """The narrowest year band wins, so a later wide placeholder cannot hide Y11."""
     if level not in LEVELS:
         return None
     index = LEVELS.index(level)
     found = None
+    span = None
     for row in rows:
-        if row['product'] != product:
+        if row['product'] != product or row.get('placeholder'):
             continue
-        if LEVELS.index(row['level_from']) <= index <= LEVELS.index(row['level_to']):
+        start, stop = LEVELS.index(row['level_from']), LEVELS.index(row['level_to'])
+        if start <= index <= stop and (span is None or stop - start < span):
             found = row
+            span = stop - start
     return found
 
 
@@ -255,10 +376,6 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
     table = table_on(c, on.isoformat())
     rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
     band = matching_row(rows, product, level) if level else None
-    type_id = student['course_type_id'] if 'course_type_id' in student.keys() else None
-    typed = [row for row in rows if type_id and row.get('course_type_id') == type_id and not row.get('placeholder')]
-    if typed:
-        band = next((row for row in typed if int(row['lesson_minutes'] or 0) == int(lesson_minutes or 0)), typed[0])
     if product == 'term' and band and not minutes:
         minutes = band['lesson_minutes']
         custom = c.execute('''SELECT per_lesson_cents FROM student_prices
@@ -326,8 +443,9 @@ def prices_by_type(c):
         if not own:
             aliases = [key for key, name in teaching.TYPE_ALIASES.items() if name == kind['name']]
             own = [row for row in rows if row['product'] in aliases or teaching.TYPE_ALIASES.get(row['product']) == kind['name']]
+        own = [row for row in own if row.get('product') != 'helen']
         grouped.append({'id': kind['id'], 'name': kind['name'], 'rows': own,
-            'placeholder': not own or any(row.get('placeholder', 1) for row in own)})
+            'placeholder': bool(own) and any(row.get('placeholder', 1) for row in own)})
     return grouped
 
 
@@ -336,7 +454,7 @@ def list_prices(c, user):
     tables = []
     for table in c.execute('SELECT * FROM price_tables ORDER BY effective_from DESC, id DESC'):
         item = dict(table)
-        item['rows'] = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=? ORDER BY product, id', (table['id'],))]
+        item['rows'] = [dict(r) for r in c.execute("SELECT * FROM price_rows WHERE table_id=? AND product!='helen' ORDER BY product, level_from, id", (table['id'],))]
         tables.append(item)
     custom = [dict(r) for r in c.execute('''SELECT p.*, s.name student_name FROM student_prices p
         JOIN students s ON s.profile_id=p.profile_id

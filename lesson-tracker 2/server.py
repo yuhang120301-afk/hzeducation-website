@@ -385,13 +385,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200, finance.today_board(c, user, params.get('date',[None])[0]))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
-        if path == '/api/prices':
+        if path in ('/api/prices', '/api/prices/presets'):
             with connect() as c:
                 user=self.current(c)
                 if not user:return self.response(401,{'error':'请先登录。'})
                 try:
+                    if path == '/api/prices/presets':
+                        params=parse_qs(urlsplit(self.path).query)
+                        return self.response(200, pricing.presets(c, user, params.get('student_id',[None])[0], params.get('level',[None])[0], params.get('course_type_id',[None])[0], params.get('date',[None])[0]))
                     return self.response(200, pricing.list_prices(c, user))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path in ('/api/finance', '/api/finance.xlsx', '/api/finance.pdf'):
             with connect() as c:
                 user=self.current(c)
@@ -453,6 +457,9 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
+                if user['role'] in ('owner','admin'):
+                    for person in students:
+                        pricing.annotate(person)
                 archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
                 students=[s for s in students if not s['archived']]
                 if user['role']!='owner':
@@ -594,6 +601,16 @@ class Handler(BaseHTTPRequestHandler):
                     result = pricing.save_type_price(c, user, data)
                     c.commit()
                     return self.response(200, result)
+                if self.path == '/api/prices/row':
+                    c.execute('BEGIN IMMEDIATE')
+                    result = pricing.save_band(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
+                if self.path == '/api/prices/validity':
+                    c.execute('BEGIN IMMEDIATE')
+                    result = pricing.save_validity(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
                 if self.path == '/api/prices/quote':
                     return self.response(200, pricing.quote(c,user,data.get('student_id'),data.get('product'),data.get('lesson_minutes'),data.get('paid_lessons'),data.get('date') or teaching.now_local().date().isoformat(),data.get('terms')))
                 if self.path == '/api/audit/undo':
@@ -669,7 +686,8 @@ class Handler(BaseHTTPRequestHandler):
         profile_id=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
         sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
         type_id, subject_id = teaching.resolve_catalog(c, data, None, course)
-        c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=?,course_type_id=?,subject_id=?,course_note=? WHERE id=?',(birthday,grade,notes,billing_unit,type_id,subject_id,course,sid))
+        level_code, level_year = pricing.remember_level(data, grade)
+        c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=?,course_type_id=?,subject_id=?,course_note=?,level_code=?,level_year=? WHERE id=?',(birthday,grade,notes,billing_unit,type_id,subject_id,course,level_code,level_year,sid))
         c.commit()
         return self.response(201,{'ok':True,'student_id':sid})
 

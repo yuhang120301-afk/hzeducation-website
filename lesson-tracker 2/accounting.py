@@ -82,7 +82,13 @@ def bounds(period,day):
         if ((monday-anchor).days//7)%2:
             monday-=dt.timedelta(days=7)
         start,end=monday,monday+dt.timedelta(days=13)
-    else:raise ValueError('请选择日、周、双周或月。')
+    elif period=='last_month':
+        end=day.replace(day=1)-dt.timedelta(days=1)
+        start=end.replace(day=1)
+    elif period=='year':
+        start=dt.date(day.year,1,1)
+        end=dt.date(day.year,12,31)
+    else:raise ValueError('请选择今天、本周、本月、上月、今年或自定义。')
     return start,end
 
 def blank_totals():
