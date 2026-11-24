@@ -241,7 +241,10 @@ def add_course(c,user,data,text_value):
     sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
     created=s['helen_original'] if 'helen_original' in s.keys() else 0
     type_id = int(data.get('course_type_id') or 0) or s['course_type_id']
-    c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,sid))
+    import pricing
+    pricing.schema(c)
+    study = pricing.clean_study_level(data.get('study_level'))
+    c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=?,level_code=?,level_year=?,study_level=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,s['level_code'] if 'level_code' in s.keys() else '', s['level_year'] if 'level_year' in s.keys() else 0, study, sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
     moved=relink_future_lessons(c, sid)
     return {'ok':True,'student_id':sid,'moved':moved}
@@ -290,6 +293,17 @@ def relink_future_lessons(c, student_id):
                 c.execute('UPDATE lesson_reports SET student_id=? WHERE lesson_id=? AND student_id=?', (current['id'], lesson['id'], old['id']))
             moved+=1
     return moved
+
+
+def set_study_level(c, user, data):
+    """Optional content year for one course. Blank clears it."""
+    require_admin(user)
+    import pricing
+    pricing.schema(c)
+    row = student(c, data)
+    code = pricing.clean_study_level(data.get('study_level'))
+    c.execute('UPDATE students SET study_level=? WHERE id=?', (code, row['id']))
+    return {'ok': True, 'study_level': code}
 
 
 def relink_future(c, user, data):
