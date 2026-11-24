@@ -36,9 +36,12 @@ def unhanded(c):
 
 
 def arrears_rows(c):
-    owed = [dict(r) for r in c.execute('''SELECT a.*, s.name student_name, s.course, s.balance
-        FROM arrears a JOIN students s ON s.id=a.student_id
-        WHERE a.settled=0 ORDER BY a.id DESC''')]
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='arrears'").fetchone():
+        owed = [dict(r) for r in c.execute('''SELECT a.*, s.name student_name, s.course, s.balance
+            FROM arrears a JOIN students s ON s.id=a.student_id
+            WHERE a.settled=0 ORDER BY a.id DESC''')]
+    else:
+        owed = []
     booked = [dict(r) for r in c.execute('''SELECT s.id student_id, s.name student_name, s.course, s.balance,
         MIN(l.starts_at) next_lesson, COUNT(l.id) upcoming
         FROM students s
@@ -92,6 +95,15 @@ def statement(c, user, period, day, start, end):
         pass
     cash = accounting.cash_breakdown(c, start, end)
     margin = None if not turnover else round((turnover - teacher_pay) * 100 / turnover, 1)
+    by_type = {}
+    for teacher in pay['teachers']:
+        for lesson in teacher['lessons']:
+            label = lesson.get('course_type_name') or '未分类'
+            bucket = by_type.setdefault(label, {'name': label, 'lessons': 0, 'minutes': 0, 'fee_cents': 0, 'pay_cents': 0})
+            bucket['lessons'] += 1
+            bucket['minutes'] += lesson['minutes']
+            bucket['fee_cents'] += lesson['fee_cents']
+            bucket['pay_cents'] += lesson['pay_cents']
     return {
         'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'turnover_cents': turnover,
@@ -111,6 +123,7 @@ def statement(c, user, period, day, start, end):
         'helen_net_cents': helen_net,
         'unhanded': unhanded(c),
         'unknown_fee_count': sum(teacher['unknown_fee_count'] for teacher in pay['teachers']),
+        'by_type': list(by_type.values()),
         'gst': False,
         'generated_at': now_local().isoformat(timespec='seconds'),
     }

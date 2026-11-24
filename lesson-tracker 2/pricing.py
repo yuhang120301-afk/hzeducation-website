@@ -75,6 +75,8 @@ def schema(c):
     );
     ''')
     seed_2027(c)
+    import teaching
+    teaching.ensure_catalogs(c)
 
 
 def seed_2027(c):
@@ -253,6 +255,10 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
     table = table_on(c, on.isoformat())
     rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
     band = matching_row(rows, product, level) if level else None
+    type_id = student['course_type_id'] if 'course_type_id' in student.keys() else None
+    typed = [row for row in rows if type_id and row.get('course_type_id') == type_id and not row.get('placeholder')]
+    if typed:
+        band = next((row for row in typed if int(row['lesson_minutes'] or 0) == int(lesson_minutes or 0)), typed[0])
     if product == 'term' and band and not minutes:
         minutes = band['lesson_minutes']
         custom = c.execute('''SELECT per_lesson_cents FROM student_prices
@@ -279,6 +285,52 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
     }
 
 
+def save_type_price(c, user, data):
+    """Boss edits the hourly price for one course type. Saving clears the 暂定 mark."""
+    require_owner(user)
+    import accounting
+    import teaching
+    type_id = int(data.get('course_type_id') or 0)
+    kind = c.execute('SELECT name FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone()
+    if not kind:
+        raise ValueError('请选择课程类型。')
+    cents = accounting.money(data.get('hourly'))
+    minutes = int(data.get('lesson_minutes') or 60)
+    if minutes not in LENGTHS:
+        raise ValueError('课时长度无效。')
+    day = dt.date.fromisoformat(str(data.get('effective_from') or now_local().date().isoformat())).isoformat()
+    table = c.execute('SELECT id FROM price_tables WHERE effective_from=?', (day,)).fetchone()
+    if table:
+        table_id = table['id']
+    else:
+        table_id = c.execute('INSERT INTO price_tables(effective_from,label,created_by) VALUES(?,?,?)',
+            (day, day[:4] + ' 价目', user['id'])).lastrowid
+    product = {'一对一': 'one_to_one', '一对二': 'one_to_two', '小班课': 'term'}.get(kind['name'], 'one_to_one')
+    existing = c.execute('''SELECT id FROM price_rows WHERE table_id=? AND course_type_id=? AND lesson_minutes=? AND level_from='Prep' AND level_to='Y12' ''',
+        (table_id, type_id, minutes)).fetchone()
+    if existing:
+        c.execute('UPDATE price_rows SET hourly_cents=?, placeholder=0, product=? WHERE id=?', (cents, product, existing['id']))
+    else:
+        c.execute('''INSERT INTO price_rows(table_id,product,level_from,level_to,hourly_cents,lesson_minutes,course_type_id,placeholder)
+            VALUES(?,?,?,?,?,?,?,0)''', (table_id, product, 'Prep', 'Y12', cents, minutes, type_id))
+    return {'ok': True}
+
+
+def prices_by_type(c):
+    import teaching
+    types = [dict(r) for r in c.execute('SELECT * FROM course_types WHERE active=1 ORDER BY sort_order, id')]
+    rows = [dict(r) for r in c.execute('SELECT * FROM price_rows ORDER BY id')]
+    grouped = []
+    for kind in types:
+        own = [row for row in rows if row.get('course_type_id') == kind['id']]
+        if not own:
+            aliases = [key for key, name in teaching.TYPE_ALIASES.items() if name == kind['name']]
+            own = [row for row in rows if row['product'] in aliases or teaching.TYPE_ALIASES.get(row['product']) == kind['name']]
+        grouped.append({'id': kind['id'], 'name': kind['name'], 'rows': own,
+            'placeholder': not own or any(row.get('placeholder', 1) for row in own)})
+    return grouped
+
+
 def list_prices(c, user):
     require_owner(user)
     tables = []
@@ -289,7 +341,7 @@ def list_prices(c, user):
     custom = [dict(r) for r in c.execute('''SELECT p.*, s.name student_name FROM student_prices p
         JOIN students s ON s.profile_id=p.profile_id
         GROUP BY p.id ORDER BY s.name, p.product, p.lesson_minutes''')]
-    return {'tables': tables, 'custom': custom, 'levels': list(LEVELS), 'terms': TERM_COUNTS, 'products': PRODUCT_LABELS}
+    return {'tables': tables, 'custom': custom, 'levels': list(LEVELS), 'terms': TERM_COUNTS, 'products': PRODUCT_LABELS, 'by_type': prices_by_type(c)}
 
 
 def save_table(c, user, data):
