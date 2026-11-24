@@ -1,11 +1,11 @@
-let weekStart='', teacherFilter='', scheduleStatus='all', profileId='';
+let weekStart='', teacherFilter='', scheduleStatus='all', profileId='', recordTeacher='', recordQuery='';
 const statusName={scheduled:'待上课',completed:'已完成',cancelled:'已取消'};
 const datePlus=(day,n)=>{const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
 const monday=day=>{const n=new Date(day+'T12:00:00Z').getUTCDay();return datePlus(day,-((n+6)%7));};
 const lessonById=id=>state.lessons.find(l=>l.id==id);
 const isStaff=()=>state.user.role!=='parent';
 const formatDate=day=>day.slice(5).replace('-',' / ');
-const lessonStatus=l=>l.status==='scheduled'&&l.ends_at<state.now?'待写课后记录':statusName[l.status];
+const lessonStatus=l=>l.status==='cancelled'?statusName.cancelled:(typeof lessonDone==='function'&&lessonDone(l)?'已完成':l.status==='scheduled'&&l.ends_at<state.now?'待写课后记录':statusName[l.status]);
 function navigationItems(){
  const role=state.user.role;
  if(role==='owner') return [
@@ -132,7 +132,7 @@ function parentCalendar(rows){
 function timeCalendar(rows){
  const days=Array.from({length:7},(_,i)=>datePlus(weekStart,i));
  const hours=rows.map(l=>Number(l.starts_at.slice(11,13)));
- const first=Math.min(8,...hours),last=Math.max(20,...hours);
+ const first=Math.min(7,...(hours.length?hours:[7])),last=Math.max(21,...(hours.length?hours:[21]));
  return `<div class="time-calendar"><table class="time-table"><thead><tr><th class="time-axis">时间</th>${days.map((day,i)=>`<th class="${day===state.today?'calendar-today':''}"><span>${['周一','周二','周三','周四','周五','周六','周日'][i]}</span><strong>${day.slice(5).replace('-',' / ')}</strong></th>`).join('')}</tr></thead><tbody>${Array.from({length:last-first+1},(_,i)=>{
  const hour=String(first+i).padStart(2,'0')+':00';
  return `<tr><th class="time-axis">${hour}</th>${days.map(day=>{
@@ -150,7 +150,7 @@ function lessonColorPicker(l){return `<fieldset class="lesson-color-picker"><leg
 
 function bindLessons(){document.querySelectorAll('[data-lesson-detail]').forEach(b=>b.onclick=()=>lessonDetail(b.dataset.lessonDetail));}
 function renderTeachers(){
- $('#surface').innerHTML=`<section class="teacher-grid">${state.teachers.map(t=>{const upcoming=state.lessons.filter(l=>l.teacher_id===t.id&&l.status==='scheduled').length,managed=t.account_role!=='teacher',canEdit=!managed||state.user.role==='owner';return `<article class="teacher-card"><div class="child-top"><span class="student-icon">${userHTML(t.name.slice(0,1))}</span><div><h2>${userHTML(t.name)}</h2><p>${userHTML(t.subjects.join('、'))}</p><p>${managed?'管理员 / 任课老师':'任课老师'} · ${t.active?'在职':'已离职 / 停用'}</p></div></div><p class="teacher-phone">${userHTML(t.phone)}</p>${!t.active&&upcoming?'<p class="error">仍有未完成课程，请查看课表并调整任课老师。</p>':''}<div class="profile-actions">${canEdit?`<button class="btn" data-teacher-edit="${t.id}">${managed?'编辑教学科目':'编辑老师'}</button>`:''}${!managed?`${state.user.role==='owner'?`<button class="btn refund-action" data-delete-teacher="${t.id}">删除档案</button>`:''}<button class="btn" data-teacher-status="${t.id}">${t.active?'离职 / 停用':'恢复在职'}</button>`:''}</div><div class="teacher-bottom"><span>待完成 <strong>${upcoming}</strong> 节</span><button class="action" data-teacher-calendar="${t.id}">查看课表 →</button></div></article>`;}).join('')}</section><p class="footnote">离职停用后无法登录或接受新排课，历史课程和课后记录保留。</p>`;
+ $('#surface').innerHTML=`<section class="teacher-grid">${state.teachers.map(t=>{const upcoming=state.lessons.filter(l=>l.teacher_id===t.id&&l.status==='scheduled'&&!(typeof lessonDone==='function'&&lessonDone(l))).length,managed=t.account_role!=='teacher',canEdit=!managed||state.user.role==='owner';return `<article class="teacher-card"><div class="child-top"><span class="student-icon">${userHTML(t.name.slice(0,1))}</span><div><h2>${userHTML(t.name)}</h2><p>${userHTML(t.subjects.join('、'))}</p><p>${managed?'管理员 / 任课老师':'任课老师'} · ${t.active?'在职':'已离职 / 停用'}</p></div></div><p class="teacher-phone">${userHTML(t.phone)}</p>${!t.active&&upcoming?'<p class="error">仍有未完成课程，请查看课表并调整任课老师。</p>':''}<div class="profile-actions">${canEdit?`<button class="btn" data-teacher-edit="${t.id}">${managed?'编辑教学科目':'编辑老师'}</button>`:''}${!managed?`${state.user.role==='owner'?`<button class="btn refund-action" data-delete-teacher="${t.id}">删除档案</button>`:''}<button class="btn" data-teacher-status="${t.id}">${t.active?'离职 / 停用':'恢复在职'}</button>`:''}</div><div class="teacher-bottom"><span>待完成 <strong>${upcoming}</strong> 节</span><button class="action" data-teacher-calendar="${t.id}">查看课表 →</button></div></article>`;}).join('')}</section><p class="footnote">离职停用后无法登录或接受新排课，历史课程和课后记录保留。</p>`;
  document.querySelectorAll('[data-teacher-calendar]').forEach(b=>b.onclick=()=>{teacherFilter=b.dataset.teacherCalendar;view='schedule';render();});
  document.querySelectorAll('[data-delete-teacher]').forEach(b=>b.onclick=()=>deleteProfileModal('teacher',state.teachers.find(t=>t.id==b.dataset.deleteTeacher)));
  document.querySelectorAll('[data-teacher-edit]').forEach(b=>b.onclick=()=>teacherModal(state.teachers.find(t=>t.id==b.dataset.teacherEdit)));
@@ -209,10 +209,24 @@ function reportModal(l){
  if(!completed){const b=document.createElement('button');b.type='button';b.className='btn';b.textContent='保存草稿';$('.modal-footer').prepend(b);b.onclick=async()=>{const buttons=[...$('#modal-form').querySelectorAll('button')];buttons.forEach(x=>x.disabled=true);try{await api('reports/draft',reportPayload(l));$('#modal').close();await refresh();toast('草稿已保存，未扣除余额。');}catch(e){$('#modal-error').textContent=e.message;buttons.forEach(x=>x.disabled=false);}};}
 }
 function reportCard(l,r,withAction=true){return `<article class="feedback-card"><div class="feedback-head"><div><h3>${userHTML(r.student_name)} <span>${userHTML(l.title)}</span></h3><p>${l.starts_at.slice(0,10)} · ${userHTML(l.teacher_name)}</p></div><span class="badge ${r.reversed_by?'low':''}">${r.reversed_by?'该笔课时已撤销':`已扣 ${fmt(r.amount)} ${unitFor(r)}`}</span></div><div class="report-block"><h4>学习内容</h4><p>${userHTML(r.content)}</p></div><div class="report-block homework-block"><h4>今日作业</h4><p>${userHTML(r.homework)}</p></div><div class="report-block"><h4>课后反馈</h4><p>${userHTML(r.feedback)}</p></div><div class="feedback-footer"><span>更新于 ${escapeHTML(new Intl.DateTimeFormat(window.uiLocale==='en'?'en-AU':'zh-CN',{timeZone:state.timezone,dateStyle:'short',timeStyle:'short'}).format(new Date(r.updated_at)))}</span>${withAction&&isStaff()?`<button class="action" data-edit-report="${l.id}">修改记录</button>`:''}</div></article>`;}
+function recordMatches(lesson, report){
+ if(recordTeacher && String(lesson.teacher_id)!==String(recordTeacher)) return false;
+ const query=recordQuery.trim().toLowerCase();
+ if(!query) return true;
+ const names=(lesson.students||[]).map(student=>student.name);
+ const blob=[report?.student_name, report?.content, report?.homework, report?.feedback, lesson.title, lesson.teacher_name, ...names].join(' ').toLowerCase();
+ return blob.includes(query);
+}
 function renderFeedback(){
- const published=state.lessons.filter(l=>l.status==='completed').sort((a,b)=>b.starts_at.localeCompare(a.starts_at)),rows=published.flatMap(l=>l.reports.filter(r=>!selected||r.student_id==selected).map(r=>({l,r})));
- const waiting=isStaff()?state.lessons.filter(l=>l.status==='scheduled'&&l.ends_at<=state.now):[];
- $('#surface').innerHTML=`${waiting.length?`<section class="pending-lessons"><h2>待完成记录 <span class="count">${waiting.length}</span></h2>${waiting.map(l=>`<button class="pending-row" data-lesson-detail="${l.id}"><span><strong>${userHTML(l.title)}</strong><small>${l.starts_at.replace('T',' ')} · ${userHTML(l.teacher_name)} · ${l.students.map(s=>userHTML(s.name)).join('、')}</small></span><span>${l.reports.length?'继续草稿':'填写记录'} →</span></button>`).join('')}</section>`:''}<div class="section-head"><h2>已发布记录 <span class="count">${rows.length}</span></h2>${studentFilter()}</div><section class="feedback-grid">${rows.length?rows.map(({l,r})=>reportCard(l,r)).join(''):'<div class="panel empty">还没有发布的课后记录。<br>老师完成课程后，学习内容、作业和反馈会出现在这里。</div>'}</section>`;
+ const done=lesson=>typeof lessonDone==='function'&&lessonDone(lesson);
+ const published=state.lessons.filter(done).sort((a,b)=>b.starts_at.localeCompare(a.starts_at));
+ const rows=published.flatMap(lesson=>lesson.reports.filter(report=>(!selected||report.student_id==selected)&&recordMatches(lesson, report)).map(report=>({l:lesson,r:report})));
+ const waiting=isStaff()?state.lessons.filter(lesson=>lesson.status!=='cancelled'&&!done(lesson)&&lesson.ends_at<=state.now&&recordMatches(lesson)):[];
+ const teacherPick=['owner','admin'].includes(state.user.role)?`<select id="record-teacher" class="select-filter" aria-label="按老师筛选"><option value="">全部老师</option>${(state.teachers||[]).map(teacher=>`<option value="${teacher.id}" ${String(recordTeacher)===String(teacher.id)?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select>`:'';
+ $('#surface').innerHTML=`${waiting.length?`<section class="pending-lessons"><h2>待填写记录 <span class="count">${waiting.length}</span></h2>${waiting.map(l=>`<button class="pending-row" data-lesson-detail="${l.id}"><span><strong>${userHTML(l.title)}</strong><small>${l.starts_at.replace('T',' ')} · ${userHTML(l.teacher_name)} · ${l.students.map(s=>userHTML(s.name)).join('、')}</small></span><span>填写记录 →</span></button>`).join('')}</section>`:''}<div class="section-head record-tools"><h2>已发布记录 <span class="count">${rows.length}</span></h2><label class="calendar-search"><input id="record-search" type="search" placeholder="搜索学生或记录" aria-label="搜索学生或记录" value="${escapeHTML(recordQuery)}"></label>${teacherPick}${studentFilter()}</div><section class="feedback-grid">${rows.length?rows.map(({l,r})=>reportCard(l,r)).join(''):'<div class="panel empty">没有匹配的课后记录。</div>'}</section>`;
+ if($('#record-teacher')) $('#record-teacher').onchange=event=>{recordTeacher=event.target.value;renderFeedback();};
+ const search=$('#record-search');
+ if(search) search.oninput=event=>{const caret=event.target.selectionStart; recordQuery=event.target.value; renderFeedback(); const box=$('#record-search'); if(box){box.focus(); if(caret!=null) box.setSelectionRange(caret, caret);}};
  $('#student-filter').onchange=e=>{selected=e.target.value;renderFeedback();};bindLessons();document.querySelectorAll('[data-edit-report]').forEach(b=>b.onclick=()=>reportModal(lessonById(b.dataset.editReport)));
 }
 
@@ -336,7 +350,8 @@ function initCalendarDragging(){
 function shiftScheduleTime(value,minutes){return new Date(Date.parse(value+'Z')+minutes*60000).toISOString().slice(0,16);}
 function scheduleTimeField(name,label,value){
  const hour=value.slice(11,13),minute=value.slice(14,16),minutes=[...new Set(['00','15','30','45',minute])].sort();
- return `<fieldset class="schedule-time-field" data-time-field="${name}"><legend>${label}</legend><input type="hidden" name="${name}" value="${escapeHTML(value)}"><input type="date" data-time-part="date" aria-label="${label}日期" value="${value.slice(0,10)}" required><div class="schedule-clock"><select data-time-part="hour" aria-label="${label}小时">${Array.from({length:24},(_,i)=>String(i).padStart(2,'0')).map(h=>`<option value="${h}" ${h===hour?'selected':''}>${h}</option>`).join('')}</select><span aria-hidden="true">:</span><select data-time-part="minute" aria-label="${label}分钟">${minutes.map(m=>`<option value="${m}" ${m===minute?'selected':''}>${m}</option>`).join('')}</select></div></fieldset>`;
+ const hours=[...new Set([hour, ...Array.from({length:17},(_,i)=>String(i+7).padStart(2,'0'))])].filter(Boolean).sort();
+ return `<fieldset class="schedule-time-field" data-time-field="${name}"><legend>${label}</legend><input type="hidden" name="${name}" value="${escapeHTML(value)}"><input type="date" data-time-part="date" aria-label="${label}日期" value="${value.slice(0,10)}" required><div class="schedule-clock"><select data-time-part="hour" aria-label="${label}小时">${hours.map(h=>`<option value="${h}" ${h===hour?'selected':''}>${h}</option>`).join('')}</select><span aria-hidden="true">:</span><select data-time-part="minute" aria-label="${label}分钟">${minutes.map(m=>`<option value="${m}" ${m===minute?'selected':''}>${m}</option>`).join('')}</select></div></fieldset>`;
 }
 function initScheduleTimes(){
  const fields=['starts_at','ends_at'].map(name=>{const box=document.querySelector(`[data-time-field="${name}"]`);return {box,value:box.querySelector('input[type=hidden]'),date:box.querySelector('[data-time-part=date]'),hour:box.querySelector('[data-time-part=hour]'),minute:box.querySelector('[data-time-part=minute]')};});

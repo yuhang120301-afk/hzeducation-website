@@ -268,6 +268,26 @@ def datetime_value(value):
         raise ValueError('所选时间有夏令时歧义，请选择其他时间。')
     return parsed
 
+def report_written(report):
+    """A draft or a submitted row counts when it has text or a charged ledger.
+
+    Saving a draft inserts lesson_reports and leaves lessons.status as scheduled.
+    Callers decide "already recorded" from this row, not from that status.
+    """
+    if not report:
+        return False
+    if report.get('ledger_id'):
+        return True
+    return any(str(report.get(key) or '').strip() for key in ('content', 'homework', 'feedback'))
+
+
+def lesson_recorded(lesson):
+    status = str(lesson.get('status') or '').lower()
+    if status in ('completed', 'attended', 'done', 'redeemed'):
+        return True
+    return any(report_written(report) for report in lesson.get('reports') or [])
+
+
 def state_for(c,user):
     role=user['role']
     where, params=('',())
@@ -288,6 +308,7 @@ def state_for(c,user):
                 for report in lesson['reports']:
                     report.pop('fee_cents', None)
                     report.pop('fee_overridden', None)
+        lesson['recorded'] = lesson_recorded(lesson)
     teachers=[]
     if role in ('owner','admin','teacher'):
         tw='' if role in ('owner','admin') else ' WHERE u.id=? AND u.active=1'
@@ -574,6 +595,9 @@ def save_reports(c,user,data,units,action):
             credit_batches.apply(c,ledger_id,'lesson',{},units)
             import payroll
             computed,_,_=payroll.fee_for_ledger(c,ledger_id,amount)
+            if computed is None and not str(fee_amount or '').strip():
+                import pricing
+                computed = pricing.charged_fee_cents(c, sid, lesson, amount)
             if str(fee_amount or '').strip():
                 import accounting
                 c.execute('UPDATE lesson_reports SET ledger_id=?,fee_cents=?,fee_overridden=1 WHERE lesson_id=? AND student_id=?',(ledger_id,accounting.money(fee_amount),lesson['id'],sid))

@@ -460,6 +460,11 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role'] in ('owner','admin'):
                     for person in students:
                         pricing.annotate(person)
+                        if user['role']=='owner':
+                            offer=pricing.legacy_price(c, person)
+                            person['legacy']=offer['legacy']
+                            person['list_hourly_cents']=offer['list_hourly_cents']
+                            person['custom_hourly_cents']=offer['custom_hourly_cents']
                 archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
                 students=[s for s in students if not s['archived']]
                 if user['role']!='owner':
@@ -609,6 +614,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/prices/validity':
                     c.execute('BEGIN IMMEDIATE')
                     result = pricing.save_validity(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
+                if self.path == '/api/prices/legacy':
+                    c.execute('BEGIN IMMEDIATE')
+                    result = pricing.save_legacy_price(c, user, data)
                     c.commit()
                     return self.response(200, result)
                 if self.path == '/api/prices/quote':

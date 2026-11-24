@@ -45,6 +45,33 @@ class OfferTests(unittest.TestCase):
         self.assertEqual(named['T1+T2'], 192375)
         self.assertTrue(all(item['gift_lessons'] == 0 for item in offer['packages']))
 
+    def test_a_different_hourly_price_marks_a_legacy_student(self):
+        owner = {'id': 1, 'role': 'owner'}
+        with server.connect() as c:
+            kind = c.execute("SELECT id FROM course_types WHERE name='一对一'").fetchone()['id']
+            profile = c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+            sid = c.execute('''INSERT INTO students(name,course,parent_id,profile_id,balance,level_code,level_year,course_type_id,billing_unit)
+                VALUES('老学员','数学',1,?,0,'Y6',2026,?,'lesson')''', (profile, kind)).lastrowid
+            def load():
+                return c.execute('''SELECT s.*, ct.name course_type_name FROM students s
+                    JOIN course_types ct ON ct.id=s.course_type_id WHERE s.id=?''', (sid,)).fetchone()
+            self.assertFalse(pricing.legacy_price(c, load())['legacy'])
+            pricing.save_legacy_price(c, owner, {'student_id': sid, 'hourly': '80'})
+            info = pricing.legacy_price(c, load())
+            self.assertTrue(info['legacy'])
+            self.assertEqual(info['custom_hourly_cents'], 8000)
+            offer = pricing.presets(c, owner, student_id=sid, day='2026-11-24')
+            packs = {item['lesson_minutes']: item['total_cents'] for item in offer['packages']}
+            self.assertEqual(offer['hourly_cents'], 8000)
+            self.assertEqual(packs[60], 160000)
+            pricing.save_legacy_price(c, owner, {'student_id': sid, 'hourly': ''})
+            self.assertFalse(pricing.legacy_price(c, load())['legacy'])
+
+    def test_year_code_is_recognised(self):
+        self.assertEqual(pricing.parse_level('Y6'), 'Y6')
+        self.assertEqual(pricing.parse_level('6年级'), 'Y6')
+        self.assertEqual(pricing.remember_level({'grade': 'Y6'}, 'Y6', dt.date(2026, 11, 24)), ('Y6', 2026))
+
     def test_finance_presets_cover_last_month_and_this_year(self):
         start, end = accounting.bounds('last_month', '2026-03-15')
         self.assertEqual((start, end), (dt.date(2026, 2, 1), dt.date(2026, 2, 28)))
