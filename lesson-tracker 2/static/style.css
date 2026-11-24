@@ -136,6 +136,7 @@
 .profile-section{margin-top:18px}
 .profile-section summary{cursor:pointer;font-weight:700;font-size:18px}
 .profile-section:not([open]) .profile-section-body{display:none}
+.list-label{margin:4px 0 8px;font-weight:700}
 .more-records{margin-top:8px}
 .more-records summary{cursor:pointer;color:var(--muted);font-weight:650;font-size:15px}
 .study-tag{display:inline-block;margin-left:8px;background:#E4F0E9;color:#214e3e;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600;vertical-align:middle}

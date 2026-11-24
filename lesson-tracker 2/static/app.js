@@ -170,6 +170,26 @@ function previewList(items, render, emptyText){
  if(items.length<=5) return head;
  return `${head}<details class="more-records"><summary>展开全部 (${items.length})</summary>${items.slice(5).map(render).join('')}</details>`;
 }
+function splitLessonLists(lessons, today){
+ const day=String(today||'');
+ const upcoming=[];
+ const past=[];
+ (lessons||[]).forEach(lesson=>{
+  const when=String(lesson.starts_at||'').slice(0,10);
+  if(lesson.status!=='cancelled' && when>=day) upcoming.push(lesson);
+  else past.push(lesson);
+ });
+ upcoming.sort((a,b)=>String(a.starts_at).localeCompare(String(b.starts_at))||(a.id||0)-(b.id||0));
+ past.sort((a,b)=>String(b.starts_at).localeCompare(String(a.starts_at))||(b.id||0)-(a.id||0));
+ return {upcoming, past};
+}
+/* splitLessonLists:end */
+function lessonTimeline(lessons, render){
+ const parts=splitLessonLists(lessons, state.today||'');
+ const coming=`<p class="list-label">接下来的课</p>${previewList(parts.upcoming, render, '还没有接下来的课。')}`;
+ const gone=parts.past.length?`<details class="more-records past-lessons"><summary>已上过的课 (${parts.past.length})</summary>${previewList(parts.past, render, '')}</details>`:'';
+ return coming+gone;
+}
 function bindProfileSections(){
  document.querySelectorAll('[data-profile-section]').forEach(section=>{
   section.ontoggle=()=>{try{localStorage.setItem('hz-profile-fold:'+section.dataset.profileSection, section.open?'1':'0');}catch(error){}};
@@ -179,7 +199,7 @@ function studentFold(group, admin){
  const person=group[0];
  const stopped=(state.archived_students||[]).filter(account=>account.profile_id===person.profile_id).sort((a,b)=>(b.id||0)-(a.id||0));
  const ids=new Set(group.map(account=>String(account.id)).concat(stopped.map(account=>String(account.id))));
- const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(student=>ids.has(String(student.id)))).sort((a,b)=>b.starts_at.localeCompare(a.starts_at)||(b.id||0)-(a.id||0));
+ const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(student=>ids.has(String(student.id))));
  const payments=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && ['credit','refund'].includes(entry.kind)).sort((a,b)=>(b.lesson_date||'').localeCompare(a.lesson_date||'')||(b.id||0)-(a.id||0));
  const recent=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && entry.kind==='lesson').sort((a,b)=>(b.lesson_date||'').localeCompare(a.lesson_date||'')||(b.id||0)-(a.id||0));
  const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
@@ -197,7 +217,7 @@ function studentFold(group, admin){
  const recentRow=entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${userHTML(entry.student_name)}<small>${userHTML(entry.subject_name||entry.course||'')}</small></div><div class="num">${entry.delta>0?'+':'−'}${fmt(Math.abs(entry.delta))} ${unitFor(entry)}</div></article>`;
  const stoppedRow=account=>`<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b><small>已停课${account.balance?` · 还剩 ${fmt(account.balance)} ${unitFor(account)}`:''}。上课记录和账目仍在。</small></div>${state.user.role==='owner'?`<button class="btn" data-restore-course="${account.id}" type="button">恢复这门课</button>`:''}</article>`;
  const links=`<p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button> ${state.user.role==='owner'?`<button class="action" data-vouchers="${person.id}" type="button">单据 →</button>`:''}</p>`;
- return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''} ${studyTag(person)}</p>${actions}${profileSection('courses','报名与课时包',active.length?enrolments:'<p>未选课 / 请添加课程</p>',true)}${profileSection('recent','最近课时记录',previewList(recent, recentRow, '还没有这名学生的课时记录。'),true)}${profileSection('lessons','上课记录',previewList(lessons, lessonRow, '还没有课。'),true)}${profileSection('payments','收款',previewList(payments, payRow, '还没有收款或退款。'),true)}${profileSection('notes','备注',`<p>${person.notes?userHTML(person.notes):'没有备注。'}</p>${links}`,true)}${stopped.length?profileSection('stopped',`已停课程 (${stopped.length})`,previewList(stopped, stoppedRow, ''),false):''}`;
+ return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''} ${studyTag(person)}</p>${actions}${profileSection('courses','报名与课时包',active.length?enrolments:'<p>未选课 / 请添加课程</p>',true)}${profileSection('recent','最近课时记录',previewList(recent, recentRow, '还没有这名学生的课时记录。'),true)}${profileSection('lessons','上课记录',lessonTimeline(lessons, lessonRow),true)}${profileSection('payments','收款',previewList(payments, payRow, '还没有收款或退款。'),true)}${profileSection('notes','备注',`<p>${person.notes?userHTML(person.notes):'没有备注。'}</p>${links}`,true)}${stopped.length?profileSection('stopped',`已停课程 (${stopped.length})`,previewList(stopped, stoppedRow, ''),false):''}`;
 }
 function renderStudents(){
  const admin=['owner','admin'].includes(state.user.role);
