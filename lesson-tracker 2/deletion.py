@@ -1,5 +1,7 @@
-"""Owner-only deletion of unused, mistakenly created profiles."""
-from teaching import AccessError
+"""Owner-only deletion of unused profiles, and stopping one course."""
+import json
+
+from teaching import AccessError, now_local
 
 
 def referenced(c, target, target_id, ignored=()):
@@ -58,10 +60,97 @@ def remove(c, user, data):
 
 def restore(c, user, data):
     if user['role'] != 'owner':
-        raise AccessError('只有老板可以恢复学生档案。')
+        raise AccessError('只有老板可以恢复课程。')
     student=c.execute('SELECT * FROM students WHERE id=? AND archived=1', (int(data.get('id',0)),)).fetchone()
     if not student:
-        raise ValueError('已归档学生不存在，请刷新页面。')
-    c.execute('UPDATE students SET archived=0 WHERE profile_id=?', (student['profile_id'],))
-    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'],user['id'],'restored'))
+        raise ValueError('已停的课程不存在，请刷新页面。')
+    c.execute('UPDATE students SET archived=0 WHERE id=?', (student['id'],))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'],user['id'],'course_restored'))
     return {'ok':True}
+
+
+def _history(c, sid):
+    if c.execute('SELECT 1 FROM ledger WHERE student_id=?', (sid,)).fetchone():
+        return True
+    if c.execute('SELECT 1 FROM lesson_students WHERE student_id=?', (sid,)).fetchone():
+        return True
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lesson_reports'").fetchone() and c.execute('SELECT 1 FROM lesson_reports WHERE student_id=?', (sid,)).fetchone():
+        return True
+    if c.execute('SELECT 1 FROM credit_batches WHERE student_id=? AND (purchased>0 OR gifted>0 OR paid_left>0 OR gift_left>0)', (sid,)).fetchone():
+        return True
+    return False
+
+
+def _drop_future(c, sid):
+    """Cancel this course's future lessons and stop a series that would keep adding it."""
+    now = now_local().strftime('%Y-%m-%dT%H:%M')
+    lessons = list(c.execute('''SELECT l.id, l.series_id, l.occurrence_index FROM lessons l
+        JOIN lesson_students ls ON ls.lesson_id=l.id
+        WHERE ls.student_id=? AND l.status='scheduled' AND l.starts_at>=?''', (sid, now)))
+    seen = set()
+    for lesson in lessons:
+        others = c.execute('SELECT 1 FROM lesson_students WHERE lesson_id=? AND student_id!=?', (lesson['id'], sid)).fetchone()
+        if others:
+            c.execute('DELETE FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], sid))
+        else:
+            c.execute("UPDATE lessons SET status='cancelled', cancel_reason='停课', version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (lesson['id'],))
+        if lesson['series_id']:
+            seen.add(lesson['series_id'])
+    for rule in c.execute('SELECT * FROM lesson_series'):
+        try:
+            template = json.loads(rule['template'] or '{}')
+        except json.JSONDecodeError:
+            continue
+        raw = template.get('student_ids') or []
+        ids = []
+        for item in raw:
+            try:
+                ids.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        if sid not in ids and rule['id'] not in seen:
+            continue
+        template['student_ids'] = [item for item in raw if str(item) != str(sid)]
+        if template['student_ids']:
+            c.execute("UPDATE lesson_series SET template=?, version=version+1, error='' WHERE id=?", (json.dumps(template), rule['id']))
+            continue
+        indexes = [lesson['occurrence_index'] for lesson in lessons if lesson['series_id'] == rule['id'] and lesson['occurrence_index'] is not None]
+        stop = min(indexes) if indexes else rule['next_index']
+        if rule['stop_index'] is not None:
+            stop = min(stop, rule['stop_index'])
+        c.execute("UPDATE lesson_series SET template=?, endless=0, stop_index=?, version=version+1, error='' WHERE id=?", (json.dumps(template), stop, rule['id']))
+
+
+def _tell_vouchers(c, user, student, deleted):
+    """The receipt book, once it exists, records this stop. Missing module is fine."""
+    try:
+        import vouchers
+    except ImportError:
+        return
+    issue = getattr(vouchers, 'issue_stop', None)
+    if issue:
+        issue(c, user, dict(student), deleted)
+
+
+def stop_course(c, user, data):
+    """Archive one course. A course with no lessons and no ledger is removed instead."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以停课。')
+    sid = int(data.get('student_id') or data.get('id') or 0)
+    student = c.execute('SELECT * FROM students WHERE id=? AND archived=0', (sid,)).fetchone()
+    if not student:
+        raise ValueError('这门课不存在，请刷新页面。')
+    balance = student['balance']
+    if not _history(c, sid):
+        c.execute('DELETE FROM credit_batches WHERE student_id=?', (sid,))
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='arrears'").fetchone():
+            c.execute('DELETE FROM arrears WHERE student_id=?', (sid,))
+        c.execute('DELETE FROM profile_audit WHERE student_id=?', (sid,))
+        c.execute('DELETE FROM students WHERE id=?', (sid,))
+        _tell_vouchers(c, user, student, True)
+        return {'ok': True, 'deleted': True, 'archived': False, 'balance': balance}
+    _drop_future(c, sid)
+    c.execute('UPDATE students SET archived=1 WHERE id=?', (sid,))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (sid, user['id'], 'course_stopped'))
+    _tell_vouchers(c, user, student, False)
+    return {'ok': True, 'deleted': False, 'archived': True, 'balance': balance}

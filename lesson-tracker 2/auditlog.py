@@ -14,6 +14,7 @@ RANK = {
     'lesson_series': 30,
     'price_rows': 40,
     'student_prices': 40,
+    'student_subject_prices': 40,
     'pay_rules': 40,
     'partner_share_rules': 40,
     'cost_schedules': 40,
@@ -45,6 +46,7 @@ PRIMARY = {
     'price_tables': ('id',),
     'price_rows': ('id',),
     'student_prices': ('id',),
+    'student_subject_prices': ('id',),
     'payment_methods': ('code',),
     'arrears': ('id',),
 }

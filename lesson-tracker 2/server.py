@@ -498,18 +498,19 @@ class Handler(BaseHTTPRequestHandler):
                     for person in students:
                         offer=pricing.legacy_price(c, person)
                         person['legacy']=offer['legacy']
+                        person['legacy_subjects']=offer['legacy_subjects']
                         person['list_hourly_cents']=offer['list_hourly_cents']
                         person['custom_hourly_cents']=offer['custom_hourly_cents']
                 if user['role'] == 'teacher':
                     for person in students:
-                        for key in ('parent_email', 'phone', 'contact_phone', 'legacy', 'list_hourly_cents', 'custom_hourly_cents'):
+                        for key in ('parent_email', 'phone', 'contact_phone', 'legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents'):
                             person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('total_cents', None)
                             batch.pop('unit_fees', None)
                 if user['role'] == 'parent':
                     for person in students:
-                        for key in ('legacy', 'list_hourly_cents', 'custom_hourly_cents'):
+                        for key in ('legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents'):
                             person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
@@ -584,6 +585,11 @@ class Handler(BaseHTTPRequestHandler):
                     elif self.path.endswith('/unapprove'): result=vouchers.unapprove(c,user,data.get('id'))
                     elif self.path.endswith('/edit'): result=vouchers.edit(c,user,data,units,text_value)
                     else: result=vouchers.void(c,user,data.get('id'),units)
+                    c.commit()
+                    return self.response(200,result)
+                if self.path == '/api/students/course/stop':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=deletion.stop_course(c,user,data)
                     c.commit()
                     return self.response(200,result)
                 if self.path in ('/api/profiles/delete','/api/profiles/restore'):
