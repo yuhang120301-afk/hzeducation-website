@@ -12,6 +12,7 @@ os.environ['LESSON_SECURE_COOKIE'] = '0'
 
 import payroll
 import server
+import teaching
 
 
 class PayCalculationTests(unittest.TestCase):
@@ -247,6 +248,24 @@ class PayCalculationTests(unittest.TestCase):
             payroll.report(self.c, {'id': 3, 'role': 'parent'}, 'month', '2030-01-06', None, None)
         with self.assertRaises(teaching_access()):
             payroll.report(self.c, {'id': 4, 'role': 'admin'}, 'week', '2030-01-06', None, None)
+
+    def test_a_written_report_counts_without_changing_status(self):
+        self.assertFalse(teaching.report_written({'content': '', 'homework': ' ', 'feedback': '', 'ledger_id': None}))
+        self.assertTrue(teaching.report_written({'content': '分数运算', 'homework': '', 'feedback': '', 'ledger_id': None}))
+        self.assertTrue(teaching.lesson_recorded({'status': 'scheduled', 'reports': [{'content': '分数运算', 'homework': '', 'feedback': ''}]}))
+        self.assertFalse(teaching.lesson_recorded({'status': 'scheduled', 'reports': [{'content': '', 'homework': '', 'feedback': ''}]}))
+        tid, sid = self.teacher('Angela'), self.student('已写记录')
+        batch = self.package(sid, 1, 8000)
+        lid = self.confirmed(tid, sid, '2030-04-02', '16:00', '17:00', 100, batch)
+        self.c.execute("UPDATE lessons SET status='scheduled' WHERE id=?", (lid,))
+        counted = [row['lesson_id'] for row in payroll.confirmed_rows(self.c, date(2030, 4, 1), date(2030, 4, 30))]
+        self.assertIn(lid, counted)
+        draft = self.c.execute('''INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,status,created_by,request_id)
+            VALUES(?,?,?,?,100,'教室','scheduled',1,?)''', (tid, '空草稿', '2030-04-03T16:00', '2030-04-03T17:00', uuid.uuid4().hex)).lastrowid
+        self.c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,updated_by)
+            VALUES(?,?,100,'','','',1)''', (draft, sid))
+        counted = [row['lesson_id'] for row in payroll.confirmed_rows(self.c, date(2030, 4, 1), date(2030, 4, 30))]
+        self.assertNotIn(draft, counted)
 
     def test_csv_is_utf8_with_bom(self):
         tid, sid = self.teacher('Christina'), self.student('学生己')
