@@ -24,7 +24,87 @@ async function api(path, data) {
 }
 function toast(message){$('#toast').textContent=message;$('#toast').style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').style.display='none',3800);}
 async function refresh(){state=await api('state'+(typeof weekStart!=='undefined'&&weekStart?'?through='+encodeURIComponent(datePlus(weekStart,6)):''));render();}
-function render(){if(!state.user)return login();dashboard();}
+const placeKey='hz-scroll-place';
+let placeHold=null, placeTimer=0, placeObserver=null, usedReloadPlace=false;
+function placeText(value){return String(value||'').replace(/\s+/g,' ').trim();}
+function placeDetailsKey(el){
+ const summary=placeText(el.querySelector(':scope > summary')?.innerText).slice(0,60);
+ const card=el.previousElementSibling;
+ const who=card&&card.classList&&card.classList.contains('pay-card')?placeText(card.querySelector('h2')?.innerText).slice(0,40):'';
+ const outer=el.parentElement&&el.parentElement.closest('details');
+ const outerLabel=outer?placeText(outer.querySelector(':scope > summary')?.innerText).slice(0,40):'';
+ return [who, outerLabel, summary].filter(Boolean).join(' / ');
+}
+function placeScrollKey(el){
+ if(el.id) return '#'+el.id;
+ const cls=[...el.classList].slice(0,2).join('.');
+ if(!cls) return '';
+ return cls+':'+[...document.querySelectorAll('.'+cls)].indexOf(el);
+}
+function capturePlace(){
+ const open=[];
+ document.querySelectorAll('details').forEach(el=>{
+  if(!el.open||el.closest('#modal')) return;
+  const key=placeDetailsKey(el);
+  if(key) open.push(key);
+ });
+ const scrolls=[];
+ document.querySelectorAll('main, .content, .gcal-scroll, .time-calendar, .table-wrap, .sidebar').forEach(el=>{
+  if(el.closest('#modal')) return;
+  if((el.scrollTop||0)<1 && (el.scrollLeft||0)<1) return;
+  const key=placeScrollKey(el);
+  if(key) scrolls.push({key, top:el.scrollTop, left:el.scrollLeft});
+ });
+ const place={view:typeof view!=='undefined'?view:'', window:window.scrollY||document.documentElement.scrollTop||0, open, scrolls};
+ try{sessionStorage.setItem(placeKey, JSON.stringify({...place, path:location.pathname}));}catch(error){}
+ return place;
+}
+function restorePlace(place){
+ if(!place) return;
+ document.querySelectorAll('details').forEach(el=>{
+  if(el.closest('#modal')) return;
+  const key=placeDetailsKey(el);
+  if(key && place.open.includes(key)) el.open=true;
+ });
+ for(const item of place.scrolls||[]){
+  const el=item.key.startsWith('#')?document.getElementById(item.key.slice(1)):[...document.querySelectorAll('.'+item.key.split(':')[0])][Number(item.key.split(':')[1])];
+  if(el){el.scrollTop=item.top; el.scrollLeft=item.left;}
+ }
+ window.scrollTo(0, place.window||0);
+}
+function armPlace(place){
+ placeHold=place;
+ const kick=()=>{if(placeHold) restorePlace(placeHold);};
+ kick();
+ requestAnimationFrame(kick);
+ clearTimeout(placeTimer);
+ placeTimer=setTimeout(()=>{placeHold=null;}, 700);
+ if(!placeObserver && document.getElementById('app')){
+  placeObserver=new MutationObserver(()=>{if(placeHold) restorePlace(placeHold);});
+  placeObserver.observe(document.getElementById('app'), {childList:true, subtree:true});
+ }
+}
+function reloadPlace(){
+ try{
+  const nav=performance.getEntriesByType('navigation')[0];
+  if(!nav || nav.type!=='reload') return null;
+  const saved=JSON.parse(sessionStorage.getItem(placeKey)||'null');
+  if(!saved || saved.path!==location.pathname) return null;
+  return saved;
+ }catch(error){return null;}
+}
+function render(){
+ if(!state.user)return login();
+ const shell=document.querySelector('.shell');
+ let place=shell?capturePlace():null;
+ if(!place && !usedReloadPlace){
+  usedReloadPlace=true;
+  place=reloadPlace();
+  if(place && place.view) view=place.view;
+ }
+ dashboard();
+ if(place) armPlace(place);
+}
 function contactCard(){
  const info=state.contact||{};
  const email=info.email||'helenzeducation@gmail.com';
@@ -134,7 +214,7 @@ function modal(title, body, submit, onsubmit, danger=false){
  $('#modal-form').onsubmit=async e=>{e.preventDefault();const button=e.currentTarget.querySelector('[type=submit]');e.currentTarget.querySelectorAll('button').forEach(b=>b.disabled=true);$('#modal-error').textContent='';try{await onsubmit(Object.fromEntries(new FormData(e.currentTarget)));$('#modal').close();await refresh();}catch(err){$('#modal-error').textContent=err.message;$('#modal-form').querySelectorAll('button').forEach(b=>b.disabled=false);}};
  $('#modal').showModal();
 }
-$('#modal').addEventListener('close',()=>lastFocus?.isConnected&&lastFocus.focus());
+$('#modal').addEventListener('close',()=>lastFocus?.isConnected&&lastFocus.focus({preventScroll:true}));
 function entryModal(kind,id){
  if(!state.students.length){toast('请先添加学生。');return studentModal();}
  const isLesson=kind==='lesson', request_id=crypto.randomUUID();
