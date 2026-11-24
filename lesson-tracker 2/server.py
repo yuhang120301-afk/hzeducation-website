@@ -361,6 +361,20 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:return self.response(400,{'error':'单据编号无效。'})
                 rows=[dict(r) for r in c.execute('SELECT e.*,u.name actor_name FROM ledger_edits e JOIN users u ON u.id=e.actor_id WHERE e.ledger_id=? ORDER BY e.id DESC',(ident,))]
                 return self.response(200,{'edits':rows})
+        if path in ('/api/share', '/api/share.csv'):
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    import dividend
+                    params=parse_qs(urlsplit(self.path).query)
+                    result=dividend.report(c,user,params.get('period',['month'])[0],params.get('date',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])
+                    if path.endswith('.csv'):
+                        return self.response(200, dividend.csv_bytes(result), content_type='text/csv; charset=utf-8',
+                            extra=[('Content-Disposition', f'attachment; filename="partner-share-{result["start"]}-to-{result["end"]}.csv"')])
+                    return self.response(200, result)
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path in ('/api/pay', '/api/pay.csv'):
             with connect() as c:
                 user=self.current(c)
