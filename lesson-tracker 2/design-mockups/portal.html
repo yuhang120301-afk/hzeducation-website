@@ -21,10 +21,9 @@ button,input,select{font:inherit;color:inherit}
 button{cursor:default}
 .app{display:grid;grid-template-columns:228px 1fr;min-height:100vh}
 .nav{background:#fff;border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:4px}
-.brand{display:flex;gap:10px;align-items:center;padding:4px 8px 18px}
-.brand img{width:42px;height:42px;object-fit:cover;border-radius:10px}
-.brand strong{display:block;font-size:13px;letter-spacing:.2px}
-.brand span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.brand{display:block;text-align:center;padding:4px 8px 18px}
+.brand img{width:154px;height:154px;object-fit:contain;border-radius:0}
+.brand div,.brand strong{display:none}
 .nav button,.tabbar button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;border-radius:12px;padding:12px;color:var(--muted);font-size:15px}
 .nav button.active{background:var(--green);color:#fff;font-weight:700}
 .nav .more{margin-top:18px;padding:8px 12px 4px;color:var(--faint);font-size:12px;letter-spacing:.4px;border-top:2px solid var(--gold)}
@@ -223,7 +222,7 @@ h1,h2,h3,.top h1,.section h2,.sheet h2,.block h2,.staff h3,.gcal-tools h2{font-w
 button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row b,.mark,.avatar,.day,.back,.field,.exports button,.foot button,.todaybtn,.action .count,.who b,.nav button.active,.gviews .on,.tabbar button.active,.card .k,.lrow .num span,.metrics .k,.lesson time,.lesson time small,.lrow .grow small{font-weight:500}
 .num,.card .n,.metrics .n,.money,.lrow .num,.lesson time,.row b,.block .lead{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
 .lrow .num,.metrics .n,.money{text-align:right}
-.brand strong{font-size:15px;font-weight:600;letter-spacing:-0.01em}
+.brand div,.brand strong{display:none}
 .lrow{font-size:15px}
 .lrow .num{font-size:15px;font-weight:500}
 .lesson,.card,.action,.list,.search,.block,.payline{border-radius:8px}
