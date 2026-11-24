@@ -59,6 +59,8 @@ def schema(c):
     ''')
     if 'color' not in {r['name'] for r in c.execute('PRAGMA table_info(lessons)')}:
         c.execute("ALTER TABLE lessons ADD COLUMN color TEXT NOT NULL DEFAULT 'green'")
+    if 'updated_at' not in {r['name'] for r in c.execute('PRAGMA table_info(lessons)')}:
+        c.execute("ALTER TABLE lessons ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
     if 'subjects' not in {r['name'] for r in c.execute('PRAGMA table_info(teachers)')}:
         c.execute("ALTER TABLE teachers ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
     c.execute("INSERT OR IGNORE INTO teachers(user_id) SELECT id FROM users WHERE role='admin'")
@@ -230,7 +232,8 @@ def save_lesson(c,user,data,units,text_value):
         raise ValueError('结束时间必须晚于开始时间，单次课程最长 12 小时。')
     start,end=start.strftime('%Y-%m-%dT%H:%M'),end.strftime('%Y-%m-%dT%H:%M')
     raw=data.get('student_ids')
-    if not isinstance(raw,list) or not 1<=len(raw)<=30:
+    allow_empty=bool(data.get('allow_empty'))
+    if not isinstance(raw,list) or len(raw)>30 or (not allow_empty and len(raw)<1):
         raise ValueError('每节课请选择 1–30 位学生。')
     members=sorted(set(int(x) for x in raw))
     profile_ids=[]
@@ -291,7 +294,8 @@ def cancel_lesson(c,user,data,text_value):
         c.execute("UPDATE lesson_series SET stop_index=MIN(COALESCE(stop_index,?),?),error='',version=version+1 WHERE id=?",(lesson['occurrence_index'],lesson['occurrence_index'],lesson['series_id']))
     elif lesson['series_id']:
         c.execute('UPDATE lesson_series SET version=version+1 WHERE id=?',(lesson['series_id'],))
-    apply_late_leave(c, lesson)
+    if not data.get('waive_leave'):
+        apply_late_leave(c, lesson)
     return {'ok':True}
 
 def apply_late_leave(c, lesson):

@@ -29,6 +29,15 @@ from urllib.parse import urlsplit, parse_qs
 ROOT = Path(__file__).resolve().parent
 DB_PATH = os.environ.get('LESSON_DB', str(ROOT / 'data' / 'lessons.sqlite3'))
 DEMO = os.environ.get('LESSON_DEMO') == '1'
+
+def demo_seed_allowed():
+    """Sample students are only for a local demo file, never the production disk."""
+    if os.environ.get('LESSON_DEMO') != '1':
+        return False
+    db = os.path.realpath(os.environ.get('LESSON_DB', DB_PATH))
+    if db == '/var/data/lessons.sqlite3' or db.startswith('/var/data/'):
+        return False
+    return True
 SECURE = os.environ.get('LESSON_SECURE_COOKIE') == '1'
 ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HZ Education Melbourne')[:60]
 NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
@@ -100,7 +109,7 @@ def initialize():
         );
         CREATE INDEX IF NOT EXISTS ledger_student ON ledger(student_id,id);
         ''')
-        if DEMO and not c.execute('SELECT 1 FROM users LIMIT 1').fetchone():
+        if demo_seed_allowed() and not c.execute('SELECT 1 FROM users LIMIT 1').fetchone():
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(1,?,?,?,?)', ('0400000000', 'Helen 老师', password_hash('TeacherDemo2026!'), 'admin'))
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(2,?,?,?,?)', ('0400000001', '陈同学家长', password_hash('ParentDemo2026!'), 'parent'))
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(3,?,?,?,?)', ('0400000002', '其他学生家长', password_hash(secrets.token_urlsafe(24)), 'parent'))
@@ -110,7 +119,7 @@ def initialize():
                 c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,?,?,?,1,?)',(sid,-used,'lesson','2026-09-20','示例：历史上课汇总',secrets.token_hex(16)))
         c.execute('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         teaching.schema(c)
-        if DEMO and not c.execute("SELECT 1 FROM app_meta WHERE key='teaching_demo_v1'").fetchone():
+        if demo_seed_allowed() and not c.execute("SELECT 1 FROM app_meta WHERE key='teaching_demo_v1'").fetchone():
             demo_teacher=c.execute("SELECT id FROM users WHERE phone='0400000003'").fetchone()
             if not demo_teacher:
                 uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'parent')",('0400000003','Emma 老师',password_hash('TutorDemo2026!'))).lastrowid
@@ -123,11 +132,11 @@ def initialize():
                         lid=c.execute('INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,created_by,request_id) VALUES(?,?,?,?,?,?,?,?)',(tid,'数学 · 一对一',f'{day}T{hour}:00',f'{day}T{hour+1}:00',100,'教室 1',admin['id'],secrets.token_hex(16))).lastrowid
                         c.execute('INSERT INTO lesson_students VALUES(?,?)',(lid,student['id']))
             c.execute("INSERT INTO app_meta VALUES('teaching_demo_v1','1')")
-        accounting.schema(c,DEMO)
+        accounting.schema(c, demo_seed_allowed())
         profiles.schema(c)
         credit_batches.schema(c)
         record_edits.schema(c)
-        if DEMO and not c.execute("SELECT 1 FROM app_meta WHERE key='owner_demo_v1'").fetchone():
+        if demo_seed_allowed() and not c.execute("SELECT 1 FROM app_meta WHERE key='owner_demo_v1'").fetchone():
             if not c.execute("SELECT 1 FROM users WHERE phone='0400000004'").fetchone():
                 uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'admin')",('0400000004','Amy 管理员',password_hash('AdminDemo2026!'))).lastrowid
                 c.execute('INSERT INTO teachers(user_id) VALUES(?)',(uid,))
@@ -135,7 +144,7 @@ def initialize():
         payroll.schema(c)
         pricing.schema(c)
         auditlog.schema(c)
-        if DEMO:
+        if demo_seed_allowed():
             seed_portal_cast(c)
 
 def seed_portal_cast(c):

@@ -63,8 +63,33 @@ def schema(c):
     c.execute('CREATE INDEX IF NOT EXISTS audit_actor ON audit_log(actor_id, id)')
 
 
+# sqlite3.Connection has no instance dictionary, so the before-image cannot live on it.
+_PENDING = []
+
+
+def _slot(c):
+    alive = []
+    found = None
+    for item in _PENDING:
+        conn, data = item
+        if conn is c:
+            found = data
+            alive.append(item)
+            continue
+        try:
+            conn.execute('SELECT 1')
+        except Exception:
+            continue
+        alive.append(item)
+    _PENDING[:] = alive
+    if found is None:
+        found = {'before': None, 'hint': ''}
+        _PENDING.append([c, found])
+    return found
+
+
 def hint(c, text):
-    c.audit_hint = str(text or '')[:200]
+    _slot(c)['hint'] = str(text or '')[:200]
 
 
 def _key(row, columns):
@@ -91,7 +116,7 @@ def snapshot(c):
 
 
 def begin(c):
-    c.audit_before = snapshot(c)
+    _slot(c)['before'] = snapshot(c)
 
 
 def _summary(ops, hint_text):
@@ -119,8 +144,11 @@ def _action(ops):
 
 
 def finish(c, user):
-    before = getattr(c, 'audit_before', None)
-    c.audit_before = None
+    slot = _slot(c)
+    before = slot.get('before')
+    hint_text = slot.get('hint', '')
+    slot['before'] = None
+    slot['hint'] = ''
     if not user or before is None:
         return None
     after = snapshot(c)
@@ -136,8 +164,7 @@ def finish(c, user):
                 ops.append({'op': 'update', 'table': table, 'pk': list(zip(columns, key)), 'before': old[key], 'after': new[key], 'rank': RANK[table]})
     if not ops:
         return None
-    summary = _summary(ops, getattr(c, 'audit_hint', ''))
-    c.audit_hint = ''
+    summary = _summary(ops, hint_text)
     return c.execute('INSERT INTO audit_log(actor_id,action,summary,ops_json) VALUES(?,?,?,?)',
         (user['id'], _action(ops), summary, json.dumps(ops, ensure_ascii=False, default=str))).lastrowid
 
