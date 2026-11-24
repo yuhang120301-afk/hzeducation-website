@@ -269,9 +269,11 @@
   saved.last=output;originals.set(node,saved);
  }
  function controls(){
-  if(!document.getElementById('language-control')){
-   const button=document.createElement('button');button.id='language-control';button.className='language-floating';button.setAttribute('data-language-control','');document.body.append(button);
-  }
+  let button=document.getElementById('language-control');
+  if(!button){button=document.createElement('button');button.id='language-control';button.type='button';button.setAttribute('data-language-control','');}
+  const host=document.querySelector('.account')||document.querySelector('.login-box')||document.body;
+  if(button.parentElement!==host) host.append(button);
+  button.className=host===document.body?'language-floating':'language-inline';
   const head=document.querySelector('dialog[open] .modal-head');
   if(head&&!head.querySelector('[data-language-control]')){const button=document.createElement('button');button.type='button';button.className='language-inline';button.setAttribute('data-language-control','');head.insertBefore(button,head.querySelector('.close'));}
   document.querySelectorAll('[data-language-control]').forEach(button=>{const label=window.uiLocale==='en'?'中文':'English';if(button.textContent!==label)button.textContent=label;button.setAttribute('aria-label',window.uiLocale==='en'?'Switch to Chinese':'切换为英文');button.onclick=()=>{window.uiLocale=window.uiLocale==='en'?'zh':'en';try{localStorage.setItem('helens-language',window.uiLocale);}catch{}apply();};});

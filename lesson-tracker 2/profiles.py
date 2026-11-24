@@ -47,6 +47,8 @@ def student(c,data):
     return row
 
 def update(c,user,data,text_value):
+    import payroll
+    payroll.reject_original_flag(user, data)
     require_admin(user)
     s=student(c,data)
     name=text_value(data.get('name'),'学生姓名',40)
@@ -82,6 +84,8 @@ def guardian(c,user,data,text_value,phone_value,password_hash):
 
 
 def add_course(c,user,data,text_value):
+    import payroll
+    payroll.reject_original_flag(user, data)
     require_admin(user)
     s=student(c,data)
     course=text_value(data.get('course'),'课程名称',80)
@@ -90,7 +94,8 @@ def add_course(c,user,data,text_value):
     if c.execute('SELECT 1 FROM students WHERE profile_id=? AND course=?',(s['profile_id'],course)).fetchone():
         raise ValueError('这位学生已有关联课程，无需重复添加。')
     sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
-    c.execute('UPDATE students SET billing_unit=? WHERE id=?',(s['billing_unit'],sid))
+    created=s['helen_original'] if 'helen_original' in s.keys() else 0
+    c.execute('UPDATE students SET billing_unit=?,helen_original=? WHERE id=?',(s['billing_unit'],created,sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
     return {'ok':True,'student_id':sid}
 
