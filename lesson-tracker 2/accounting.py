@@ -16,6 +16,22 @@ def schema(c,demo=False):
         recorded_by INTEGER NOT NULL REFERENCES users(id),
         recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS payment_methods (
+        code TEXT PRIMARY KEY, label TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
+        system INTEGER NOT NULL DEFAULT 0
+    )''')
+    cash_cols={r['name'] for r in c.execute('PRAGMA table_info(cash_entries)')}
+    if 'received_by' not in cash_cols:
+        c.execute('ALTER TABLE cash_entries ADD COLUMN received_by INTEGER REFERENCES users(id)')
+    if 'handed_over' not in cash_cols:
+        c.execute('ALTER TABLE cash_entries ADD COLUMN handed_over INTEGER NOT NULL DEFAULT 1')
+    if 'handed_over_on' not in cash_cols:
+        c.execute('ALTER TABLE cash_entries ADD COLUMN handed_over_on TEXT')
+    for code,label,active,sort_order,system in (
+        ('bank','银行转账',1,10,1),('card','刷卡',1,20,1),('alipay','支付宝',1,30,0),
+        ('wechat','微信',1,40,0),('cash','现金',1,50,1),('gift','赠课 / 无收款',1,90,1)):
+        c.execute('INSERT OR IGNORE INTO payment_methods(code,label,active,sort_order,system) VALUES(?,?,?,?,?)',(code,label,active,sort_order,system))
     if demo:
         c.execute("INSERT OR IGNORE INTO organization_owners SELECT id FROM users WHERE phone='0400000000' AND role='admin'")
 
@@ -60,7 +76,13 @@ def bounds(period,day):
         start=day-dt.timedelta(days=day.weekday());end=start+dt.timedelta(days=6)
     elif period=='month':
         start=day.replace(day=1);end=day.replace(day=calendar.monthrange(day.year,day.month)[1])
-    else:raise ValueError('请选择日、周或月。')
+    elif period=='fortnight':
+        monday=day-dt.timedelta(days=day.weekday())
+        anchor=dt.date(2024,1,1)
+        if ((monday-anchor).days//7)%2:
+            monday-=dt.timedelta(days=7)
+        start,end=monday,monday+dt.timedelta(days=13)
+    else:raise ValueError('请选择日、周、双周或月。')
     return start,end
 
 def blank_totals():
@@ -109,6 +131,7 @@ def reconciliation(c,user,period,day):
     for row in rows:
         unit=row['billing_unit'];add_row(by_unit[unit],row);add_row(daily[row['lesson_date']]['by_unit'][unit],row)
     totals['by_unit']=by_unit
+    cash=cash_breakdown(c,start,end)
     unit_balances=[]
     for unit in ('lesson','hour'):
         opening_unit=c.execute('SELECT COALESCE(SUM(l.delta),0) FROM ledger l JOIN students s ON s.id=l.student_id WHERE l.lesson_date<? AND s.billing_unit=?',(start.isoformat(),unit)).fetchone()[0]
@@ -118,6 +141,7 @@ def reconciliation(c,user,period,day):
     return {'period':period,'start':start.isoformat(),'end':end.isoformat(),'timezone':TIMEZONE,
         'unit_balances':unit_balances,'opening_units':opening,'closing_units':opening+totals['net_units'],
         'totals':totals,'daily':list(daily.values()),'rows':rows,'balance_check':mismatches==0,
+        'by_method':cash['by_method'],'by_receiver':cash['by_receiver'],'unhanded':cash['unhanded'],
         'generated_at':now_local().isoformat(timespec='seconds')}
 
 def money(raw):
@@ -129,18 +153,133 @@ def money(raw):
     except (InvalidOperation,ValueError):
         raise ValueError('请输入有效的澳元金额，最多两位小数，且不超过 1,000,000。')
 
-def cash_details(data):
+def cash_details(data, c=None):
     cents=money(data.get('cash_amount'))
     method=str(data.get('payment_method','')).strip()
     reference=str(data.get('reference','')).strip()
-    if method not in ('bank','cash','card','other','gift'):
+    legacy=('bank','cash','card','other','gift')
+    if c is not None:
+        row=c.execute('SELECT active FROM payment_methods WHERE code=?',(method,)).fetchone()
+        if row is None and method not in legacy:
+            raise ValueError('请选择收付款方式。')
+        if row is not None and not row['active'] and method!='gift':
+            raise ValueError('这种收款方式已停用。')
+    elif method not in legacy:
         raise ValueError('请选择收付款方式。')
     if len(reference)>100:
         raise ValueError('凭证号或转账备注最多 100 个字。')
     return cents,method,reference
 
-def record_cash(c,ledger_id,cents,method,reference,actor):
-    c.execute('INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by) VALUES(?,?,?,?,?)',(ledger_id,cents,method,reference,actor))
+def record_cash(c,ledger_id,cents,method,reference,actor,received_by=None,handed_over=None,handed_over_on=None):
+    if received_by is None:
+        received_by=actor
+    if handed_over is None:
+        handed_over=1
+    c.execute('''INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by,received_by,handed_over,handed_over_on)
+        VALUES(?,?,?,?,?,?,?,?)''',(ledger_id,cents,method,reference,actor,received_by,int(bool(handed_over)),handed_over_on or None))
+
+def is_owner_user(c, uid):
+    return c.execute('SELECT 1 FROM organization_owners WHERE user_id=?',(uid,)).fetchone() is not None
+
+def resolve_receiver(c, raw, actor):
+    if raw in (None,'',0,'0'):
+        return actor['id']
+    uid=int(raw)
+    row=c.execute('''SELECT u.id FROM users u
+        LEFT JOIN teachers t ON t.user_id=u.id
+        LEFT JOIN organization_owners o ON o.user_id=u.id
+        WHERE u.id=? AND u.active=1 AND (u.role='admin' OR t.id IS NOT NULL OR o.user_id IS NOT NULL)''',(uid,)).fetchone()
+    if not row:
+        raise ValueError('请选择收款人。')
+    return uid
+
+def receipt_meta(c, user, data, when):
+    received=resolve_receiver(c, data.get('received_by'), user)
+    if 'handed_over' in data and data.get('handed_over') not in (None,''):
+        handed=data.get('handed_over') in (True,1,'1','true','on','yes')
+    else:
+        handed=is_owner_user(c, received)
+    return {'received_by':received,'handed_over':1 if handed else 0,'handed_over_on':when if handed else None}
+
+def method_label(c, code):
+    row=c.execute('SELECT label FROM payment_methods WHERE code=?',(code,)).fetchone()
+    return row['label'] if row else (code or '')
+
+def cash_breakdown(c, start, end):
+    rows=c.execute('''SELECT cash.*, u.name receiver_name, l.lesson_date, l.kind, l.student_id, s.name student_name, s.course
+        FROM cash_entries cash JOIN ledger l ON l.id=cash.ledger_id
+        LEFT JOIN users u ON u.id=cash.received_by
+        LEFT JOIN students s ON s.id=l.student_id
+        WHERE l.lesson_date>=? AND l.lesson_date<=?
+          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=l.id)''',(start.isoformat(),end.isoformat())).fetchall()
+    by_method, by_receiver = {}, {}
+    received=refunded=0
+    for row in rows:
+        if row['cash_delta']>0:
+            received+=row['cash_delta']
+        elif row['cash_delta']<0:
+            refunded-=row['cash_delta']
+        if row['cash_delta']<=0:
+            continue
+        bucket=by_method.setdefault(row['payment_method'], {'code':row['payment_method'],'label':method_label(c,row['payment_method']),'cents':0})
+        bucket['cents']+=row['cash_delta']
+        key=row['received_by'] or 0
+        person=by_receiver.setdefault(key, {'user_id':row['received_by'],'name':row['receiver_name'] or '未填写','cents':0,'unhanded_cents':0})
+        person['cents']+=row['cash_delta']
+        if not row['handed_over']:
+            person['unhanded_cents']+=row['cash_delta']
+    outstanding=[dict(r) for r in c.execute('''SELECT cash.ledger_id, cash.cash_delta, cash.payment_method, cash.reference,
+        cash.received_by, u.name receiver_name, l.lesson_date, s.name student_name, s.course
+        FROM cash_entries cash JOIN ledger l ON l.id=cash.ledger_id
+        LEFT JOIN users u ON u.id=cash.received_by LEFT JOIN students s ON s.id=l.student_id
+        WHERE cash.handed_over=0 AND cash.cash_delta>0
+          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=l.id)
+        ORDER BY l.lesson_date, cash.ledger_id''')]
+    for item in outstanding:
+        item['method_label']=method_label(c, item['payment_method'])
+    return {'received_cents':received,'refunded_cents':refunded,'by_method':list(by_method.values()),
+        'by_receiver':list(by_receiver.values()),'unhanded':outstanding}
+
+def payment_method_list(c):
+    return [dict(r) for r in c.execute('SELECT * FROM payment_methods ORDER BY sort_order, code')]
+
+def save_payment_method(c, user, data):
+    require_owner(user)
+    code=str(data.get('code') or '').strip().lower()
+    label=str(data.get('label') or '').strip()
+    if not code or not __import__('re').fullmatch(r'[a-z0-9_-]{1,20}', code):
+        raise ValueError('方式代码只能用小写英文、数字、下划线或短横线。')
+    if not label or len(label)>40:
+        raise ValueError('方式名称不能为空，且不能超过 40 个字。')
+    if code=='gift' and data.get('active') is False:
+        raise ValueError('赠课方式要留着，纯赠课才有地方记。')
+    active=1 if data.get('active', True) else 0
+    existing=c.execute('SELECT * FROM payment_methods WHERE code=?',(code,)).fetchone()
+    if existing:
+        c.execute('UPDATE payment_methods SET label=?, active=? WHERE code=?',(label, active, code))
+    else:
+        sort=c.execute('SELECT COALESCE(MAX(sort_order),0)+10 FROM payment_methods').fetchone()[0]
+        c.execute('INSERT INTO payment_methods(code,label,active,sort_order,system) VALUES(?,?,?,?,0)',(code,label,active,sort))
+    return {'ok':True}
+
+def mark_handover(c, user, data):
+    require_owner(user)
+    raw=data.get('ledger_ids')
+    if not isinstance(raw, list) or not raw:
+        raise ValueError('请选择要上交的收款。')
+    ids=[int(x) for x in raw]
+    handed=data.get('handed_over')
+    if type(handed) is not bool:
+        raise ValueError('请选择已上交或取消上交。')
+    when=str(data.get('date') or now_local().date().isoformat())
+    dt.date.fromisoformat(when)
+    marks=','.join('?' for _ in ids)
+    found=c.execute(f'SELECT COUNT(*) FROM cash_entries WHERE ledger_id IN ({marks})', ids).fetchone()[0]
+    if found!=len(set(ids)):
+        raise ValueError('有收款记录不存在。')
+    c.execute(f'UPDATE cash_entries SET handed_over=?, handed_over_on=? WHERE ledger_id IN ({marks})',
+        [int(handed), when if handed else None, *ids])
+    return {'ok':True}
 
 def supplement_cash(c,user,data):
     require_owner(user)

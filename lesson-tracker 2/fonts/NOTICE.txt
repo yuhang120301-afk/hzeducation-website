@@ -1,0 +1,3 @@
+DroidSansFallbackFull.ttf
+Copyright Google Inc. Licensed under the Apache License, Version 2.0.
+Used so exported PDF statements can include Chinese text.
