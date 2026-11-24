@@ -10,6 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from teaching import AccessError, now_local
 
 LEVELS = ('K', 'Prep', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'Y7', 'Y8', 'Y9', 'Y10', 'Y11', 'Y12')
+ENROL_YEAR = 2027
 PRODUCTS = ('one_to_one', 'one_to_two', 'helen', 'term')
 PRODUCT_LABELS = {'one_to_one': '1:1', 'one_to_two': '1:2', 'helen': 'Helen 本人 1:1', 'term': '学期班'}
 TERM_COUNTS = {'T1': 8, 'T2': 10, 'T3': 9, 'T4': 10}
@@ -45,6 +46,8 @@ def schema(c):
         c.execute("ALTER TABLE students ADD COLUMN level_code TEXT NOT NULL DEFAULT ''")
     if 'level_year' not in cols:
         c.execute('ALTER TABLE students ADD COLUMN level_year INTEGER NOT NULL DEFAULT 0')
+    if 'study_level' not in cols:
+        c.execute("ALTER TABLE students ADD COLUMN study_level TEXT NOT NULL DEFAULT ''")
     c.executescript('''
     CREATE TABLE IF NOT EXISTS price_tables (
         id INTEGER PRIMARY KEY,
@@ -254,7 +257,7 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
         student = c.execute('SELECT * FROM students WHERE id=? AND archived=0', (int(student_id),)).fetchone()
         if not student:
             raise ValueError('学生不存在。')
-        level = annotate(dict(student), on)['level_now'] or level
+        level = annotate(dict(student), on)['level_price'] or level
         course_type_id = course_type_id or student['course_type_id']
     name = ''
     if course_type_id:
@@ -338,7 +341,7 @@ def legacy_price(c, student, on=None):
         kind = c.execute('SELECT name FROM course_types WHERE id=?', (student['course_type_id'],)).fetchone()
         name = kind['name'] if kind else ''
     product = TYPE_PRODUCT.get(name)
-    level = student.get('level_now') or ''
+    level = student.get('level_price') or student.get('level_now') or ''
     subject = subject_of(c, student)
     table = table_on(c, on.isoformat())
     rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
@@ -468,41 +471,100 @@ def parse_level(text):
     return ''
 
 
-def shift_level(code, years):
+def move_level(code, years):
+    """Shift a level by whole years. Below K stays K. Above Year 12 stays Year 12 and is marked past."""
     if code not in LEVELS:
-        return ''
+        return '', False
     index = LEVELS.index(code) + int(years)
-    return LEVELS[max(0, min(len(LEVELS) - 1, index))]
+    past = index > LEVELS.index('Y12')
+    index = max(0, min(LEVELS.index('Y12'), index))
+    return LEVELS[index], past
+
+
+def shift_level(code, years):
+    shown, _past = move_level(code, years)
+    return shown
+
+
+def stored_level(student):
+    """The saved code is the 2027 enrolment year. grade text is the same value when the code is empty."""
+    code = str((student or {}).get('level_code') or '').strip()
+    if code in LEVELS:
+        return code
+    return parse_level((student or {}).get('grade'))
+
+
+def calendar_level(code, on):
+    """Level in the calendar year of `on`. 2027 Year 5 is Year 4 throughout 2026."""
+    if code not in LEVELS:
+        return '', False
+    return move_level(code, on.year - ENROL_YEAR)
+
+
+def price_level(code, on, study_level=''):
+    """Renewal price uses that date's year. A higher 学习年级 replaces it. A lower one does not."""
+    shown, past = calendar_level(code, on)
+    override = study_level if study_level in LEVELS else parse_level(study_level)
+    if override in LEVELS and shown in LEVELS and LEVELS.index(override) > LEVELS.index(shown):
+        return override, past
+    return shown, past
+
+
+def level_label(code, past=False):
+    if code == 'K':
+        text = 'K'
+    elif code == 'Prep':
+        text = 'Prep'
+    elif code and code.startswith('Y') and code[1:].isdigit():
+        text = 'Year ' + code[1:]
+    else:
+        text = code or ''
+    if past and text:
+        text += ' · 已毕业?'
+    return text
 
 
 def current_level(code, level_year, on=None):
-    """Year levels move up on 1 January. The stored code is the level in level_year."""
+    """Display level for a stored 2027 code. level_year is not rewritten and is not used."""
     if code not in LEVELS:
         return ''
     on = on or now_local().date()
-    base = int(level_year or on.year)
-    return shift_level(code, on.year - base)
+    shown, _past = calendar_level(code, on)
+    return shown
 
 
 def annotate(student, on=None):
     on = on or now_local().date()
-    code = student.get('level_code') or ''
-    if code in LEVELS and int(student.get('level_year') or 0):
-        student['level_now'] = current_level(code, student.get('level_year'), on)
-    else:
-        student['level_now'] = parse_level(student.get('grade'))
+    code = stored_level(student)
+    shown, past = calendar_level(code, on) if code else ('', False)
+    priced, past = price_level(code, on, student.get('study_level') or '') if code else ('', False)
+    student['level_stored'] = code
+    student['level_calendar'] = shown
+    student['level_price'] = priced
+    student['level_now'] = priced
+    student['level_past'] = past
+    student['level_label'] = level_label(priced, past)
     return student
 
 
 def remember_level(data, grade, today=None):
-    """The value typed today is this year's level. Next January it moves up on its own."""
-    today = today or now_local().date()
+    """The value in the form is the 2027 year. Later years are calculated, not stored."""
     code = str(data.get('level_code') or '').strip() or parse_level(grade)
     if code and code not in LEVELS:
         raise ValueError('请选择年级。')
     if not code:
         return '', 0
-    return code, today.year
+    return code, ENROL_YEAR
+
+
+def clean_study_level(value):
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    code = text if text in LEVELS else parse_level(text)
+    if code not in LEVELS:
+        raise ValueError('请选择学习年级。')
+    return code
 
 
 def length_label(minutes):
