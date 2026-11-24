@@ -27,8 +27,8 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = os.environ.get('LESSON_DB', str(ROOT / 'data' / 'lessons.sqlite3'))
 DEMO = os.environ.get('LESSON_DEMO') == '1'
 SECURE = os.environ.get('LESSON_SECURE_COOKIE') == '1'
-ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HELEN’S MATH SECRETS')[:60]
-NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HELEN’S MATH SECRETS</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
+ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HZ Education Melbourne')[:60]
+NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
 
 def contact_details():
     return {'phone':os.environ.get('LESSON_CONTACT_PHONE','').strip()[:40],'email':os.environ.get('LESSON_CONTACT_EMAIL','').strip()[:80],'wechat':os.environ.get('LESSON_CONTACT_WECHAT','').strip()[:60]}
@@ -273,7 +273,7 @@ class Handler(BaseHTTPRequestHandler):
         mime = {'html':'text/html; charset=utf-8','js':'application/javascript; charset=utf-8','css':'text/css; charset=utf-8','svg':'image/svg+xml','jpg':'image/jpeg'}[name.rsplit('.',1)[1]]
         content = (ROOT/'static'/name).read_bytes()
         if name == 'index.html':
-            content = content.decode().replace('课时簿 · 每一节，都有记录',html.escape(ORG_NAME)+' · 课时管理').encode()
+            content = content.decode().replace('<title>HZ Education Melbourne</title>','<title>'+html.escape(ORG_NAME)+'</title>').encode()
         return self.response(200,content,content_type=mime)
 
     def do_POST(self):

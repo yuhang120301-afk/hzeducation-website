@@ -65,7 +65,7 @@ def xlsx_bytes(sheets):
 
 def finance_rows(data):
     summary = [
-        ['财务报表', data['start'], data['end'], '金额为澳元，不含 GST'],
+        ['HZ Education Melbourne', data['start'], data['end'], '金额为澳元，不含 GST'],
         ['上课营业额', aud(data['turnover_cents'])],
         ['本期实收（另列，不重复计入利润）', aud(data['cash_received_cents'])],
         ['本期实退', aud(data['cash_refunded_cents'])],
@@ -105,7 +105,7 @@ def finance_pdf(data):
     pdf.add_font('Droid', '', str(FONT))
     pdf.add_page()
     pdf.set_font('Droid', size=18)
-    pdf.cell(0, 12, '财务报表', new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(0, 12, 'HZ Education Melbourne', new_x='LMARGIN', new_y='NEXT')
     pdf.set_font('Droid', size=11)
     pdf.cell(0, 8, f"{data['start']} 至 {data['end']}    澳元，不含 GST", new_x='LMARGIN', new_y='NEXT')
     pdf.ln(2)

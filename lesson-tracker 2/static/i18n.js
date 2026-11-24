@@ -281,7 +281,7 @@
  function apply(){
   observer.disconnect();
   document.documentElement.lang=window.uiLocale==='en'?'en':'zh-CN';
-  document.title='HELEN’S MATH SECRETS · '+(window.uiLocale==='en'?'Learning portal':'教学管理');
+  document.title='HZ Education Melbourne';
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   let node;while((node=walker.nextNode()))translateNode(node);
   document.querySelectorAll('[placeholder],[aria-label],[title]').forEach(el=>{

@@ -13,7 +13,7 @@ const icons = {
  arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>'
 };
 const icon = k => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[k]||icons.book}</svg>`;
-const brand = () => `<div class="brand"><img src="/logo.jpg" alt="HELEN’S MATH SECRETS"><div>${escapeHTML(state.organization || 'HELEN’S MATH SECRETS')}<small>课时管理</small></div></div>`;
+const brand = () => `<div class="brand"><img src="/logo.jpg" alt=""><div>${escapeHTML(state.organization || 'HZ Education Melbourne')}<small>课时管理</small></div></div>`;
 let state = {}, view = 'home', selected = '', search = '', studentStatus = 'all', lastFocus, toastTimer;
 async function api(path, data) {
  let r;
