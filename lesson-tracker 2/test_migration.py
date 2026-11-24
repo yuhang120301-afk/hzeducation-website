@@ -79,7 +79,7 @@ def build_old_database(path):
         c.execute("INSERT INTO students(id,name,course,parent_id,balance,profile_id,notes) VALUES(7,'陈一诺','数学 · 一对一',2,1350,1,'内部备注保留')")
         c.execute("INSERT INTO ledger(id,student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(3,7,2000,'credit','2026-09-01','购入 20 课时',1,?)", (uuid.uuid4().hex,))
         c.execute("INSERT INTO ledger(id,student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(4,7,-650,'lesson','2026-09-20','历史上课',1,?)", (uuid.uuid4().hex,))
-        c.execute("INSERT INTO users(id,phone,name,password,role) VALUES(8,'0400555666','Angela Chen','x','parent')")
+        c.execute("INSERT INTO users(id,phone,name,password,role) VALUES(8,'0400555666','Angela','x','parent')")
         c.execute("INSERT INTO teachers(id,user_id,subject) VALUES(2,8,'数学')")
         c.execute("INSERT INTO lessons(id,teacher_id,title,starts_at,ends_at,planned_units,status,created_by,request_id) VALUES(9,2,'数学 · 一对一','2026-10-01T16:00','2026-10-01T17:00',100,'completed',1,?)", (uuid.uuid4().hex,))
         c.execute('INSERT INTO lesson_students VALUES(9,7)')
@@ -126,7 +126,7 @@ def snapshot(path):
             fee = c.execute('SELECT lesson_id,student_id,fee_cents,fee_overridden FROM lesson_reports').fetchall()
         tables = {row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if 'pay_rules' in tables:
-            angela = c.execute("SELECT percent_bp, hourly_floor_cents FROM pay_rules JOIN teachers ON teachers.id=pay_rules.teacher_id JOIN users ON users.id=teachers.user_id WHERE users.name='Angela Chen'").fetchone()
+            angela = c.execute("SELECT percent_bp, hourly_floor_cents FROM pay_rules JOIN teachers ON teachers.id=pay_rules.teacher_id JOIN users ON users.id=teachers.user_id WHERE users.name='Angela'").fetchone()
         return {'students': students, 'students_core': students, 'ledger': ledger, 'reports': reports,
             'reports_core': reports, 'helen_original': helen, 'fee': fee, 'pay_tables': 'pay_rules' in tables,
             'angela_rule': angela, 'student_count': len(students), 'ledger_count': len(ledger)}

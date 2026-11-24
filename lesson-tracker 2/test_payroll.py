@@ -264,7 +264,7 @@ class PayCalculationTests(unittest.TestCase):
 
     def test_seed_only_matching_existing_teachers(self):
         self.c.execute("DELETE FROM app_meta WHERE key='pay_seed_v1'")
-        names = {'Angela Chen': (4000, 3500), 'Kelsey': (4000, None), 'Ethan': (4000, None),
+        names = {'Angela': (4000, 3500), 'Kelsey': (4000, None), 'Ethan': (4000, None),
             'Christina': (4000, None), 'Vincent': (4000, None), 'Bob': None}
         ids = {name: self.teacher(name) for name in names}
         self.user('老板', 'admin')
