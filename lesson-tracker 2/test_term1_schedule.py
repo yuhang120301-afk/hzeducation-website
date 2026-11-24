@@ -93,6 +93,8 @@ class Term1ScheduleTests(unittest.TestCase):
             self.assertIn('清空', written)
             self.assertIn('cancel=', written)
 
+            server.initialize()
+            self.assertIsNone(server.DB_ERROR)
             applied = job.run(path, apply=True, out_path=out)
             self.assertEqual(applied['cancel'], dry['cancel'])
             self.assertEqual(applied['create'], dry['create'])
@@ -150,6 +152,24 @@ class Term1ScheduleTests(unittest.TestCase):
                 os.environ.pop('LESSON_DEMO', None)
             else:
                 os.environ['LESSON_DEMO'] = previous_demo
+
+
+class MalformedDatabaseTests(unittest.TestCase):
+    def test_initialize_logs_and_returns_when_the_file_is_not_a_database(self):
+        import server
+        folder = tempfile.mkdtemp()
+        path = str(Path(folder) / 'broken.sqlite3')
+        Path(path).write_bytes(b'this is not a sqlite database file')
+        previous = server.DB_PATH
+        try:
+            server.DB_PATH = path
+            server.initialize()
+            self.assertIsNotNone(server.DB_ERROR)
+            self.assertIn('malformed', server.DB_ERROR.lower())
+            self.assertIn(path, server.DB_ERROR)
+        finally:
+            server.DB_PATH = previous
+            server.DB_ERROR = None
 
 
 if __name__ == '__main__':

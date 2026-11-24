@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import time
 from decimal import Decimal, InvalidOperation
 from http.cookies import SimpleCookie
@@ -39,6 +40,7 @@ def demo_seed_allowed():
     return True
 SECURE = os.environ.get('LESSON_SECURE_COOKIE') == '1'
 ORG_NAME = 'HZ Education Melbourne'
+DB_ERROR = None
 NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
 
 def contact_details():
@@ -78,10 +80,35 @@ def text_value(raw, label, maximum=100):
     return value
 
 def initialize():
+    """Open the lesson database and add any missing tables.
+
+    A malformed file is logged and left untouched. Startup continues so the
+    process can answer /health instead of crash-looping on the same executescript.
+    """
+    global DB_ERROR
+    DB_ERROR = None
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    with connect() as c:
+    try:
+        with connect() as c:
+            try:
+                check = c.execute('PRAGMA integrity_check').fetchone()
+            except sqlite3.DatabaseError as exc:
+                raise sqlite3.DatabaseError(f'integrity_check could not read {DB_PATH}: {exc}') from exc
+            if not check or check[0] != 'ok':
+                raise sqlite3.DatabaseError(f'integrity_check failed for {DB_PATH}: {check[0] if check else "no result"}')
+            mode = c.execute('PRAGMA journal_mode').fetchone()[0]
+            if str(mode).lower() != 'wal':
+                switched = c.execute('PRAGMA journal_mode=WAL').fetchone()[0]
+                if str(switched).lower() != 'wal':
+                    print(f'lesson database left in journal_mode={switched}', file=sys.stderr, flush=True)
+            _create_base_tables(c)
+    except sqlite3.DatabaseError as exc:
+        DB_ERROR = f'{DB_PATH} is malformed or unreadable ({exc}). Schema changes were not applied. Restore the backup before using the site.'
+        print(DB_ERROR, file=sys.stderr, flush=True)
+
+
+def _create_base_tables(c):
         c.executescript('''
-        PRAGMA journal_mode=WAL;
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE,
             name TEXT NOT NULL, password TEXT NOT NULL,
@@ -372,8 +399,15 @@ class Handler(BaseHTTPRequestHandler):
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/health':
-            with connect() as c:
-                c.execute('SELECT 1 FROM users LIMIT 1').fetchone()
+            if DB_ERROR:
+                return self.response(503, {'ok': False, 'error': DB_ERROR})
+            try:
+                with connect() as c:
+                    c.execute('SELECT 1 FROM users LIMIT 1').fetchone()
+            except sqlite3.DatabaseError as exc:
+                message = f'{DB_PATH} is malformed or unreadable ({exc}). Restore the backup before using the site.'
+                print(message, file=sys.stderr, flush=True)
+                return self.response(503, {'ok': False, 'error': message})
             return self.response(200, {'ok': True})
         if path == '/api/state':
             with connect() as c:

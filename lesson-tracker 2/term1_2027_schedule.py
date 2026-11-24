@@ -5,6 +5,11 @@ Default is a dry run: it prints every future lesson it would cancel and every
 Term 1 lesson it would create, then leaves the database unchanged. Pass
 --apply to write. Running it again does not add a second copy.
 
+--apply uses one connection and one transaction. It does not copy, replace,
+or delete the database file, and it does not change journal_mode. The web
+app can keep running; this script waits if the database is busy, checks
+integrity before it commits, and rolls back if anything fails.
+
 Victorian Term 1 2027 runs through Thursday 25 March 2027. Lessons start in
 the week of Monday 25 January 2027 and repeat weekly while the date is on or
 before 25 March. That is nine Mondays–Thursdays and eight Fridays–Sundays.
@@ -368,15 +373,32 @@ def run(db_path, apply=False, out_path=None):
     server.DB_PATH = db_path
     if not apply:
         return _dry(db_path, out_path)
-    server.initialize()
     return _apply(db_path, out_path)
 
 
 def _connect_ro(db_path):
     import sqlite3
-    c = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    c = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=30)
     c.row_factory = sqlite3.Row
+    c.execute('PRAGMA busy_timeout=30000')
+    c.execute('PRAGMA query_only=ON')
     return c
+
+
+def _connect_rw(db_path):
+    import sqlite3
+    c = sqlite3.connect(db_path, timeout=30)
+    c.row_factory = sqlite3.Row
+    c.execute('PRAGMA busy_timeout=30000')
+    c.execute('PRAGMA foreign_keys=ON')
+    return c
+
+
+def _require_integrity(c, when):
+    row = c.execute('PRAGMA integrity_check').fetchone()
+    detail = row[0] if row else 'no result'
+    if detail != 'ok':
+        raise RuntimeError(f'integrity_check {when}: {detail}')
 
 
 def _dry(db_path, out_path=None):
@@ -446,7 +468,7 @@ def _apply(db_path, out_path=None):
     import teaching
     import auditlog
     server.DB_PATH = db_path
-    c = server.connect()
+    c = _connect_rw(db_path)
     created_students = []
     new_teachers = []
     cancel_lines = []
@@ -455,6 +477,7 @@ def _apply(db_path, out_path=None):
     skip_lines = []
     try:
         c.execute('BEGIN IMMEDIATE')
+        _require_integrity(c, 'before changes')
         actor = owner_actor(c)
         auditlog.begin(c)
         now_stamp = teaching.now_local().strftime('%Y-%m-%dT%H:%M')
@@ -517,9 +540,14 @@ def _apply(db_path, out_path=None):
             create_lines.append(f"{item['starts']}–{item['ends'][11:]}  {item['title']}  老师键 {item['teacher']}  {who}")
         auditlog.hint(c, '清空除 Atticus、Benjamin 外的余额、套餐、收款和过去课程，并排入 2027 第一学期课表（取消不扣课）')
         auditlog.finish(c, actor)
+        _require_integrity(c, 'before commit')
         c.commit()
-    except Exception:
-        c.rollback()
+        _require_integrity(c, 'after commit')
+    except BaseException:
+        try:
+            c.rollback()
+        except Exception:
+            pass
         raise
     finally:
         c.close()
