@@ -153,16 +153,23 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
         for terms, label in choices:
             paid = sum(TERM_COUNTS[term] for term in terms)
             each = per_lesson_cents(band['hourly_cents'], minutes)
-            total = apply_discount(each * paid, discount_percent(terms))
-            packages.append({'label': f'{label} · {length_label(minutes)}', 'paid_lessons': paid, 'gift_lessons': 0,
-                'lesson_minutes': minutes, 'total_cents': total, 'terms': terms, 'product': product,
-                'validity': '有效期为所选学期'})
+            discount = discount_percent(terms)
+            total = apply_discount(each * paid, discount)
+            prices = lesson_prices_millis(total, paid)
+            off = f' · {100 - discount}%' if discount else ''
+            packages.append({'label': f'{name} {label}{off} · {length_label(minutes)} · {money_millis(total * 10)} · 每节 {money_millis(prices[0])}',
+                'paid_lessons': paid, 'gift_lessons': 0, 'lesson_minutes': minutes, 'total_cents': total,
+                'each_millis': prices[0], 'unit_fees': prices, 'terms': terms, 'product': product,
+                'discount_percent': discount, 'validity': '按所选学期'})
     else:
         for minutes in (60, 90):
             each = per_lesson_cents(band['hourly_cents'], minutes)
-            packages.append({'label': f'20 节 · {length_label(minutes)}', 'paid_lessons': 20, 'gift_lessons': 1,
-                'lesson_minutes': minutes, 'total_cents': each * 20, 'terms': [], 'product': product,
-                'validity': validity or '有效期未定'})
+            total = each * 20
+            prices = [value * 10 for value in lesson_prices_cents(total, 21)]
+            packages.append({'label': f'{name} 20+1 节 · {length_label(minutes)} · {money_millis(total * 10)} · 每节 {money_millis(prices[0])}',
+                'paid_lessons': 20, 'gift_lessons': 1, 'lesson_minutes': minutes, 'total_cents': total,
+                'each_millis': prices[0], 'unit_fees': prices, 'terms': [], 'product': product,
+                'discount_percent': 0, 'validity': '永久有效'})
     source = 'table'
     hourly = band['hourly_cents']
     if student and student['profile_id']:
@@ -175,11 +182,21 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
                 hourly = by_minutes[60]
             for package in packages:
                 each = by_minutes.get(package['lesson_minutes'])
+                if each is None and package['product'] == 'term':
+                    each = by_minutes.get(minutes)
                 if each is None:
                     continue
                 paid = package['paid_lessons']
-                package['total_cents'] = apply_discount(each * paid, discount_percent(package['terms']))
+                total = apply_discount(each * paid, discount_percent(package['terms']))
+                count = paid if package['product'] == 'term' else paid + package['gift_lessons']
+                prices = lesson_prices_millis(total, count) if package['product'] == 'term' else [value * 10 for value in lesson_prices_cents(total, count)]
+                package['total_cents'] = total
+                package['each_millis'] = prices[0]
+                package['unit_fees'] = prices
                 package['legacy'] = True
+                package['label'] = package['label'].split(' · 每节 ')[0]
+                kind = name or PRODUCT_LABELS.get(package['product'], '')
+                package['label'] = f"{kind} {'20+1 节' if package['gift_lessons'] else package['label']} · 老学员价 · 每节 {money_millis(prices[0])}"
     return {'level': level, 'course_type': name, 'product': product, 'product_label': PRODUCT_LABELS[product],
         'hourly_cents': hourly, 'lesson_minutes': band['lesson_minutes'], 'packages': packages,
         'validity': validity, 'source': source, 'reason': ''}
@@ -405,7 +422,61 @@ def apply_discount(cents, percent):
 def gift_for(product, paid_lessons):
     if product == 'term':
         return 0
-    return int(paid_lessons) // 20
+    return 1 if int(paid_lessons) == 20 else 0
+
+
+def lesson_prices_cents(total_cents, count):
+    """Round each lesson to cents. The last lesson keeps the remainder so they sum to the total."""
+    count = int(count)
+    total_cents = int(total_cents)
+    if count <= 0:
+        return []
+    standard = int((Decimal(total_cents) / Decimal(count)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    if standard < 0 or standard * (count - 1) > total_cents:
+        standard = total_cents // count
+    last = total_cents - standard * (count - 1)
+    return [standard] * (count - 1) + [last]
+
+
+def lesson_prices_millis(total_cents, count):
+    """Class prices stay at 3 decimal dollars. 1 dollar = 1000 millis. Remainder sits on the last lesson."""
+    count = int(count)
+    millis = int(total_cents) * 10
+    if count <= 0:
+        return []
+    standard = millis // count
+    last = millis - standard * (count - 1)
+    return [standard] * (count - 1) + [last]
+
+
+def money_millis(millis):
+    millis = int(millis)
+    if millis % 10 == 0:
+        return f'${millis / 1000:,.2f}'
+    return f'${millis / 1000:,.3f}'
+
+
+def trial_cents(single_lesson_cents):
+    return _round_div(single_lesson_cents, 80, 100)
+
+
+def list_lesson_cents(c, student_id, day, product, minutes):
+    """One lesson at the year-and-type list price. Subject is ignored. A locked student price wins."""
+    student = c.execute('SELECT * FROM students WHERE id=?', (int(student_id),)).fetchone()
+    if not student or product not in TYPE_PRODUCT.values():
+        return None
+    level = annotate(dict(student), dt.date.fromisoformat(str(day)[:10]))['level_now']
+    custom = c.execute('''SELECT per_lesson_cents FROM student_prices
+        WHERE profile_id=? AND product=? AND lesson_minutes=?''', (student['profile_id'], product, int(minutes))).fetchone()
+    if custom:
+        return custom['per_lesson_cents']
+    table = table_on(c, str(day)[:10])
+    rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+    band = matching_row(rows, product, level) if level else None
+    if not band:
+        return None
+    use = band['lesson_minutes'] if product == 'term' else int(minutes)
+    return per_lesson_cents(band['hourly_cents'], use)
 
 
 def table_on(c, day):
@@ -452,8 +523,8 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
         if int(lesson_minutes) not in (60, 90):
             raise ValueError('请选择 1 小时或 1.5 小时。')
         paid = int(paid_lessons or 0)
-        if paid < 1:
-            raise ValueError('请填写购买节数。')
+        if paid != 20:
+            raise ValueError('一对一和一对二只有 20 节加 1 节赠课这一种课时包。')
         discount = 0
         terms = []
     minutes = int(lesson_minutes or 0)
@@ -478,14 +549,20 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
         hourly = band['hourly_cents']
         each = per_lesson_cents(hourly, use_minutes)
         source = 'table'
-    gift = gift_for(product, paid)
+    gift = 1 if product != 'term' and paid == 20 else 0
     total = apply_discount(each * paid, discount) if each is not None else None
+    count = paid if product == 'term' else paid + gift
+    unit_fees = []
+    if total is not None and count:
+        unit_fees = lesson_prices_millis(total, count) if product == 'term' else [value * 10 for value in lesson_prices_cents(total, count)]
     return {
         'student_id': student['id'], 'profile_id': student['profile_id'], 'level': level,
         'product': product, 'product_label': PRODUCT_LABELS[product],
         'lesson_minutes': minutes, 'length_label': length_label(minutes),
         'paid_lessons': paid, 'gift_lessons': gift, 'discount_percent': discount,
         'per_lesson_cents': each, 'hourly_cents': hourly, 'total_cents': total,
+        'unit_fees': unit_fees, 'each_millis': unit_fees[0] if unit_fees else None,
+        'label': f"{PRODUCT_LABELS[product]} · {length_label(minutes)} · {paid} 节" + (f' + 赠 {gift}' if gift else ''),
         'source': source, 'table_from': table['effective_from'] if table else None,
         'terms': terms, 'gst': False,
     }
@@ -644,17 +721,9 @@ def normalize_purchase(c, user, data):
             paid = int(str(data.get('paid_lessons') or data.get('amount') or '0'))
         except ValueError:
             raise ValueError('购买节数需为整数。')
-        if paid < 20:
-            raise ValueError('课时包至少购买 20 节。买 20 节赠 1 节。')
-        if data.get('gift_lessons') in (None, ''):
-            gift = gift_for(product, paid)
-        else:
-            try:
-                gift = int(str(data.get('gift_lessons')))
-            except ValueError:
-                raise ValueError('赠课节数需为整数。')
-            if gift < 0 or gift > paid:
-                raise ValueError('赠课不能超过购买节数。')
+        if paid != 20:
+            raise ValueError('一对一和一对二只有 20 节加 1 节赠课这一种课时包。')
+        gift = 1
     label = PRODUCT_LABELS[product]
     note = str(data.get('note') or '').strip()
     detail = f'{label} · 每节 {length_label(minutes)} · {paid} 节'
@@ -670,6 +739,13 @@ def normalize_purchase(c, user, data):
         detail += ' · ' + note
     if len(detail) > 300:
         raise ValueError('备注太长。')
+    offer = quote(c, user, student['id'], product, minutes, paid, data.get('date') or now_local().date().isoformat(), terms)
+    if offer.get('total_cents') is None:
+        raise ValueError(offer.get('reason') or '这个年级还没有价目。')
+    import json
     purchased = {**data, 'kind': 'credit', 'amount': paid, 'gift_amount': gift,
-        'package_mode': 'lesson', 'lesson_minutes': minutes, 'product': product, 'note': detail}
+        'package_mode': 'lesson', 'lesson_minutes': minutes, 'product': product, 'note': detail,
+        'pack_label': offer.get('label') or detail, 'total_cents': offer['total_cents'],
+        'unit_fees': json.dumps(offer.get('unit_fees') or []),
+        'cash_amount': f"{offer['total_cents'] / 100:.2f}"}
     return purchased

@@ -22,6 +22,24 @@ def schema(c):
     if 'contact_phone' not in cols:
         c.execute("ALTER TABLE users ADD COLUMN contact_phone TEXT NOT NULL DEFAULT ''")
     c.execute("CREATE TABLE IF NOT EXISTS profile_audit (id INTEGER PRIMARY KEY, student_id INTEGER NOT NULL REFERENCES students(id), actor_id INTEGER NOT NULL REFERENCES users(id), action TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))")
+    ensure_enrolment_columns(c)
+
+
+PROFILE_TEXT = (
+    'school', 'parent_email', 'emergency_name', 'emergency_relation', 'emergency_phone',
+    'health_notes', 'enrolment_course', 'enrolment_subject', 'consent_on', 'consent_withdrawn_on', 'signed_on',
+)
+PROFILE_FLAGS = ('photo_homework', 'photo_class', 'photo_face', 'photo_none', 'handbook_read')
+
+
+def ensure_enrolment_columns(c):
+    cols = {r['name'] for r in c.execute('PRAGMA table_info(student_profiles)')}
+    for name in PROFILE_TEXT:
+        if name not in cols:
+            c.execute(f"ALTER TABLE student_profiles ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+    for name in PROFILE_FLAGS:
+        if name not in cols:
+            c.execute(f'ALTER TABLE student_profiles ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0')
 
 def fields(data):
     birthday=str(data.get('birthday','')).strip()
@@ -36,6 +54,45 @@ def fields(data):
     if len(grade)>40 or len(notes)>2000:
         raise ValueError('年级最多 40 字，备注最多 2000 字。')
     return birthday,grade,notes
+
+def _date_or_blank(value, label):
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    try:
+        day = dt.date.fromisoformat(text)
+    except ValueError:
+        raise ValueError(label + '日期无效。')
+    return day.isoformat()
+
+
+def enrolment_values(data):
+    """Optional HMS enrolment answers. Name and year level are checked by the caller."""
+    values = {}
+    for name in PROFILE_TEXT:
+        text = str(data.get(name) or '').strip()
+        if name == 'parent_email' and text and ('@' not in text or len(text) > 80):
+            raise ValueError('请填写有效的家长邮箱。')
+        if name in ('consent_on', 'consent_withdrawn_on', 'signed_on'):
+            text = _date_or_blank(text, {'consent_on': '同意', 'consent_withdrawn_on': '撤回', 'signed_on': '签字'}[name])
+        if len(text) > (2000 if name == 'health_notes' else 80):
+            raise ValueError('这一项太长。')
+        values[name] = text
+    flags = {name: 1 if data.get(name) in (True, 1, '1', 'on', 'true') else 0 for name in PROFILE_FLAGS}
+    if flags['photo_none']:
+        flags['photo_homework'] = flags['photo_class'] = flags['photo_face'] = 0
+    values.update(flags)
+    return values
+
+
+def save_enrolment(c, profile_id, data):
+    ensure_enrolment_columns(c)
+    if not any(name in data for name in ('health_notes', 'school', 'parent_email', 'emergency_name')):
+        return
+    values = enrolment_values(data)
+    assignments = ','.join(f'{name}=?' for name in values)
+    c.execute(f'UPDATE student_profiles SET {assignments} WHERE id=?', (*values.values(), profile_id))
+
 
 def require_admin(user):
     if user['role'] not in ('owner','admin'):
@@ -57,7 +114,25 @@ def update(c,user,data,text_value):
     c.execute('UPDATE students SET billing_unit=? WHERE profile_id=?',(unit,s['profile_id']))
     import pricing
     level_code, level_year = pricing.remember_level(data, grade)
+    if 'grade' in data and not str(data.get('grade') or '').strip():
+        raise ValueError('请选择年级。')
     c.execute('UPDATE students SET name=?,birthday=?,grade=?,notes=?,level_code=?,level_year=? WHERE profile_id=?',(name,birthday,grade,notes,level_code,level_year,s['profile_id']))
+    save_enrolment(c, s['profile_id'], data)
+    parent_name = str(data.get('parent_name') or '').strip()
+    phone_raw = str(data.get('phone') or '').strip()
+    if parent_name or phone_raw:
+        parent = c.execute("SELECT * FROM users WHERE id=? AND role='parent'", (s['parent_id'],)).fetchone()
+        if parent:
+            import re
+            name = parent_name or parent['name']
+            phone = parent['phone']
+            if phone_raw:
+                phone = re.sub(r'[\s()\-]', '', phone_raw)
+                if not re.fullmatch(r'\+?[0-9]{7,15}', phone):
+                    raise ValueError('请输入完整手机号，可包含国家区号。')
+                if c.execute('SELECT 1 FROM users WHERE phone=? AND id!=?', (phone, parent['id'])).fetchone():
+                    raise ValueError('此登录手机号已被其他账号使用。')
+            c.execute('UPDATE users SET name=?, phone=? WHERE id=?', (name, phone, parent['id']))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'profile_updated'))
     return {'ok':True}
 
@@ -90,14 +165,24 @@ def add_course(c,user,data,text_value):
     payroll.reject_original_flag(user, data)
     require_admin(user)
     s=student(c,data)
-    course=text_value(data.get('course'),'课程名称',80)
-    if not c.execute("SELECT 1 FROM schedule_options WHERE kind='course' AND name=? AND active=1",(course,)).fetchone():
-        raise ValueError('请选择已启用的课程。')
+    subject_id = int(data.get('subject_id') or 0)
+    if subject_id:
+        subject = c.execute('SELECT name FROM subjects WHERE id=? AND active=1', (subject_id,)).fetchone()
+        if not subject:
+            raise ValueError('请选择科目。')
+        course = subject['name']
+    else:
+        course=text_value(data.get('course'),'课程名称',80)
+        subject = c.execute('SELECT id FROM subjects WHERE name=? AND active=1', (course,)).fetchone()
+        if not subject:
+            raise ValueError('请选择已启用的科目。')
+        subject_id = subject['id']
     if c.execute('SELECT 1 FROM students WHERE profile_id=? AND course=?',(s['profile_id'],course)).fetchone():
         raise ValueError('这位学生已有关联课程，无需重复添加。')
     sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
     created=s['helen_original'] if 'helen_original' in s.keys() else 0
-    c.execute('UPDATE students SET billing_unit=?,helen_original=? WHERE id=?',(s['billing_unit'],created,sid))
+    type_id = int(data.get('course_type_id') or 0) or s['course_type_id']
+    c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
     return {'ok':True,'student_id':sid}
 

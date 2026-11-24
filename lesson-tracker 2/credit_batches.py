@@ -25,6 +25,13 @@ def schema(c):
         PRIMARY KEY(ledger_id,batch_id)
     );
     ''')
+    cols = {r['name'] for r in c.execute('PRAGMA table_info(credit_batches)')}
+    if 'pack_label' not in cols:
+        c.execute("ALTER TABLE credit_batches ADD COLUMN pack_label TEXT NOT NULL DEFAULT ''")
+    if 'total_cents' not in cols:
+        c.execute('ALTER TABLE credit_batches ADD COLUMN total_cents INTEGER')
+    if 'unit_fees' not in cols:
+        c.execute("ALTER TABLE credit_batches ADD COLUMN unit_fees TEXT NOT NULL DEFAULT ''")
     if not c.execute("SELECT 1 FROM app_meta WHERE key='credit_batches_v1'").fetchone():
         for s in c.execute('SELECT id,balance FROM students').fetchall():
             c.execute("INSERT INTO credit_batches(student_id,purchased,gifted,paid_left,gift_left,credited_on,legacy) VALUES(?,?,0,?,0,'',1)",(s['id'],s['balance'],s['balance']))
@@ -72,7 +79,8 @@ def apply(c,lid,kind,data,units,original=None):
     if kind=='credit':
         paid=zero_units(data.get('amount'),units);gift=zero_units(data.get('gift_amount',0),units)
         if paid+gift<=0:raise ValueError('付费课时和赠送课时至少填写一项。')
-        bid=c.execute('INSERT INTO credit_batches(student_id,ledger_id,purchased,gifted,paid_left,gift_left,credited_on) VALUES(?,?,?,?,0,0,?)',(sid,lid,paid,gift,entry['lesson_date'])).lastrowid
+        bid=c.execute('''INSERT INTO credit_batches(student_id,ledger_id,purchased,gifted,paid_left,gift_left,credited_on,pack_label,total_cents,unit_fees)
+            VALUES(?,?,?,?,0,0,?,?,?,?)''',(sid,lid,paid,gift,entry['lesson_date'], str(data.get('pack_label') or ''), data.get('total_cents'), str(data.get('unit_fees') or ''))).lastrowid
         move(c,lid,bid,paid,gift)
     elif kind=='lesson':consume(c,lid,sid,-entry['delta'])
     elif kind=='refund':

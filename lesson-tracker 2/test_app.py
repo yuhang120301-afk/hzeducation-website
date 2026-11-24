@@ -72,7 +72,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.credit_account(other)['billing_unit'],'lesson')
         self.assertEqual(self.parent.request('students/profile',{'student_id':sid,'name':'No','billing_unit':'lesson'})[0],403)
         self.assertEqual(self.admin.request('students/profile',{'student_id':sid,'name':'No','billing_unit':'bad'})[0],400)
-        code,r=self.admin.request('students/course',{'student_id':sid,'course':'物理'})
+        code,r=self.admin.request('students/course',{'student_id':sid,'course':'英语'})
         self.assertEqual(code,200,r);self.assertEqual(self.credit_account(r['student_id'])['billing_unit'],'hour')
         self.gift_credit(sid,5,1);self.entry(other,'credit',5)
         tid,t=self.new_teacher();lid=self.schedule(tid,[sid,other],end='11:30')[1]['lesson_id']
@@ -213,10 +213,10 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.parent.request('students/profile',payload)[0],403)
         self.assertEqual(self.admin.request('students/profile',{**payload,'birthday':'2999-01-01'})[0],400)
         self.assertEqual(self.admin.request('students/profile',payload)[0],200)
-        code,result=self.admin.request('students/course',{'student_id':sid,'course':'物理'})
+        code,result=self.admin.request('students/course',{'student_id':sid,'course':'英语'})
         self.assertEqual(code,200)
         physics=result['student_id']
-        self.assertEqual(self.admin.request('students/course',{'student_id':sid,'course':'物理'})[0],400)
+        self.assertEqual(self.admin.request('students/course',{'student_id':sid,'course':'英语'})[0],400)
         self.assertEqual(self.parent.request('students/course',{'student_id':sid,'course':'化学'})[0],403)
         self.assertEqual(self.entry(sid,'credit','4')[0],201)
         self.assertEqual(self.entry(physics,'credit','2')[0],201)
