@@ -13,19 +13,22 @@ a year.
 
 Cancellations use the normal cancel function with waive_leave, so the
 operation log records them and no lesson is deducted and no arrears row is
-written. Students, balances, and past or already-completed lessons stay.
-Any future lesson that includes a student named Atticus or Benjamin stays,
-even if other students are on it.
+written. Any future lesson that includes a student named Atticus or Benjamin
+stays, even if other students are on it.
 
-Four clashes cannot share one teacher. The later class is stored under a
-待定 teacher and the title says who it was meant for:
+Every other student keeps the name row. Their balance is set to 0, and their
+packages, payment records, past lessons, and lesson reports are removed in
+one transaction so the ledger still matches the balance. Atticus and Benjamin
+are not changed at all, including lessons they share with someone else.
 
-- Thursday Jeffery English overlaps Lakyn, both meant for Helen.
-- Saturday Cathy 妹妹 overlaps Bella 高数, both meant for Helen.
-- Saturday Sunny + Shirley English overlaps Zachary English; both were
-  unassigned, so they use 待定 and 待定 2.
-- Sunday Cathy 妹妹 overlaps Cathy's VCE MM, and Yilia overlaps the
-  中数 unit 3/4 group. Those two move to 待定, which is free then.
+Clashes Helen asked to resolve:
+
+- Thursday Jeffery English is taught by Angela.
+- Saturday Cathy 妹妹 is not created.
+- Sunday Cathy 妹妹 stays with the teacher 待定.
+- Sunday Yilia is not created.
+- Saturday Sunny + Shirley English overlaps Zachary English, so those two
+  unassigned classes use 待定 and 待定 2.
 """
 import argparse
 import hashlib
@@ -48,7 +51,7 @@ SLOTS = [
     (1, '19:30', '21:00', 'Benjamin', 'helen', ['Benjamin'], 'green'),
     (2, '19:30', '21:00', 'Felix', 'helen', ['Felix'], 'green'),
     (3, '17:00', '19:00', 'Lakyn', 'helen', ['Lakyn'], 'green'),
-    (3, '17:00', '18:30', 'Jeffery · English · 原定 Helen（与 Lakyn 重叠）', 'pending', ['Jeffery'], 'gray'),
+    (3, '17:00', '18:30', 'Jeffery · English', 'angela', ['Jeffery'], 'pink'),
     (3, '19:00', '21:00', 'Rebecca + Natasha', 'helen', ['Rebecca', 'Natasha'], 'green'),
     (4, '17:45', '19:00', 'Edward', 'helen', ['Edward'], 'green'),
     (4, '19:00', '20:30', 'Matthew', 'helen', ['Matthew'], 'green'),
@@ -59,7 +62,6 @@ SLOTS = [
     (5, '15:00', '16:30', 'Sunny + Shirley · English', 'pending2', ['Sunny', 'Shirley'], 'gray'),
     (5, '15:30', '16:30', 'Zachary · Maths', 'vincent', ['Zachary'], 'blue'),
     (5, '14:00', '15:30', 'Bella · 高数', 'helen', ['Bella'], 'green'),
-    (5, '14:30', '15:30', 'Cathy 妹妹 · 原定 Helen（与 Bella 高数重叠）', 'pending3', ['Cathy 妹妹'], 'gray'),
     (5, '15:30', '17:30', '中数34 H班', 'helen', None, 'purple'),
     (5, '17:30', '19:00', 'Benjamin', 'helen', ['Benjamin'], 'green'),
     (5, '19:00', '20:30', 'Carina', 'helen', ['Carina'], 'green'),
@@ -67,9 +69,8 @@ SLOTS = [
     (6, '10:00', '11:00', 'Cathy · GM Unit 1/2', 'helen', ['Cathy'], 'green'),
     (6, '11:00', '13:00', 'VCE 高数', 'helen', None, 'purple'),
     (6, '13:00', '15:00', 'Cathy · VCE MM Unit 1/2', 'helen', ['Cathy'], 'green'),
-    (6, '14:00', '15:00', 'Cathy 妹妹 · 原定 Helen（与 Cathy MM 重叠）', 'pending', ['Cathy 妹妹'], 'gray'),
+    (6, '14:00', '15:00', 'Cathy 妹妹', 'pending', ['Cathy 妹妹'], 'gray'),
     (6, '15:30', '17:30', '中数 unit 3/4 班', 'helen', None, 'purple'),
-    (6, '16:30', '17:30', 'Yilia · 新加坡 · 原定 Helen（与中数 unit 3/4 班重叠）', 'pending', ['Yilia'], 'gray'),
     (6, '17:30', '19:00', 'Tecia + Angela + Zoey', 'helen', ['Tecia', 'Angela', 'Zoey'], 'green'),
     (6, '19:00', '20:30', 'David', 'helen', ['David'], 'green'),
     (6, '19:30', '20:30', 'Atticus · English GA', 'angela', ['Atticus'], 'pink'),
@@ -81,7 +82,6 @@ TEACHERS = {
     'angela': ('Angela', '0499000012'),
     'pending': ('待定', '0499000021'),
     'pending2': ('待定 2', '0499000022'),
-    'pending3': ('待定 3', '0499000023'),
 }
 
 
@@ -236,15 +236,140 @@ def occurrences(teacher_ids):
     return planned
 
 
-def run(db_path, apply=False):
+def _tables(c):
+    return {row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def _count(c, sql, params=()):
+    return c.execute(sql, params).fetchone()[0]
+
+
+def clear_plan(c, now_stamp):
+    """History that would be removed for every student except Atticus and Benjamin."""
+    tables = _tables(c)
+    students = list(c.execute('SELECT id, name, balance FROM students ORDER BY name, id'))
+    clear_ids = [row['id'] for row in students if not kept(row['name'])]
+    keep_ids = [row['id'] for row in students if kept(row['name'])]
+    empty = {'students': [], 'lines': [], 'ledger': 0, 'payments': 0, 'packages': 0, 'past_lessons': 0, 'reports': 0}
+    if not clear_ids or 'lessons' not in tables:
+        return empty
+    keep_lessons = set()
+    if keep_ids and 'lesson_students' in tables:
+        marks = ','.join('?' for _ in keep_ids)
+        keep_lessons = {row['lesson_id'] for row in c.execute(
+            f'SELECT DISTINCT lesson_id FROM lesson_students WHERE student_id IN ({marks})', keep_ids)}
+    marks = ','.join('?' for _ in clear_ids)
+    past = []
+    if 'lesson_students' in tables:
+        past = list(c.execute(
+            f'''SELECT DISTINCT l.id FROM lessons l
+                JOIN lesson_students ls ON ls.lesson_id=l.id
+                WHERE ls.student_id IN ({marks}) AND l.starts_at<?''',
+            (*clear_ids, now_stamp)))
+    delete_ids = [row['id'] for row in past if row['id'] not in keep_lessons]
+    shared_ids = [row['id'] for row in past if row['id'] in keep_lessons]
+    lines = []
+    names = []
+    ledger_n = payments_n = packages_n = reports_n = 0
+    for student in students:
+        if kept(student['name']):
+            continue
+        sid = student['id']
+        ledgers = _count(c, 'SELECT COUNT(*) FROM ledger WHERE student_id=?', (sid,)) if 'ledger' in tables else 0
+        payments = 0
+        if 'cash_entries' in tables and 'ledger' in tables:
+            payments = _count(c, 'SELECT COUNT(*) FROM cash_entries WHERE ledger_id IN (SELECT id FROM ledger WHERE student_id=?)', (sid,))
+        packages = _count(c, 'SELECT COUNT(*) FROM credit_batches WHERE student_id=?', (sid,)) if 'credit_batches' in tables else 0
+        reports = _count(c, 'SELECT COUNT(*) FROM lesson_reports WHERE student_id=?', (sid,)) if 'lesson_reports' in tables else 0
+        own_past = 0
+        if 'lesson_students' in tables:
+            own_past = _count(
+                c, 'SELECT COUNT(*) FROM lesson_students ls JOIN lessons l ON l.id=ls.lesson_id WHERE ls.student_id=? AND l.starts_at<?',
+                (sid, now_stamp))
+        if student['balance'] == 0 and ledgers == 0 and payments == 0 and packages == 0 and reports == 0 and own_past == 0:
+            continue
+        names.append(student['name'])
+        ledger_n += ledgers
+        payments_n += payments
+        packages_n += packages
+        reports_n += reports
+        lines.append(
+            f"{student['name']}  余额 {student['balance']}→0  账本 {ledgers}  套餐 {packages}  收款 {payments}  过去课程 {own_past}  反馈 {reports}")
+    return {
+        'students': names, 'lines': lines, 'ledger': ledger_n, 'payments': payments_n,
+        'packages': packages_n, 'past_lessons': len(delete_ids), 'shared_past': len(shared_ids),
+        'reports': reports_n, 'clear_ids': clear_ids, 'delete_ids': delete_ids, 'shared_ids': shared_ids,
+    }
+
+
+def _marks(ids):
+    return ','.join('?' for _ in ids)
+
+
+def clear_history(c, now_stamp):
+    plan = clear_plan(c, now_stamp)
+    clear_ids = plan.get('clear_ids') or []
+    if not clear_ids or not plan['students']:
+        plan['students'] = []
+        plan['lines'] = []
+        return plan
+    tables = _tables(c)
+    marks = _marks(clear_ids)
+    delete_ids = plan['delete_ids']
+    shared_ids = plan['shared_ids']
+    if 'credit_movements' in tables and 'ledger' in tables:
+        c.execute(
+            f'DELETE FROM credit_movements WHERE ledger_id IN (SELECT id FROM ledger WHERE student_id IN ({marks}))',
+            clear_ids)
+        if 'credit_batches' in tables:
+            c.execute(
+                f'DELETE FROM credit_movements WHERE batch_id IN (SELECT id FROM credit_batches WHERE student_id IN ({marks}))',
+                clear_ids)
+    if 'cash_entries' in tables and 'ledger' in tables:
+        c.execute(f'DELETE FROM cash_entries WHERE ledger_id IN (SELECT id FROM ledger WHERE student_id IN ({marks}))', clear_ids)
+    if 'ledger_edits' in tables and 'ledger' in tables:
+        c.execute(f'DELETE FROM ledger_edits WHERE ledger_id IN (SELECT id FROM ledger WHERE student_id IN ({marks}))', clear_ids)
+    if 'lesson_reports' in tables:
+        c.execute(f'DELETE FROM lesson_reports WHERE student_id IN ({marks})', clear_ids)
+        if 'ledger' in tables:
+            c.execute(
+                f'UPDATE lesson_reports SET ledger_id=NULL WHERE ledger_id IN (SELECT id FROM ledger WHERE student_id IN ({marks}))',
+                clear_ids)
+    if 'credit_batches' in tables:
+        c.execute(f'DELETE FROM credit_batches WHERE student_id IN ({marks})', clear_ids)
+    if 'ledger' in tables:
+        c.execute(f'UPDATE ledger SET reversal_of=NULL WHERE student_id IN ({marks}) AND reversal_of IS NOT NULL', clear_ids)
+        c.execute(f'DELETE FROM ledger WHERE student_id IN ({marks})', clear_ids)
+    if 'arrears' in tables:
+        c.execute(f'DELETE FROM arrears WHERE student_id IN ({marks})', clear_ids)
+    if shared_ids and 'lesson_students' in tables:
+        c.execute(
+            f'DELETE FROM lesson_students WHERE student_id IN ({marks}) AND lesson_id IN ({_marks(shared_ids)})',
+            (*clear_ids, *shared_ids))
+    if delete_ids:
+        lesson_marks = _marks(delete_ids)
+        if 'report_edits' in tables:
+            c.execute(f'DELETE FROM report_edits WHERE lesson_id IN ({lesson_marks})', delete_ids)
+        if 'lesson_reports' in tables:
+            c.execute(f'DELETE FROM lesson_reports WHERE lesson_id IN ({lesson_marks})', delete_ids)
+        if 'lesson_students' in tables:
+            c.execute(f'DELETE FROM lesson_students WHERE lesson_id IN ({lesson_marks})', delete_ids)
+        if 'arrears' in tables:
+            c.execute(f'DELETE FROM arrears WHERE lesson_id IN ({lesson_marks})', delete_ids)
+        c.execute(f'DELETE FROM lessons WHERE id IN ({lesson_marks})', delete_ids)
+    c.execute(f'UPDATE students SET balance=0 WHERE id IN ({marks})', clear_ids)
+    return plan
+
+
+def run(db_path, apply=False, out_path=None):
     os.environ['LESSON_DB'] = db_path
     os.environ['LESSON_DEMO'] = '0'
     import server
     server.DB_PATH = db_path
     if not apply:
-        return _dry(db_path)
+        return _dry(db_path, out_path)
     server.initialize()
-    return _apply(db_path)
+    return _apply(db_path, out_path)
 
 
 def _connect_ro(db_path):
@@ -254,7 +379,7 @@ def _connect_ro(db_path):
     return c
 
 
-def _dry(db_path):
+def _dry(db_path, out_path=None):
     import teaching
     c = _connect_ro(db_path)
     try:
@@ -277,10 +402,11 @@ def _dry(db_path):
         planned = occurrences(teacher_ids)
         create_lines, skip_lines, student_names = _classify(c, planned)
         new_teachers = [TEACHERS[key][0] for key, tid in teacher_ids.items() if tid < 0]
+        cleared = clear_plan(c, now_stamp)
     finally:
         c.close()
-    _print(db_path, False, cancel_lines, keep_lines, create_lines, skip_lines, student_names, new_teachers)
-    return {'cancel': len(cancel_lines), 'keep': len(keep_lines), 'create': len(create_lines), 'skip': len(skip_lines)}
+    summary = _emit(db_path, False, out_path, cancel_lines, keep_lines, create_lines, skip_lines, student_names, new_teachers, cleared)
+    return summary
 
 
 def _classify(c, planned):
@@ -315,7 +441,7 @@ def _classify(c, planned):
     return create_lines, skip_lines, sorted(set(needed))
 
 
-def _apply(db_path):
+def _apply(db_path, out_path=None):
     import server
     import teaching
     import auditlog
@@ -332,6 +458,7 @@ def _apply(db_path):
         actor = owner_actor(c)
         auditlog.begin(c)
         now_stamp = teaching.now_local().strftime('%Y-%m-%dT%H:%M')
+        cleared = clear_history(c, now_stamp)
         owned = owned_ids()
         teacher_ids = {}
         for key in TEACHERS:
@@ -388,7 +515,7 @@ def _apply(db_path):
                 raise ValueError(f"{item['starts']} {item['title']}：{exc}") from exc
             who = '小组课，无学生' if item['group'] else '、'.join(item['students'])
             create_lines.append(f"{item['starts']}–{item['ends'][11:]}  {item['title']}  老师键 {item['teacher']}  {who}")
-        auditlog.hint(c, '2027 第一学期课表：取消未来排课（保留 Atticus、Benjamin，不扣课）并排入周课')
+        auditlog.hint(c, '清空除 Atticus、Benjamin 外的余额、套餐、收款和过去课程，并排入 2027 第一学期课表（取消不扣课）')
         auditlog.finish(c, actor)
         c.commit()
     except Exception:
@@ -396,38 +523,52 @@ def _apply(db_path):
         raise
     finally:
         c.close()
-    _print(db_path, True, cancel_lines, keep_lines, create_lines, skip_lines, created_students, new_teachers)
-    return {'cancel': len(cancel_lines), 'keep': len(keep_lines), 'create': len(create_lines), 'skip': len(skip_lines)}
+    return _emit(db_path, True, out_path, cancel_lines, keep_lines, create_lines, skip_lines, created_students, new_teachers, cleared)
 
 
-def _print(db_path, apply, cancel_lines, keep_lines, create_lines, skip_lines, created_students, new_teachers):
+def _emit(db_path, apply, out_path, cancel_lines, keep_lines, create_lines, skip_lines, created_students, new_teachers, cleared):
     mode = 'APPLY' if apply else 'DRY-RUN'
-    print(f'{mode}  database={db_path}')
-    print(f'取消 {len(cancel_lines)} 节未来课程（不扣课）')
-    for line in cancel_lines:
-        print('  取消  ' + line)
-    print(f'保留 {len(keep_lines)} 节（学生名含 Atticus 或 Benjamin）')
-    for line in keep_lines:
-        print('  保留  ' + line)
-    print(f'新建 {len(create_lines)} 节，跳过 {len(skip_lines)} 节')
-    for line in create_lines:
-        print('  新建  ' + line)
-    for line in skip_lines:
-        print('  跳过  ' + line)
-    print('新建学生：' + ('、'.join(created_students) if created_students else '无'))
-    print('新建老师：' + ('、'.join(new_teachers) if new_teachers else '无'))
-    print(f'合计 cancel={len(cancel_lines)} keep={len(keep_lines)} create={len(create_lines)} skip={len(skip_lines)}')
+    detail = [f'{mode}  database={db_path}', f'取消 {len(cancel_lines)} 节未来课程（不扣课）']
+    detail.extend('  取消  ' + line for line in cancel_lines)
+    detail.append(f'保留 {len(keep_lines)} 节（学生名含 Atticus 或 Benjamin）')
+    detail.extend('  保留  ' + line for line in keep_lines)
+    detail.append(f'新建 {len(create_lines)} 节，跳过 {len(skip_lines)} 节')
+    detail.extend('  新建  ' + line for line in create_lines)
+    detail.extend('  跳过  ' + line for line in skip_lines)
+    detail.append(f'清空 {len(cleared["students"])} 位学生的余额、套餐、收款、过去课程和反馈')
+    detail.extend('  清空  ' + line for line in cleared['lines'])
+    detail.append('新建学生：' + ('、'.join(created_students) if created_students else '无'))
+    detail.append('新建老师：' + ('、'.join(new_teachers) if new_teachers else '无'))
+    summary = [
+        f'{mode}  database={db_path}',
+        f'cancel={len(cancel_lines)} keep={len(keep_lines)} create={len(create_lines)} skip={len(skip_lines)}',
+        f'clear_students={len(cleared["students"])} clear_ledger={cleared["ledger"]} clear_packages={cleared["packages"]} clear_payments={cleared["payments"]} clear_past_lessons={cleared["past_lessons"]} clear_reports={cleared["reports"]}',
+        'cleared: ' + ('、'.join(cleared['students']) if cleared['students'] else '无'),
+        'new_students: ' + ('、'.join(created_students) if created_students else '无'),
+        'new_teachers: ' + ('、'.join(new_teachers) if new_teachers else '无'),
+    ]
+    if out_path:
+        summary.append(f'detail: {out_path}')
+        with open(out_path, 'w', encoding='utf-8') as handle:
+            handle.write('\n'.join(detail + [''] + summary) + '\n')
+    for line in summary:
+        print(line)
+    return {
+        'cancel': len(cancel_lines), 'keep': len(keep_lines), 'create': len(create_lines), 'skip': len(skip_lines),
+        'clear_students': len(cleared['students']), 'cleared': list(cleared['students']),
+    }
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Term 1 2027 timetable. Dry-run unless --apply.')
     parser.add_argument('--db', default=os.environ.get('LESSON_DB', '/var/data/lessons.sqlite3'))
     parser.add_argument('--dry-run', action='store_true', help='Print the changes and write nothing. This is the default.')
-    parser.add_argument('--apply', action='store_true', help='Cancel and create the lessons.')
+    parser.add_argument('--apply', action='store_true', help='Cancel, clear and create the lessons.')
+    parser.add_argument('--out', help='Write the full log here. The terminal prints a short summary.')
     args = parser.parse_args(argv)
     if args.apply and args.dry_run:
         raise SystemExit('请只选 --dry-run 或 --apply 其中一个。')
-    run(args.db, apply=args.apply)
+    run(args.db, apply=args.apply, out_path=args.out)
 
 
 if __name__ == '__main__':
