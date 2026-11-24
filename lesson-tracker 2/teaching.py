@@ -93,6 +93,31 @@ SUBJECT_ALIASES = {
 }
 
 
+def display_person(name):
+    """HELEN is shown as Helen. Mixed-case names stay as stored."""
+    text = str(name or '').strip()
+    letters = ''.join(ch for ch in text if ch.isalpha())
+    if letters and letters.isascii() and letters.upper() == letters and letters.lower() != letters:
+        return text.title()
+    return text
+
+
+def canonical_subject(name):
+    """Science and 科学 display as the same Chinese subject. Stored labels are not rewritten."""
+    text = str(name or '').strip()
+    if not text:
+        return ''
+    key = text.casefold()
+    if key in SUBJECT_ALIASES:
+        return SUBJECT_ALIASES[key]
+    if text in SUBJECT_ALIASES:
+        return SUBJECT_ALIASES[text]
+    for token, label in (('english', '英语'), ('science', '科学'), ('writing', '写作'), ('maths', '数学'), ('math', '数学')):
+        if key == token or key.startswith(token + ' '):
+            return label
+    return text
+
+
 def infer_type_name(student_count):
     if student_count == 1:
         return '一对一'
@@ -120,6 +145,11 @@ def parse_label(text, student_count=None):
             found_type = TYPE_ALIASES.get(part) or TYPE_ALIASES.get(key, '')
         elif key in SUBJECT_ALIASES or part in SUBJECT_ALIASES:
             found_subject = SUBJECT_ALIASES.get(part) or SUBJECT_ALIASES.get(key, '')
+    if not found_type:
+        for token in ('小班课', '一对二', '一对一', '小班', '班课', '1:2', '1:1'):
+            if token in raw:
+                found_type = TYPE_ALIASES.get(token, '')
+                break
     if not found_type and student_count is not None:
         found_type = infer_type_name(student_count)
     return found_subject, found_type, raw
@@ -352,18 +382,22 @@ def state_for(c,user):
                     report.pop('fee_cents', None)
                     report.pop('fee_overridden', None)
         lesson['recorded'] = lesson_recorded(lesson)
+        lesson['subject_name'] = canonical_subject(lesson.get('subject_name') or '')
+        lesson['teacher_name'] = display_person(lesson.get('teacher_name'))
     teachers=[]
     if role in ('owner','admin','teacher'):
         tw='' if role in ('owner','admin') else ' WHERE u.id=? AND u.active=1'
         tp=() if role in ('owner','admin') else (user['id'],)
         teachers=[dict(x) for x in c.execute("SELECT t.id,t.subject,t.subjects,u.name,u.phone,u.active,u.id user_id,CASE WHEN EXISTS(SELECT 1 FROM organization_owners o WHERE o.user_id=u.id) THEN 'owner' WHEN u.role='admin' THEN 'admin' ELSE 'teacher' END account_role FROM teachers t JOIN users u ON t.user_id=u.id"+tw+' ORDER BY t.id',tp)]
     for t in teachers:
-        t['subjects']=json.loads(t['subjects']) or [t['subject']]
+        t['name']=display_person(t.get('name'))
+        t['subjects']=[canonical_subject(name) for name in (json.loads(t['subjects']) or [t['subject']])]
+        t['subject']=canonical_subject(t.get('subject') or '')
     if role=='parent':
         for lesson in lessons:lesson['reports']=[r for r in lesson['reports'] if not r.get('reversed_by')]
         lessons=[l for l in lessons if l['status']!='completed' or l['reports']]
     types, subjects = catalog_lists(c)
-    return {'recurrence_warnings':[r['error'] for r in c.execute("SELECT error FROM lesson_series WHERE error!=''")] if role in ('owner','admin') else [],'schedule_options':[dict(x) for x in c.execute('SELECT * FROM schedule_options ORDER BY kind,id')] if role in ('owner','admin','teacher') else [],'course_types':types,'subjects':subjects,'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
+    return {'recurrence_warnings':recurrence.warnings(c) if role in ('owner','admin') else [],'schedule_options':[dict(x) for x in c.execute('SELECT * FROM schedule_options ORDER BY kind,id')] if role in ('owner','admin','teacher') else [],'course_types':types,'subjects':subjects,'lessons':lessons,'teachers':teachers,'timezone':TIMEZONE,'today':now_local().date().isoformat(),'now':now_local().strftime('%Y-%m-%dT%H:%M')}
 
 def create_teacher(c,user,data,phone_value,password_hash,text_value):
     if user['role'] not in ('owner','admin'):

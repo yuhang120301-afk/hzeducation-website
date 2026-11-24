@@ -48,6 +48,37 @@ def occurrence(rule,index):
     return item
 
 
+def warnings(c):
+    """Conflicts already stored on a series. Reading them does not insert lessons."""
+    import teaching
+    found = []
+    for rule in c.execute("SELECT * FROM lesson_series WHERE error!=''"):
+        text = rule['error'] or ''
+        day = text[:10] if len(text) >= 10 and text[4] == '-' and text[7] == '-' else ''
+        try:
+            template = json.loads(rule['template'] or '{}')
+        except json.JSONDecodeError:
+            template = {}
+        teacher = ''
+        if template.get('teacher_id'):
+            row = c.execute('SELECT u.name FROM teachers t JOIN users u ON u.id=t.user_id WHERE t.id=?', (template['teacher_id'],)).fetchone()
+            teacher = teaching.display_person(row['name']) if row else ''
+        names = []
+        for sid in template.get('student_ids') or []:
+            student = c.execute('SELECT name FROM students WHERE id=?', (int(sid),)).fetchone()
+            if student:
+                names.append(student['name'])
+        starts = str(template.get('starts_at') or '')
+        found.append({
+            'date': day,
+            'time': starts[11:16] if len(starts) >= 16 else '',
+            'teacher': teacher,
+            'students': names,
+            'message': text.split('：', 1)[1] if '：' in text else text,
+        })
+    return found
+
+
 def extend(c,horizon,units,text_value):
     import teaching
     for rule in list(c.execute('SELECT * FROM lesson_series WHERE endless=1')):

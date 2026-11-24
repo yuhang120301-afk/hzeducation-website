@@ -71,7 +71,10 @@ function gcalLayout(lessons){
  }
  for(const cluster of clusters){
   const cols = Math.max(...cluster.items.map(item=>item.col))+1;
-  cluster.items.forEach(item=>{item.cols=cols;});
+  if(cols>3){
+   const start=Math.min(...cluster.items.map(item=>item.start));
+   cluster.items.forEach((item,index)=>{item.stacked=true;item.stackIndex=index;item.stackCount=cluster.items.length;item.stackStart=start;item.stackEnd=cluster.end;});
+  }else cluster.items.forEach(item=>{item.cols=cols;});
  }
  return items;
 }
@@ -125,8 +128,9 @@ function cardHeadline(lesson){
  const kind=lessonKind(lesson);
  const subject=lessonSubject(lesson);
  const names=(lesson.students||[]).map(student=>student.name).filter(Boolean);
- const who=kind==='小班课'?`小班课 · ${names.length}人`:names.join(' · ');
- return [who, subject, kind==='小班课'?'':kind].filter(Boolean).join(' · ');
+ const subjectBit=subject && !names.includes(subject) && subject!==kind ? subject : '';
+ if(kind==='小班课') return [names.length?`小班课 · ${names.length}人`:'小班课 · 还没有学生', subjectBit].filter(Boolean).join(' · ');
+ return [names.join('、')||'未选学生', subjectBit, kind].filter(Boolean).join(' · ');
 }
 function cardMarkup(lesson, compact, extra){
  const headline=escapeHTML(cardHeadline(lesson));
@@ -139,9 +143,15 @@ function gcalEvent(item){
  const start = Math.max(item.start, GCAL_START*60);
  const end = Math.min(item.end, GCAL_END*60);
  if(end<=GCAL_START*60 || start>=GCAL_END*60) return '';
- const top = ((start-GCAL_START*60)/60)*GCAL_PX;
- const height = Math.max(22, ((end-start)/60)*GCAL_PX);
- const width = 100/item.cols, left = item.col*width;
+ let top = ((start-GCAL_START*60)/60)*GCAL_PX;
+ let height = Math.max(22, ((end-start)/60)*GCAL_PX);
+ let width = 100/(item.cols||1), left = (item.col||0)*width;
+ if(item.stacked){
+  const slice=(item.stackEnd-item.stackStart)/item.stackCount;
+  top=((item.stackStart+item.stackIndex*slice-GCAL_START*60)/60)*GCAL_PX;
+  height=Math.max(22, (slice/60)*GCAL_PX-2);
+  width=100; left=0;
+ }
  const compact=height<40;
  const hover=`${cardHeadline(lesson)}, ${timeRange(lesson, false)}`;
  const done=lessonDone(lesson);
@@ -167,7 +177,7 @@ function renderTimeGrid(){
  if(!['owner','admin'].includes(state.user.role)) return renderListSchedule();
  if(calendarSpan==='month') return renderMonth();
  const end = datePlus(weekStart, 7);
- const week = state.lessons.filter(lesson=>lesson.status!=='cancelled' && lesson.starts_at>=weekStart && lesson.starts_at<end && (!teacherFilter || lesson.teacher_id==teacherFilter));
+ const week = state.lessons.filter(lesson=>lesson.status!=='cancelled' && lesson.starts_at>=weekStart && lesson.starts_at<end && (!teacherFilter || String(lesson.teacher_id)===String(teacherFilter)));
  const rows = week.filter(lesson=>scheduleStatus==='all' || lesson.status===scheduleStatus);
  const done = week.filter(lesson=>lesson.status==='completed');
  const duration = done.reduce((sum,lesson)=>sum+(gcalSpan(lesson).duration/60), 0);
@@ -181,9 +191,9 @@ function renderTimeGrid(){
  }).join('');
  const mobileDays = window.matchMedia('(max-width:760px)').matches ? `<div class="gcal-daystrip">${Array.from({length:7},(_,i)=>datePlus(weekStart,i)).map(day=>`<button type="button" class="gcal-daybtn ${day===days[0]?'selected':''} ${day===state.today?'is-today':''}" data-gcal-day="${day}">${weekday[(new Date(day+'T12:00:00Z').getUTCDay()+6)%7]} ${Number(day.slice(8))}</button>`).join('')}</div>` : '';
  $('#surface').innerHTML = `<div class="calendar-toolbar"><label class="calendar-search"><input id="calendar-search" type="search" placeholder="搜索学生或老师" aria-label="搜索学生或老师" value="${escapeHTML(calendarSearch)}"></label><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上一周">‹</button><strong>${formatDate(weekStart)} — ${formatDate(datePlus(weekStart,6))}<small>${week.filter(lesson=>lesson.status!=='cancelled').length} 节 · 已完成 ${done.length} · ${Number(duration.toFixed(2))} 小时</small></strong><button class="btn icon-button" id="next-week" aria-label="下一周">›</button><button class="btn" id="this-week">本周</button></div>${miniPickerButton()}<div class="calendar-filters"><div class="period-switch" role="group" aria-label="日周月"><button type="button" id="span-day" class="${calendarSpan==='day'?'selected':''}">日</button><button type="button" id="span-week" class="${calendarSpan==='week'?'selected':''}">周</button><button type="button" id="span-month" class="${calendarSpan==='month'?'selected':''}">月</button></div><div class="period-switch" role="group" aria-label="日历显示"><button type="button" id="mode-lessons" class="${calendarMode==='lessons'?'selected':''}">课程</button><button type="button" id="mode-availability" class="${calendarMode==='availability'?'selected':''}">空档</button></div><select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(teacher=>`<option data-user-content value="${teacher.id}" ${teacherFilter==teacher.id?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select><select id="status-filter" aria-label="按课程状态筛选">${[['all','全部状态'],['scheduled','待上课 / 待记录'],['completed','已完成']].map(([value,label])=>`<option value="${value}" ${value===scheduleStatus?'selected':''}>${label}</option>`).join('')}</select></div></div>${mobileDays}<p class="gcal-hint">${calendarMode==='availability'?(teacherFilter?'空白是这位老师可以排课的时间，色块是已经占用的时段。':'空白是还没有课程的时间。选择一位老师后，只看这位老师的空档。'):'点击空白处排一小时，拖动可选更长的时间。拖动课程可改时间。'}</p><div class="gcal ${calendarMode==='availability'?'is-availability':''}" style="--days:${days.length};--gcal-span:${GCAL_END-GCAL_START}"><div class="gcal-head"><div class="gcal-corner">时间</div>${days.map(day=>`<div class="gcal-dayhead ${day===state.today?'is-today':''}"><span>${weekday[(new Date(day+'T12:00:00Z').getUTCDay()+6)%7]}</span><strong>${Number(day.slice(8))}${day===state.today?'<small>今天</small>':''}</strong></div>`).join('')}</div><div class="gcal-scroll" id="gcal-scroll"><div class="gcal-body"><div class="gcal-gutter">${Array.from({length:GCAL_END-GCAL_START},(_,i)=>`<div class="gcal-hour"><span>${String(GCAL_START+i).padStart(2,'0')}:00</span></div>`).join('')}</div>${columns}</div></div></div><p class="footnote">时间以 ${escapeHTML(state.timezone)} 为准。排课不扣课时；确认完成并发布记录后才扣除，并进入老师工资。</p>`;
- $('#prev-week').onclick=()=>stepCalendar(-1);
- $('#next-week').onclick=()=>stepCalendar(1);
- $('#this-week').onclick=()=>focusCalendar(state.today);
+ bindWeekButton('prev-week', ()=>stepCalendar(-1));
+ bindWeekButton('next-week', ()=>stepCalendar(1));
+ bindWeekButton('this-week', ()=>focusCalendar(state.today));
  $('#teacher-filter').onchange=e=>{teacherFilter=e.target.value;renderSchedule();};
  $('#status-filter').onchange=e=>{scheduleStatus=e.target.value;renderSchedule();};
  $('#mode-lessons').onclick=()=>{calendarMode='lessons';renderSchedule();};
@@ -209,7 +219,39 @@ function renderTimeGrid(){
  scroller.onscroll=()=>{gcalScroll=scroller.scrollTop;};
  initTimeGrid();
  bindMiniPicker();
- if(state.recurrence_warnings?.length) $('#surface').insertAdjacentHTML('afterbegin', `<div class="form-context" role="alert"><strong>重复排课需要处理</strong>${state.recurrence_warnings.map(warning=>`<p>${escapeHTML(warning)}</p>`).join('')}<p>发生冲突后的课程暂未继续生成，请调整时间或处理冲突课程。</p></div>`);
+ const banner=recurrenceBanner();
+ if(banner) $('#surface').insertAdjacentHTML('afterbegin', banner);
+}
+function recurrenceBanner(){
+ if(typeof visibleWarningRange!=='function') return '';
+ const [start,end]=visibleWarningRange();
+ const rows=(state.recurrence_warnings||[]).filter(item=>{
+  const day=typeof item==='string'?String(item).slice(0,10):(item.date||'');
+  return day && day>=start && day<=end;
+ });
+ if(!rows.length) return '';
+ const lines=rows.map(item=>{
+  if(typeof item==='string') return escapeHTML(item);
+  const who=[item.teacher, ...(item.students||[])].filter(Boolean).join(' · ');
+  return escapeHTML(`${item.date||''} ${item.time||''} ${who}：${item.message||''}`.replace(/\s+/g,' ').trim());
+ });
+ return `<div class="form-context" role="alert"><strong>重复排课需要处理</strong>${lines.map(line=>`<p>${line}</p>`).join('')}<p>只显示当前这段日期里的冲突。</p></div>`;
+}
+function visibleWarningRange(){
+ if(typeof calendarSpan!=='undefined' && calendarSpan==='month'){
+  const anchor=gcalDay||weekStart||state.today;
+  return [monthStart(anchor), monthEnd(anchor)];
+ }
+ if(typeof calendarSpan!=='undefined' && calendarSpan==='day'){
+  const day=gcalDay||weekStart||state.today;
+  return [day, day];
+ }
+ return [weekStart, datePlus(weekStart,6)];
+}
+function bindWeekButton(id, action){
+ const button=$(id.charAt(0)==='#'?id:'#'+id);
+ if(!button) return;
+ button.onpointerdown=event=>{if(event.button!==0) return; event.preventDefault(); action();};
 }
 function stepCalendar(direction){
  const anchor=gcalDay||weekStart||state.today;
@@ -250,7 +292,7 @@ function renderMonth(){
  const anchor=gcalDay||weekStart||state.today;
  const start=monthStart(anchor), end=monthEnd(anchor);
  const lead=(new Date(start+'T12:00:00Z').getUTCDay()+6)%7;
- const lessons=(state.lessons||[]).filter(lesson=>lesson.status!=='cancelled' && lesson.starts_at.slice(0,10)>=start && lesson.starts_at.slice(0,10)<=end && (!teacherFilter || lesson.teacher_id==teacherFilter));
+ const lessons=(state.lessons||[]).filter(lesson=>lesson.status!=='cancelled' && lesson.starts_at.slice(0,10)>=start && lesson.starts_at.slice(0,10)<=end && (!teacherFilter || String(lesson.teacher_id)===String(teacherFilter)));
  const cells=Array.from({length:lead},()=>'<div class="month-day is-empty"></div>');
  for(let n=1;n<=Number(end.slice(8));n++){
   const day=start.slice(0,8)+String(n).padStart(2,'0');
@@ -258,9 +300,11 @@ function renderMonth(){
   cells.push(`<div class="month-day ${day===state.today?'is-today':''}" data-month-day="${day}"><button type="button" class="month-num">${n}</button>${items.slice(0,3).map(lesson=>{const done=lessonDone(lesson);return `<button type="button" class="month-chip gcal-event is-compact t-${teacherTone(lesson.teacher_name)} ${lesson.status}${done?' completed':''}${!done&&lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(cardHeadline(lesson)+', '+timeRange(lesson, false))}">${cardMarkup(lesson, true)}</button>`;}).join('')}${items.length>3?`<span class="month-more">还有 ${items.length-3} 节</span>`:''}</div>`);
  }
  $('#surface').innerHTML=`<div class="calendar-toolbar"><label class="calendar-search"><input id="calendar-search" type="search" placeholder="搜索学生或老师" value="${escapeHTML(calendarSearch)}"></label><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上个月">‹</button><strong>${start.slice(0,4)}年${Number(start.slice(5,7))}月<small>${lessons.length} 节</small></strong><button class="btn icon-button" id="next-week" aria-label="下个月">›</button><button class="btn" id="this-week">本月</button></div>${miniPickerButton()}<div class="calendar-filters"><div class="period-switch" role="group" aria-label="日周月"><button type="button" id="span-day">日</button><button type="button" id="span-week">周</button><button type="button" id="span-month" class="selected">月</button></div><select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(teacher=>`<option value="${teacher.id}" ${teacherFilter==teacher.id?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select></div></div><div class="month-grid"><div class="month-head">${['周一','周二','周三','周四','周五','周六','周日'].map(name=>`<span>${name}</span>`).join('')}</div><div class="month-days">${cells.join('')}</div></div>`;
- $('#prev-week').onclick=()=>stepCalendar(-1);
- $('#next-week').onclick=()=>stepCalendar(1);
- $('#this-week').onclick=()=>focusCalendar(state.today);
+ bindWeekButton('prev-week', ()=>stepCalendar(-1));
+ bindWeekButton('next-week', ()=>stepCalendar(1));
+ bindWeekButton('this-week', ()=>focusCalendar(state.today));
+ const monthBanner=recurrenceBanner();
+ if(monthBanner) $('#surface').insertAdjacentHTML('afterbegin', monthBanner);
  $('#span-day').onclick=()=>{calendarSpan='day';renderSchedule();};
  $('#span-week').onclick=()=>{calendarSpan='week';renderSchedule();};
  $('#span-month').onclick=()=>{calendarSpan='month';renderSchedule();};
@@ -414,7 +458,7 @@ async function renderToday(){
   const debts=data.arrears?.debts||[];
   const unhanded=data.unhanded||[];
   const row=(name,meta,amount)=>`<div class="row"><div>${userHTML(name)}<small>${meta}</small></div><b>${amount}</b></div>`;
-  $('#today-actions').innerHTML=`<div class="today-action"><h3>剩余不超过 3 节 <span class="count">${low.length}</span></h3>${low.map(item=>row(item.name,`${item.grade||''} · ${item.course}`,`${item.lessons_left} 节`)).join('')||'<p class="muted">没有人低于 3 节。</p>'}</div><div class="today-action"><h3>欠费或没课了还排着 <span class="count">${booked.length+debts.length}</span></h3>${booked.map(item=>row(item.student_name,'课时已用完 · 仍有课','去收款')).join('')}${debts.map(item=>row(item.student_name,item.reason||'欠费',boardMoney(item.amount))).join('')|| (booked.length?'':'<p class="muted">没有欠费。</p>')}</div><div class="today-action"><h3>老师收款还没上交 <span class="count">${unhanded.length}</span></h3>${unhanded.map(item=>row(item.receiver_name||'',`${item.lesson_date||''} · ${methods[item.payment_method]||item.payment_method||''} · ${item.student_name||''}`,boardMoney(item.cash_delta))).join('')||'<p class="muted">没有未上交的代收。</p>'}</div>`;
+  $('#today-actions').innerHTML=`<div class="today-action"><h3>剩余不超过 3 节 <span class="count">${low.length}</span></h3>${low.map(item=>row(item.name,`${item.grade||''} · ${item.course}`,`${item.lessons_left} 节`)).join('')||'<p class="muted">没有人低于 3 节。</p>'}</div><div class="today-action"><h3>欠费或没课了还排着 <span class="count">${booked.length+debts.length}</span></h3>${booked.map(item=>row(item.student_name,`${item.subject_name||item.course||''} · 课时已用完 · 仍有课`,'去收款')).join('')}${debts.map(item=>row(item.student_name,`${item.subject_name||item.course||''} · ${item.reason||'欠费'}`,boardMoney(item.amount))).join('')|| (booked.length?'':'<p class="muted">没有欠费。</p>')}</div><div class="today-action"><h3>老师收款还没上交 <span class="count">${unhanded.length}</span></h3>${unhanded.map(item=>row(item.receiver_name||'',`${item.lesson_date||''} · ${methods[item.payment_method]||item.payment_method||''} · ${item.student_name||''}`,boardMoney(item.cash_delta))).join('')||'<p class="muted">没有未上交的代收。</p>'}</div>`;
  }catch(error){if(view==='today') $('#today-actions').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`;}
 }
 function quickCloseModal(lesson){

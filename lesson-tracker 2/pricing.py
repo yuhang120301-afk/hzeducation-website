@@ -258,7 +258,7 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
         if not student:
             raise ValueError('学生不存在。')
         level = annotate(dict(student), on)['level_price'] or level
-        course_type_id = course_type_id or student['course_type_id']
+        course_type_id = course_type_id or student['course_type_id'] or _type_from_text(c, student)
     name = ''
     if course_type_id:
         kind = c.execute('SELECT name FROM course_types WHERE id=?', (int(course_type_id),)).fetchone()
@@ -442,6 +442,24 @@ def save_validity(c, user, data):
 def require_owner(user):
     if user['role'] != 'owner':
         raise AccessError('价格只对老板开放。')
+
+
+def _type_from_text(c, student):
+    """Old rows stored 一对一 in the course name and left course_type_id empty."""
+    import teaching
+    blob = ' '.join(str(student[key] or '') for key in student.keys() if key in ('course', 'course_note', 'course_type_name'))
+    _subject, kind, _raw = teaching.parse_label(blob, None)
+    if not kind:
+        return None
+    row = c.execute('SELECT id FROM course_types WHERE name=?', (kind,)).fetchone()
+    return row['id'] if row else None
+
+
+def level_rank(code):
+    try:
+        return LEVELS.index(code)
+    except ValueError:
+        return len(LEVELS)
 
 
 def level_index(code):
@@ -804,7 +822,8 @@ def list_prices(c, user):
     tables = []
     for table in c.execute('SELECT * FROM price_tables ORDER BY effective_from DESC, id DESC'):
         item = dict(table)
-        item['rows'] = [dict(r) for r in c.execute("SELECT * FROM price_rows WHERE table_id=? AND product!='helen' ORDER BY product, level_from, id", (table['id'],))]
+        item['rows'] = [dict(r) for r in c.execute("SELECT * FROM price_rows WHERE table_id=? AND product!='helen'", (table['id'],))]
+        item['rows'].sort(key=lambda row: (level_rank(row['level_from']), level_rank(row['level_to']), row['product'], row['id']))
         tables.append(item)
     ensure_subject_prices(c)
     custom = [dict(r) for r in c.execute('''SELECT p.*, s.name student_name FROM student_subject_prices p

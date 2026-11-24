@@ -35,20 +35,49 @@ def unhanded(c):
         + __import__('vouchers').hide_sql(c, 'l') + ' ORDER BY l.lesson_date, cash.ledger_id''')]
 
 
+def _subject_key(row):
+    import teaching
+    return teaching.canonical_subject(row.get('subject_name') or row.get('course') or '')
+
+
+def _covered_by_sibling(active, row):
+    """An empty course is not 欠费 when another live course of the same subject still has a balance."""
+    subject = _subject_key(row)
+    profile = row.get('profile_id')
+    own = row.get('student_id') or row.get('id')
+    if not profile or not subject:
+        return False
+    for other in active:
+        if other['id'] == own or other['profile_id'] != profile or other['balance'] <= 0:
+            continue
+        if _subject_key(other) == subject:
+            return True
+    return False
+
+
 def arrears_rows(c):
+    active = [dict(r) for r in c.execute('''SELECT s.id, s.profile_id, s.name, s.course, s.balance, sb.name subject_name
+        FROM students s LEFT JOIN subjects sb ON sb.id=s.subject_id
+        WHERE s.archived=0''')]
     if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='arrears'").fetchone():
-        owed = [dict(r) for r in c.execute('''SELECT a.*, s.name student_name, s.course, s.balance
+        owed = [dict(r) for r in c.execute('''SELECT a.*, s.name student_name, s.course, s.balance, s.profile_id, sb.name subject_name
             FROM arrears a JOIN students s ON s.id=a.student_id
-            WHERE a.settled=0 ORDER BY a.id DESC''')]
+            LEFT JOIN subjects sb ON sb.id=s.subject_id
+            WHERE a.settled=0 AND s.archived=0 ORDER BY a.id DESC''')]
     else:
         owed = []
-    booked = [dict(r) for r in c.execute('''SELECT s.id student_id, s.name student_name, s.course, s.balance,
-        MIN(l.starts_at) next_lesson, COUNT(l.id) upcoming
+    owed = [row for row in owed if not _covered_by_sibling(active, row)]
+    booked = [dict(r) for r in c.execute('''SELECT s.id student_id, s.profile_id, s.name student_name, s.course, s.balance,
+        sb.name subject_name, MIN(l.starts_at) next_lesson, COUNT(l.id) upcoming
         FROM students s
         JOIN lesson_students ls ON ls.student_id=s.id
         JOIN lessons l ON l.id=ls.lesson_id
+        LEFT JOIN subjects sb ON sb.id=s.subject_id
         WHERE s.archived=0 AND s.balance<=0 AND l.status='scheduled' AND l.starts_at>=?
         GROUP BY s.id ORDER BY next_lesson''', (now_local().strftime('%Y-%m-%dT%H:%M'),))]
+    booked = [row for row in booked if not _covered_by_sibling(active, row)]
+    for row in owed + booked:
+        row['subject_name'] = _subject_key(row)
     return {'debts': owed, 'booked_without_credit': booked}
 
 
