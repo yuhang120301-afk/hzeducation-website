@@ -612,6 +612,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 if user['role'] not in ('owner','admin'):
                     return self.response(403, {'error':'只有老师可以修改课时。'})
+                if self.path == '/api/students/course/relink':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=profiles.relink_future(c,user,data)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path in ('/api/students/profile','/api/students/guardian','/api/students/course'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path.endswith('/profile'): result=profiles.update(c,user,data,text_value)
