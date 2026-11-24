@@ -12,7 +12,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.12
       - key: LESSON_ORG_NAME
-        value: HELEN’S MATH SECRETS
+        value: HZ Education Melbourne
       - key: LESSON_DEMO
         value: "0"
       - key: LESSON_SECURE_COOKIE

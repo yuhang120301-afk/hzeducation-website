@@ -59,6 +59,8 @@ def schema(c):
     ''')
     if 'color' not in {r['name'] for r in c.execute('PRAGMA table_info(lessons)')}:
         c.execute("ALTER TABLE lessons ADD COLUMN color TEXT NOT NULL DEFAULT 'green'")
+    if 'updated_at' not in {r['name'] for r in c.execute('PRAGMA table_info(lessons)')}:
+        c.execute("ALTER TABLE lessons ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
     if 'subjects' not in {r['name'] for r in c.execute('PRAGMA table_info(teachers)')}:
         c.execute("ALTER TABLE teachers ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
     c.execute("INSERT OR IGNORE INTO teachers(user_id) SELECT id FROM users WHERE role='admin'")
@@ -109,7 +111,7 @@ def state_for(c,user):
     for lesson in lessons:
         member_where=' AND s.parent_id=?' if role=='parent' else ''
         member_params=(lesson['id'],user['id']) if role=='parent' else (lesson['id'],)
-        lesson['students']=[dict(x) for x in c.execute('SELECT s.id,s.name,s.course,s.balance,s.billing_unit FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=?'+member_where+' ORDER BY s.id',member_params)]
+        lesson['students']=[dict(x) for x in c.execute('SELECT s.id,s.name,s.course,s.balance,s.billing_unit,s.grade FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=?'+member_where+' ORDER BY s.id',member_params)]
         if role=='parent' and lesson['status']!='completed':
             lesson['reports']=[]
         else:
@@ -230,7 +232,8 @@ def save_lesson(c,user,data,units,text_value):
         raise ValueError('结束时间必须晚于开始时间，单次课程最长 12 小时。')
     start,end=start.strftime('%Y-%m-%dT%H:%M'),end.strftime('%Y-%m-%dT%H:%M')
     raw=data.get('student_ids')
-    if not isinstance(raw,list) or not 1<=len(raw)<=30:
+    allow_empty=bool(data.get('allow_empty'))
+    if not isinstance(raw,list) or len(raw)>30 or (not allow_empty and len(raw)<1):
         raise ValueError('每节课请选择 1–30 位学生。')
     members=sorted(set(int(x) for x in raw))
     profile_ids=[]
@@ -291,7 +294,49 @@ def cancel_lesson(c,user,data,text_value):
         c.execute("UPDATE lesson_series SET stop_index=MIN(COALESCE(stop_index,?),?),error='',version=version+1 WHERE id=?",(lesson['occurrence_index'],lesson['occurrence_index'],lesson['series_id']))
     elif lesson['series_id']:
         c.execute('UPDATE lesson_series SET version=version+1 WHERE id=?',(lesson['series_id'],))
+    if not data.get('waive_leave'):
+        apply_late_leave(c, lesson)
     return {'ok':True}
+
+def apply_late_leave(c, lesson):
+    """A cancellation inside 48 hours uses one lesson when the balance allows. Otherwise it is recorded as arrears and the balance stays put."""
+    try:
+        start = datetime_value(lesson['starts_at'])
+    except (ValueError, TypeError):
+        return
+    now = now_local()
+    if start.tzinfo is not None and now.tzinfo is None:
+        start = start.replace(tzinfo=None)
+    if now.tzinfo is not None and start.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    gap = (start - now).total_seconds()
+    if gap <= 0 or gap > 48 * 3600:
+        return
+    c.execute('''CREATE TABLE IF NOT EXISTS arrears (
+        id INTEGER PRIMARY KEY,
+        student_id INTEGER NOT NULL REFERENCES students(id),
+        lesson_id INTEGER,
+        amount INTEGER NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        settled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    )''')
+    import credit_batches
+    for row in c.execute('SELECT student_id FROM lesson_students WHERE lesson_id=?', (lesson['id'],)):
+        student = c.execute('SELECT balance, billing_unit FROM students WHERE id=?', (row['student_id'],)).fetchone()
+        if not student:
+            continue
+        amount = 100 if (student['billing_unit'] or 'lesson') != 'hour' else int(lesson['planned_units'] or 100)
+        available = c.execute('SELECT COALESCE(SUM(paid_left+gift_left),0) AS n FROM credit_batches WHERE student_id=?', (row['student_id'],)).fetchone()['n']
+        if amount > 0 and student['balance'] >= amount and available >= amount:
+            import secrets
+            ledger = c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,0,'lesson',?,'48小时内请假，扣一节课',?,?)",
+                (row['student_id'], now_local().date().isoformat(), lesson['created_by'] or 1, secrets.token_hex(16))).lastrowid
+            credit_batches.consume(c, ledger, row['student_id'], amount)
+            credit_batches.finish(c, ledger)
+        else:
+            c.execute('INSERT INTO arrears(student_id,lesson_id,amount,reason) VALUES(?,?,?,?)',
+                (row['student_id'], lesson['id'], amount, '48小时内请假，余额不足'))
 
 def save_reports(c,user,data,units,action):
     lesson=allowed_lesson(c,user,data['lesson_id'])

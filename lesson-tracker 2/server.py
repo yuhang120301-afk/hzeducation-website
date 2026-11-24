@@ -21,17 +21,30 @@ import credit_batches
 import accounting
 import deletion
 import payroll
+import pricing
+import auditlog
+import finance
 from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = os.environ.get('LESSON_DB', str(ROOT / 'data' / 'lessons.sqlite3'))
 DEMO = os.environ.get('LESSON_DEMO') == '1'
+
+def demo_seed_allowed():
+    """Sample students are only for a local demo file, never the production disk."""
+    if os.environ.get('LESSON_DEMO') != '1':
+        return False
+    db = os.path.realpath(os.environ.get('LESSON_DB', DB_PATH))
+    if db == '/var/data/lessons.sqlite3' or db.startswith('/var/data/'):
+        return False
+    return True
 SECURE = os.environ.get('LESSON_SECURE_COOKIE') == '1'
-ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HELEN’S MATH SECRETS')[:60]
-NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HELEN’S MATH SECRETS</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
+ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HZ Education Melbourne')[:60]
+NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
 
 def contact_details():
-    return {'phone':os.environ.get('LESSON_CONTACT_PHONE','').strip()[:40],'email':os.environ.get('LESSON_CONTACT_EMAIL','').strip()[:80],'wechat':os.environ.get('LESSON_CONTACT_WECHAT','').strip()[:60]}
+    email = os.environ.get('LESSON_CONTACT_EMAIL', 'helenzeducation@gmail.com').strip()[:80]
+    return {'email': email or 'helenzeducation@gmail.com'}
 
 def connect():
     c = sqlite3.connect(DB_PATH, timeout=20)
@@ -96,7 +109,7 @@ def initialize():
         );
         CREATE INDEX IF NOT EXISTS ledger_student ON ledger(student_id,id);
         ''')
-        if DEMO and not c.execute('SELECT 1 FROM users LIMIT 1').fetchone():
+        if demo_seed_allowed() and not c.execute('SELECT 1 FROM users LIMIT 1').fetchone():
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(1,?,?,?,?)', ('0400000000', 'Helen 老师', password_hash('TeacherDemo2026!'), 'admin'))
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(2,?,?,?,?)', ('0400000001', '陈同学家长', password_hash('ParentDemo2026!'), 'parent'))
             c.execute('INSERT INTO users(id,phone,name,password,role) VALUES(3,?,?,?,?)', ('0400000002', '其他学生家长', password_hash(secrets.token_urlsafe(24)), 'parent'))
@@ -106,7 +119,7 @@ def initialize():
                 c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,?,?,?,1,?)',(sid,-used,'lesson','2026-09-20','示例：历史上课汇总',secrets.token_hex(16)))
         c.execute('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         teaching.schema(c)
-        if DEMO and not c.execute("SELECT 1 FROM app_meta WHERE key='teaching_demo_v1'").fetchone():
+        if demo_seed_allowed() and not c.execute("SELECT 1 FROM app_meta WHERE key='teaching_demo_v1'").fetchone():
             demo_teacher=c.execute("SELECT id FROM users WHERE phone='0400000003'").fetchone()
             if not demo_teacher:
                 uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'parent')",('0400000003','Emma 老师',password_hash('TutorDemo2026!'))).lastrowid
@@ -119,16 +132,130 @@ def initialize():
                         lid=c.execute('INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,created_by,request_id) VALUES(?,?,?,?,?,?,?,?)',(tid,'数学 · 一对一',f'{day}T{hour}:00',f'{day}T{hour+1}:00',100,'教室 1',admin['id'],secrets.token_hex(16))).lastrowid
                         c.execute('INSERT INTO lesson_students VALUES(?,?)',(lid,student['id']))
             c.execute("INSERT INTO app_meta VALUES('teaching_demo_v1','1')")
-        accounting.schema(c,DEMO)
+        accounting.schema(c, demo_seed_allowed())
         profiles.schema(c)
         credit_batches.schema(c)
         record_edits.schema(c)
-        if DEMO and not c.execute("SELECT 1 FROM app_meta WHERE key='owner_demo_v1'").fetchone():
+        if demo_seed_allowed() and not c.execute("SELECT 1 FROM app_meta WHERE key='owner_demo_v1'").fetchone():
             if not c.execute("SELECT 1 FROM users WHERE phone='0400000004'").fetchone():
                 uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'admin')",('0400000004','Amy 管理员',password_hash('AdminDemo2026!'))).lastrowid
                 c.execute('INSERT INTO teachers(user_id) VALUES(?)',(uid,))
             c.execute("INSERT INTO app_meta VALUES('owner_demo_v1','1')")
         payroll.schema(c)
+        pricing.schema(c)
+        auditlog.schema(c)
+        if demo_seed_allowed():
+            seed_portal_cast(c)
+
+def seed_portal_cast(c):
+    """Demo teachers and students from the approved mockups. Additive and skipped once recorded."""
+    if c.execute("SELECT 1 FROM app_meta WHERE key='portal_cast_v1'").fetchone():
+        return
+    helen = c.execute("SELECT id FROM users WHERE phone='0400000000'").fetchone()
+    if not helen:
+        return
+    def teacher(phone, name):
+        row = c.execute('SELECT id FROM users WHERE phone=?', (phone,)).fetchone()
+        uid = row['id'] if row else c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'parent')", (phone, name, password_hash('TutorDemo2026!'))).lastrowid
+        existing = c.execute('SELECT id FROM teachers WHERE user_id=?', (uid,)).fetchone()
+        if existing:
+            return existing['id']
+        return c.execute("INSERT INTO teachers(user_id,subject,subjects) VALUES(?,?,'[\"数学\"]')", (uid, '数学')).lastrowid
+    helen_teacher = c.execute('SELECT id FROM teachers WHERE user_id=?', (helen['id'],)).fetchone()
+    cast = {
+        'Helen': helen_teacher['id'] if helen_teacher else c.execute("INSERT INTO teachers(user_id,subject,subjects) VALUES(?,?,'[\"数学\"]')", (helen['id'], '数学')).lastrowid,
+        'Vincent': teacher('0400000011', 'Vincent'),
+        'Angela': teacher('0400000012', 'Angela'),
+        'Kelsey': teacher('0400000013', 'Kelsey'),
+        'Ethan': teacher('0400000014', 'Ethan'),
+        'Christina': teacher('0400000015', 'Christina'),
+    }
+    for name, tid in cast.items():
+        if c.execute('SELECT 1 FROM pay_rules WHERE teacher_id=?', (tid,)).fetchone():
+            continue
+        folded = name.casefold()
+        for fragment, kind, bp, floor in payroll.SEED_RULES:
+            if fragment in folded:
+                c.execute('''INSERT INTO pay_rules(teacher_id,rule_type,percent_bp,hourly_floor_cents,hourly_rate_cents,effective_from,note,created_by)
+                    VALUES(?,?,?,?,NULL,'2000-01-01','初始规则',?)''', (tid, kind, bp, floor, helen['id']))
+                if fragment == 'vincent' and not c.execute('SELECT 1 FROM partner_share_rules WHERE teacher_id=?', (tid,)).fetchone():
+                    c.execute('''INSERT INTO partner_share_rules(teacher_id,percent_bp,effective_from,note,created_by)
+                        VALUES(?,3000,'2000-01-01','新学生课酬减去共同成本后的分成',?)''', (tid, helen['id']))
+    parent = c.execute("SELECT id FROM users WHERE phone='0400000001'").fetchone()
+    if not parent:
+        return
+    def student(name, grade, level, balance):
+        row = c.execute('SELECT id FROM students WHERE name=?', (name,)).fetchone()
+        if row:
+            c.execute('UPDATE students SET billing_unit=?,grade=?,level_code=?,level_year=? WHERE id=?', ('lesson', grade, level, 2026, row['id']))
+            return row['id']
+        profile = c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+        sid = c.execute('''INSERT INTO students(name,course,parent_id,profile_id,balance,billing_unit,grade,level_code,level_year)
+            VALUES(?,?,?,?,?,'lesson',?,?,?)''', (name, '数学', parent['id'], profile, balance, grade, level, 2026)).lastrowid
+        if balance:
+            c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'credit',?,'演示余额',?,?)",
+                (sid, balance, '2026-11-01', helen['id'], secrets.token_hex(16)))
+            c.execute("INSERT INTO credit_batches(student_id,purchased,gifted,paid_left,gift_left,credited_on,legacy) VALUES(?,?,0,?,0,'',1)", (sid, balance, balance))
+        return sid
+    kids = {
+        '陈一诺': student('陈一诺', 'Y6', 'Y6', 200),
+        '赵恩希': student('赵恩希', 'Y6', 'Y6', 300),
+        '王星然': student('王星然', 'Y4', 'Y4', 0),
+        '周可': student('周可', 'Y11', 'Y11', 1200),
+        '李沐阳': student('李沐阳', 'Y12', 'Y12', 800),
+        '陈子墨': student('陈子墨', 'Y3', 'Y3', 1500),
+        '林晓': student('林晓', 'Y8', 'Y8', 600),
+    }
+    today = teaching.now_local().date()
+    monday = today - dt.timedelta(days=today.weekday())
+    def at(offset, start, end):
+        day = monday + dt.timedelta(days=offset)
+        return f'{day.isoformat()}T{start}', f'{day.isoformat()}T{end}', day.isoformat()
+    plan = [
+        ('Angela', ['陈一诺'], 0, '16:00', '17:00', 'scheduled', '1:1'),
+        ('Kelsey', ['王星然', '陈子墨'], 0, '16:00', '17:30', 'scheduled', '1:2'),
+        ('Vincent', ['周可'], 0, '18:00', '19:00', 'scheduled', '1:1'),
+        ('Angela', ['赵恩希'], today.weekday(), '15:00', '16:00', 'completed', '1:1'),
+        ('Angela', ['陈一诺'], today.weekday(), '16:00', '17:00', 'scheduled', '1:1'),
+        ('Kelsey', ['王星然'], today.weekday(), '17:00', '18:30', 'scheduled', '1:2'),
+        ('Helen', ['李沐阳'], today.weekday(), '18:30', '20:00', 'scheduled', '1:1'),
+        ('Ethan', ['陈子墨'], 2, '15:30', '17:00', 'scheduled', '1:1'),
+        ('Vincent', ['周可'], 3, '16:00', '17:00', 'scheduled', '1:1'),
+        ('Christina', ['林晓'], 4, '17:00', '18:00', 'scheduled', '1:1'),
+        ('Helen', ['李沐阳'], 5, '10:00', '11:30', 'scheduled', '1:1'),
+        ('Christina', ['林晓'], 6, '09:00', '10:00', 'scheduled', '1:1'),
+    ]
+    for who, names, offset, start, end, status, kind in plan:
+        starts, ends, day = at(offset, start, end)
+        if c.execute('SELECT 1 FROM lessons WHERE teacher_id=? AND starts_at=? AND title=?', (cast[who], starts, f'数学 · {kind}')).fetchone():
+            continue
+        lid = c.execute('''INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,status,created_by,request_id)
+            VALUES(?,?,?,?,100,'教室',?,?,?)''', (cast[who], f'数学 · {kind}', starts, ends, status, helen['id'], secrets.token_hex(16))).lastrowid
+        for name in names:
+            c.execute('INSERT INTO lesson_students VALUES(?,?)', (lid, kids[name]))
+        if status == 'completed':
+            sid = kids[names[0]]
+            ledger = c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,'已上了',?,?)",
+                (sid, -100, day, helen['id'], secrets.token_hex(16))).lastrowid
+            c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,ledger_id,updated_by)
+                VALUES(?,?,100,'分数运算','练习册第 3 页','今天的课已上完。',?,?)''', (lid, sid, ledger, helen['id']))
+            c.execute('UPDATE students SET balance=MAX(balance-100,0) WHERE id=?', (sid,))
+    samples = [
+        ('陈一诺', 170000, 'bank', 1),
+        ('王星然', 120000, 'cash', 0),
+        ('赵恩希', 170000, 'wechat', 1),
+    ]
+    kelsey_user = c.execute('SELECT user_id FROM teachers WHERE id=?', (cast['Kelsey'],)).fetchone()['user_id']
+    for name, cents, method, handed in samples:
+        sid = kids[name]
+        ledger = c.execute("SELECT id FROM ledger WHERE student_id=? AND kind='credit' ORDER BY id LIMIT 1", (sid,)).fetchone()
+        if not ledger or c.execute('SELECT 1 FROM cash_entries WHERE ledger_id=?', (ledger['id'],)).fetchone():
+            continue
+        recv = helen['id'] if handed else kelsey_user
+        c.execute('''INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by,received_by,handed_over)
+            VALUES(?,?,?,?,?,?,?)''', (ledger['id'], cents, method, '', helen['id'], recv, handed))
+    c.execute("INSERT INTO audit_log(actor_id,action,summary,ops_json) VALUES(?,?,'演示：登记陈一诺的课时包','[]')", (helen['id'], 'purchase'))
+    c.execute("INSERT INTO app_meta VALUES('portal_cast_v1','1')")
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -220,6 +347,31 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path in ('/api/finance', '/api/finance.xlsx', '/api/finance.pdf'):
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    result=finance.statement(c,user,params.get('period',['month'])[0],params.get('date',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])
+                    if path.endswith('.xlsx') or path.endswith('.pdf'):
+                        import exports
+                        blob=exports.finance_xlsx(result) if path.endswith('.xlsx') else exports.finance_pdf(result)
+                        kind='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' if path.endswith('.xlsx') else 'application/pdf'
+                        name='HZ-Education-Melbourne-finance.'+('xlsx' if path.endswith('.xlsx') else 'pdf')
+                        return self.response(200, blob, content_type=kind, extra=[('Content-Disposition', f'attachment; filename="{name}"')])
+                    return self.response(200,result)
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/audit':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    return self.response(200,{'entries':auditlog.search(c,user,params.get('actor',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])})
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/health':
             with connect() as c:
                 c.execute('SELECT 1 FROM users LIMIT 1').fetchone()
@@ -273,7 +425,7 @@ class Handler(BaseHTTPRequestHandler):
         mime = {'html':'text/html; charset=utf-8','js':'application/javascript; charset=utf-8','css':'text/css; charset=utf-8','svg':'image/svg+xml','jpg':'image/jpeg'}[name.rsplit('.',1)[1]]
         content = (ROOT/'static'/name).read_bytes()
         if name == 'index.html':
-            content = content.decode().replace('课时簿 · 每一节，都有记录',html.escape(ORG_NAME)+' · 课时管理').encode()
+            content = content.decode().replace('<title>HZ Education Melbourne</title>','<title>'+html.escape(ORG_NAME)+'</title>').encode()
         return self.response(200,content,content_type=mime)
 
     def do_POST(self):
@@ -374,6 +526,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 if self.path == '/api/students':
                     return self.add_student(c,user,data)
+                if self.path == '/api/prices/quote':
+                    return self.response(200, pricing.quote(c,user,data.get('student_id'),data.get('product'),data.get('lesson_minutes'),data.get('paid_lessons'),data.get('date') or teaching.now_local().date().isoformat(),data.get('terms')))
+                if self.path == '/api/audit/undo':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=auditlog.undo(c,user,int(data.get('id') or 0))
+                    c.commit()
+                    return self.response(200,result)
                 if self.path in ('/api/entries','/api/reverse','/api/refunds'):
                     return self.record(c,user,data)
                 return self.response(404,{'error':'接口不存在。'})
@@ -466,6 +625,8 @@ class Handler(BaseHTTPRequestHandler):
             kind = 'refund' if self.path=='/api/refunds' else data.get('kind')
             if kind not in ('lesson','credit','refund') or (kind=='refund' and self.path!='/api/refunds'):
                 raise ValueError('记录类型无效。')
+            if kind=='credit' and data.get('product'):
+                data=pricing.normalize_purchase(c,user,data)
             delta = (credit_batches.zero_units(data.get('amount'),units)+credit_batches.zero_units(data.get('gift_amount',0),units)) if kind=='credit' else -units(data.get('amount'))
             day = dt.date.fromisoformat(str(data.get('date',''))).isoformat()
             if day > teaching.now_local().date().isoformat():

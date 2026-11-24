@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课时管理 · 版式预览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1F2A27; --muted:#5B6B66; --faint:#8AA399; --line:#D9E3DF; --bg:#FFFFFF; --card:#FFFFFF;
+  --green:#204F40; --green-soft:#E3EFE9; --surface:#F1F6F4; --surface-2:#F7FAF8;
+  --gold:#C9A253; --gold-text:#8A6D1F; --gold-soft:#F8F3E4; --gold-on:#E8C77F;
+  --shadow:0 1px 2px rgba(32,79,64,.04);
+  --sans:"Noto Sans SC",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;font-weight:400;letter-spacing:0}
+button,input,select{font:inherit;color:inherit}
+button{cursor:default}
+.app{display:grid;grid-template-columns:228px 1fr;min-height:100vh}
+.nav{background:#fff;border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:4px}
+.brand{display:block;text-align:center;padding:4px 8px 18px}
+.brand img{width:154px;height:154px;object-fit:contain;border-radius:0}
+.brand div,.brand strong{display:none}
+.nav button,.tabbar button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;border-radius:12px;padding:12px;color:var(--muted);font-size:15px}
+.nav button.active{background:var(--green);color:#fff;font-weight:700}
+.nav .more{margin-top:18px;padding:8px 12px 4px;color:var(--faint);font-size:12px;letter-spacing:.4px;border-top:2px solid var(--gold)}
+.nav .quiet{font-weight:500}
+.main{min-width:0;padding:28px 32px 40px;background:var(--surface-2)}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px}
+.fin-top{display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:16px}
+.fin-top p{grid-column:1 / -1;margin:8px 0 0}
+.top h1{margin:0;font-size:28px;letter-spacing:-.4px;font-weight:700;color:var(--green)}
+.top h1::after{content:"";display:block;width:36px;height:3px;background:var(--gold);margin-top:8px;border-radius:2px}
+.top p{margin:6px 0 0;color:var(--muted);font-size:14px}
+.who{color:var(--muted);font-size:14px}
+.who b{color:var(--ink);font-weight:650}
+.search{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:0 16px;height:56px;box-shadow:var(--shadow);margin-bottom:18px}
+.search input{border:0;outline:0;flex:1;font-size:17px;background:transparent}
+.search svg{flex:none;color:var(--green)}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;box-shadow:var(--shadow)}
+.card .k{color:var(--muted);font-size:13px}
+.card .n,.metrics .n,.metrics .pay,.cut,.money{color:var(--green)}
+.card .n{font-size:34px;font-weight:720;letter-spacing:-.8px;margin:8px 0 4px;font-variant-numeric:tabular-nums}
+.card .s{color:var(--muted);font-size:13px}
+.section{margin-top:8px}
+.section h2{margin:0 0 12px;font-size:18px;color:var(--green)}
+/* A2 teacher colours: soft, a little brighter than the first muted set.
+   Fill is a light wash. The bar and avatar use the tone. Edit a teacher here. */
+.t-helen{--fill:#E4F0E9;--tone:#78B48F;--on-dot:#1F2A27}
+.t-vincent{--fill:#E7ECF3;--tone:#85A1C2;--on-dot:#1F2A27}
+.t-angela{--fill:#F5EAE8;--tone:#CB958B;--on-dot:#1F2A27}
+.t-kelsey{--fill:#EDEAF3;--tone:#A695C3;--on-dot:#1F2A27}
+.t-ethan{--fill:#E4F0EF;--tone:#7AB6AD;--on-dot:#1F2A27}
+.t-christina{--fill:#F5F1E7;--tone:#CEBA88;--on-dot:#1F2A27}
+.lesson{display:grid;grid-template-columns:88px 1fr auto;gap:14px;align-items:center;background:var(--fill,#fff);border:1px solid var(--line);border-left:5px solid var(--tone,var(--line));border-radius:16px;padding:14px 14px 14px 12px;margin-bottom:10px;box-shadow:var(--shadow)}
+.lesson time{font-size:20px;font-weight:720;letter-spacing:-.3px;color:var(--ink)}
+.lesson time small{display:block;font-size:13px;font-weight:500;color:var(--muted);margin-top:2px}
+.lesson .who2{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:680;color:var(--ink)}
+.lesson .who2 div span{display:block;margin-top:3px;color:var(--muted);font-size:14px;font-weight:650}
+.mark,.avatar{background:var(--tone,var(--green));color:var(--on-dot,#fff)}
+.mark{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;flex:none;font-size:14px}
+.lesson.done,.event.done{--fill:#EDF0F2;--tone:#9AA7AF;--on-dot:#53616B;background:#EDF0F2;border-left-color:#9AA7AF}
+.lesson.done time,.lesson.done .who2,.lesson.done .who2 div span,.event.done{color:#53616B}
+.lesson.done .taps .go{background:#9AA7AF;border-color:#9AA7AF;color:#fff}
+.taps{display:flex;gap:8px}
+.taps button{min-width:84px;height:48px;border-radius:12px;border:1px solid var(--line);background:#fff;font-weight:700}
+.taps .go{background:var(--green);color:#fff;border-color:var(--green)}
+.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:8px}
+.action{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 16px 8px;box-shadow:var(--shadow)}
+.action h3{margin:0 0 8px;font-size:16px}
+.action .count{float:right;background:var(--gold-soft);color:var(--gold-text);border-radius:999px;padding:2px 8px;font-size:13px;font-weight:700}
+.row{display:flex;justify-content:space-between;gap:10px;padding:12px 0;border-top:1px solid #f0f1f4;font-size:15px}
+.row b{font-weight:680}
+.row small{display:block;color:var(--muted);font-weight:500;margin-top:3px}
+.period{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seg{display:flex;background:var(--green-soft);border-radius:12px;padding:4px}
+.seg button{border:0;background:transparent;border-radius:9px;padding:8px 14px;font-weight:650;color:var(--muted)}
+.staff{display:flex;align-items:center;gap:16px;background:var(--fill,#fff);border:1px solid var(--line);border-left:5px solid var(--tone,var(--line));border-radius:18px;padding:18px 20px;margin-bottom:12px;box-shadow:var(--shadow)}
+.avatar{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-weight:750;flex:none;font-size:18px}
+.staff .mid{flex:1;min-width:0}
+.staff h3{margin:0 0 4px;font-size:20px;color:var(--green)}
+.list{background:#fff;border:1px solid var(--line);border-radius:12px}
+.lrow{display:flex;align-items:center;gap:18px;padding:14px 16px;border-top:1px solid var(--line);font-size:17px}
+.lrow:first-child{border-top:0}
+.pill{display:inline-flex;align-items:center;justify-content:center;min-width:88px;min-height:32px;padding:0 12px;border-radius:999px;background:var(--tone);color:var(--on-dot);font-size:15px;font-weight:650}
+.lrow .grow{flex:1;min-width:0;font-weight:650}
+.lrow .grow small{display:block;color:var(--muted);font-size:14px;font-weight:500;margin-top:2px}
+.lrow .num{min-width:88px;text-align:right;font-size:20px;font-weight:700;color:var(--green);font-variant-numeric:tabular-nums}
+.lrow .num span{display:block;font-size:12px;font-weight:500;color:var(--muted)}
+.staff .meta{color:var(--muted);font-size:14px;line-height:1.5}
+.metrics{display:flex;gap:22px;text-align:right}
+.metrics div{min-width:84px}
+.metrics .k{color:var(--muted);font-size:12px}
+.metrics .n{font-size:22px;font-weight:730;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+.metrics .pay{color:var(--green)}
+.day{margin:18px 0 8px;font-size:15px;color:var(--muted);font-weight:700}
+.payline{display:grid;grid-template-columns:120px 1.4fr .6fr .8fr .8fr;gap:8px;align-items:center;background:var(--fill,#fff);border:1px solid var(--line);border-left:5px solid var(--tone,var(--line));border-radius:14px;padding:16px 18px;margin-bottom:10px}
+.payline b{font-size:16px}
+.payline span{color:var(--ink)}
+.money{font-variant-numeric:tabular-nums;font-weight:730;text-align:right}
+.cut{color:var(--green)}
+.back{border:0;background:transparent;color:var(--green);font-weight:700;padding:0 0 8px;font-size:15px}
+.seg button.on{background:var(--green);color:#fff}
+.finance-blocks{display:grid;gap:14px}
+.block{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:var(--shadow)}
+.block h2{margin:0 0 4px;font-size:18px}
+.block .lead{font-size:32px;font-weight:740;letter-spacing:-.7px;margin:6px 0}
+.block .note{color:var(--muted);font-size:14px;line-height:1.55}
+.split{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #f0f1f4}
+.block .split:first-child{border-top:0;padding-top:0}
+.exports{display:flex;gap:8px}
+.exports button{height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:#fff;font-weight:700}
+.exports .primary{background:var(--green);color:#fff;border-color:var(--green)}
+.tabbar{display:none}
+.cal-wrap{display:grid;grid-template-columns:232px 1fr;gap:16px;align-items:start}
+.mini{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px}
+.mini h3{margin:0 0 10px;font-size:15px;display:flex;justify-content:space-between}
+.mini table{width:100%;border-collapse:collapse;text-align:center;font-size:13px}
+.mini th{color:#9aa3af;font-weight:600;padding:4px 0}
+.mini td{padding:3px 0}
+.mini .today{background:#204F40;color:#fff;border-radius:50%;display:inline-grid;place-items:center;width:26px;height:26px;font-weight:700}
+.gcal{background:#fff;border:1px solid #dadce0;border-radius:12px;overflow:hidden}
+.gcal-tools{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #dadce0}
+.csearch{display:flex;align-items:center;gap:6px;height:36px;width:220px;padding:0 10px;border:1px solid #dadce0;border-radius:8px;background:#fff;color:#5B6B66}
+.csearch input{border:0;outline:0;width:100%;font:inherit;font-size:14px;background:transparent;color:#1F2A27}
+.csearch svg{flex:none;color:#204F40}
+.event.search-dim{opacity:.28}
+.event.search-hit{outline:2px solid #204F40;z-index:4}
+.gcal-tools h2{margin:0;font-size:20px;font-weight:500;flex:1}
+.iconbtn{width:36px;height:36px;border-radius:50%;border:1px solid #dadce0;background:#fff;font-size:18px}
+.todaybtn{height:36px;padding:0 14px;border-radius:18px;border:1px solid #dadce0;background:#fff;font-weight:650}
+.gviews{margin-left:auto;display:flex;border:1px solid #dadce0;border-radius:8px;overflow:hidden}
+.gviews button{border:0;background:#fff;padding:8px 12px;border-left:1px solid #dadce0}
+.gviews button:first-child{border-left:0}
+.gviews .on{background:#204F40;color:#fff;font-weight:600}
+.grid{display:grid;grid-template-columns:56px repeat(7,1fr);position:relative}
+.gh,.gd{border-bottom:1px solid #dadce0;border-left:1px solid #dadce0;text-align:center;padding:8px 2px;background:#fff}
+.gh{border-left:0}
+.gd small{display:block;color:#70757a;font-size:11px}
+.gd b{font-size:22px;font-weight:500}
+.gd.now b{background:#204F40;color:#fff;border-radius:50%;display:inline-grid;place-items:center;width:34px;height:34px}
+.hours{position:relative;display:grid;grid-template-columns:56px repeat(7,1fr);height:576px;background:#fff}
+.gutter div,.col{height:48px;border-top:1px solid #e6e8eb;box-sizing:border-box}
+.gutter div{color:#70757a;font-size:11px;text-align:right;padding:2px 6px 0 0;transform:translateY(-7px);border-top-color:transparent}
+.col{border-left:1px solid #e6e8eb;position:relative}
+.hours{display:block;position:relative}
+.gutter{position:absolute;left:0;top:0;width:56px}
+.cols{position:absolute;left:56px;right:0;top:0;bottom:0;display:grid;grid-template-columns:repeat(7,1fr)}
+.col{height:100%;border-top:0;background-image:linear-gradient(to bottom,#e6e8eb 1px,transparent 1px);background-size:100% 48px}
+.event{position:absolute;left:3px;right:3px;border-radius:6px;padding:3px 5px;overflow:hidden;border-left:3px solid;font-size:12px;line-height:1.2;display:flex;flex-wrap:nowrap;align-items:flex-start;gap:0 4px}
+.event b,.event span{display:inline;white-space:nowrap}
+.nowline{position:absolute;left:48px;right:0;height:0;border-top:2px solid #ea4335;z-index:3}
+.nowline i{position:absolute;left:-4px;top:-5px;width:10px;height:10px;border-radius:50%;background:#ea4335;font-style:normal}
+.nowline em{position:absolute;top:-16px;right:8px;left:auto;color:#ea4335;font-size:11px;font-style:normal;background:#fff;padding:0 3px}
+.ev-a{background:#F5EAE8;border-color:#CB958B;color:#1F2A27}
+.ev-k{background:#EDEAF3;border-color:#A695C3;color:#1F2A27}
+.ev-v{background:#E7ECF3;border-color:#85A1C2;color:#1F2A27}
+.ev-e{background:#E4F0EF;border-color:#7AB6AD;color:#1F2A27}
+.ev-h{background:#E4F0E9;border-color:#78B48F;color:#1F2A27}
+.ev-c{background:#F5F1E7;border-color:#CEBA88;color:#1F2A27}
+.event.done{background:#EDF0F2;border-left-color:#9AA7AF;color:#53616B}
+.event.ghost{background:transparent;border:1.5px dashed #85A1C2;color:transparent;z-index:1}
+.event.dragging{z-index:4;overflow:visible;box-shadow:0 10px 24px rgba(32,79,64,.28)}
+.event .tip{position:absolute;left:6px;top:-28px;background:#204F40;color:#fff;border-radius:6px;padding:3px 8px;font-size:12px;white-space:nowrap;font-style:normal;z-index:5}
+.newslot{position:absolute;left:3px;right:3px;border:1.5px dashed #204F40;background:#E3EFE9;color:#204F40;border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:center}
+.tfilters{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.tfilters h4{margin:0 0 2px;font-size:13px;color:var(--muted);font-weight:600}
+.tfilters label{display:flex;align-items:center;gap:8px;font-size:14px}
+.tfilters input,.phone-filters input{width:15px;height:15px;accent-color:var(--tone)}
+.mini td.wk{background:#E3EFE9}
+.mini .hintline{color:#5B6B66;font-size:12px;line-height:1.5;margin:12px 0 0}
+.day-view,.phone-filters{display:none}
+.gutter .close{position:absolute;top:576px;height:auto;width:56px;transform:translateY(-8px);border:0}
+.todaybtn{color:#204F40}
+.gcal-tools h2{color:#204F40}
+.sums{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;margin:14px 0 16px}
+.sums .card{grid-column:span 3}
+.sums .card:nth-child(n+5){grid-column:span 4}
+.sums .n{font-size:26px;font-weight:600;color:var(--green);margin:6px 0 2px;letter-spacing:-0.02em;font-variant-numeric:tabular-nums}
+.sums .focus,.pay-sums .focus{border-left:4px solid var(--gold);background:var(--gold-soft)}
+.fin-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}
+.trow{display:flex;align-items:center;gap:12px;background:var(--fill,#fff);border:1px solid var(--line);border-left:5px solid var(--tone,var(--line));border-radius:8px;padding:10px 14px;margin-bottom:8px}
+.trow .grow{flex:1;min-width:0;font-size:15px}
+.trow .grow small{display:block;color:var(--muted);font-size:13px;font-weight:500;margin-top:2px}
+.trow .num{margin-left:auto;font-size:18px;font-weight:600;color:var(--green);font-variant-numeric:tabular-nums;text-align:right}
+.alert{display:flex;justify-content:space-between;gap:12px;align-items:center;background:var(--gold-soft);border:1px solid #E7D7A4;border-left:5px solid var(--gold);border-radius:8px;padding:12px 14px;margin:0 0 16px}
+.alert b{color:var(--gold-text);font-variant-numeric:tabular-nums}
+.alert small{display:block;color:var(--muted);font-weight:500;margin-top:3px}
+.pay-tools{display:flex;gap:12px;align-items:center;margin-bottom:14px}
+.pay-tools .search{flex:1;margin:0}
+.pay-sums{display:grid;grid-template-columns:0.9fr 1.3fr 1.15fr 1.15fr;gap:12px;margin-bottom:14px}
+.pay-sums .line{display:flex;justify-content:space-between;gap:8px;padding:2px 0;font-size:13px}
+.pay-sums .line b{color:var(--green);font-weight:600;font-variant-numeric:tabular-nums}
+.pay-sums .hand{margin-top:8px;height:34px;padding:0 12px;border-radius:6px;border:1px solid var(--green);background:#fff;color:var(--green)}
+.daylabel{margin:12px 0 8px;color:var(--muted);font-weight:600;font-size:14px}
+.subtotal{display:flex;justify-content:flex-end;gap:8px;padding:2px 12px 10px;color:var(--muted);font-size:14px}
+.subtotal b{color:var(--green);font-variant-numeric:tabular-nums}
+.prow{display:grid;grid-template-columns:64px 1.25fr 1.35fr 96px 72px 118px 78px;gap:8px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:14px}
+.prow.head{background:transparent;border:0;color:var(--muted);font-size:12px;padding:0 12px;margin:0 0 4px}
+.prow .who{display:flex;align-items:center;gap:8px;min-width:0}
+.prow .who b{font-weight:600}
+.prow .money{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;margin-left:6px;background:var(--gold-soft);color:var(--gold-text);border-radius:999px;padding:1px 7px;font-size:12px}
+.tick{display:inline-flex;align-items:center;gap:5px;color:var(--gold-text);white-space:nowrap}
+.tick i{width:16px;height:16px;border:1.5px solid currentColor;border-radius:4px;display:inline-grid;place-items:center;font-style:normal;font-size:11px}
+.tick.on{color:var(--green)}
+.tick.on i{background:var(--green);color:#fff;border-color:var(--green)}
+.owe-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.owe-row .trow{margin:0}
+.block h2,.block .lead{color:#204F40}
+.shade{position:fixed;inset:0;background:rgba(22,27,34,.46);display:grid;place-items:center;padding:24px}
+.sheet{width:min(640px,100%);background:#fff;border-radius:20px;padding:22px 22px 18px;box-shadow:0 24px 80px rgba(0,0,0,.2);max-height:calc(100vh - 48px);overflow:auto}
+.sheet h2{margin:0 0 4px;font-size:24px;color:var(--green)}
+.sheet .sub{color:var(--muted);margin:0 0 16px;font-size:14px}
+.field{display:block;margin-bottom:12px;font-size:14px;font-weight:650}
+.field input,.field select{display:block;width:100%;margin-top:6px;height:48px;border:1px solid #d9dee7;border-radius:12px;padding:0 12px;font-weight:550;background:#fff}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hint{background:var(--green-soft);border-left:3px solid var(--gold);border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.55;margin-bottom:12px}
+.hint b{font-size:16px}
+.total input{font-size:22px;font-weight:740;height:56px}
+.foot{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.foot button{height:48px;padding:0 16px;border-radius:12px;border:1px solid var(--line);background:#fff;font-weight:700}
+.foot .primary{background:var(--green);color:#fff;border-color:var(--green)}
+.readonly{background:var(--surface)!important;color:var(--ink)}
+section[data-page]{display:none}
+body[data-page="today"] [data-page="today"],
+body[data-page="pay"] [data-page="pay"],
+body[data-page="payday"] [data-page="payday"],
+body[data-page="finance"] [data-page="finance"],
+body[data-page="cash"] section[data-page="cash"],
+body[data-page="calendar"] [data-page="calendar"],
+body[data-page="package"] section[data-page="package"]{display:block}
+.shade{display:none}
+@media(max-width:800px){
+  .app{display:block}
+  .nav{display:none}
+  .main{padding:16px 14px 88px}
+  .top h1{font-size:24px}
+  .cards,.actions{grid-template-columns:1fr 1fr}
+  .cards .card:nth-child(1),.cards .card:nth-child(2){grid-column:auto}
+  .lesson{grid-template-columns:72px 1fr;grid-template-areas:"t w" "b b"}
+  .lesson time{grid-area:t}
+  .lesson .who2{grid-area:w}
+  .taps{grid-area:b}
+  .taps button{flex:1}
+  .staff{flex-wrap:wrap}
+  .lrow{align-items:flex-start;flex-wrap:wrap;gap:6px 12px;padding:12px 14px}
+  .lrow .grow{flex:1 1 160px}
+  .lrow .num{margin-left:auto;font-size:18px}
+  .metrics{width:100%;justify-content:space-between;text-align:left}
+  .payline{grid-template-columns:1fr 1fr}
+  .payline .money{text-align:left}
+  .sums{grid-template-columns:1fr 1fr}
+  .sums .card,.sums .card:nth-child(n+5){grid-column:auto}
+  .fin-grid{grid-template-columns:1fr}
+  .trow{flex-wrap:wrap}
+  .alert{align-items:flex-start}
+  body[data-page="finance"] .exports button{height:40px;padding:0 10px;white-space:nowrap}
+  body[data-page="finance"] .sums .card{padding:12px 12px 10px}
+  body[data-page="finance"] .sums .n{font-size:22px}
+  body[data-page="finance"] .sums{gap:8px;margin:10px 0 12px}
+  .pay-tools{flex-direction:column;align-items:stretch}
+  body[data-page="cash"] .fin-top{grid-template-columns:1fr}
+  body[data-page="cash"] .exports button{height:40px;padding:0 10px;white-space:nowrap}
+  .pay-sums,.owe-row{grid-template-columns:1fr 1fr}
+  .pay-sums .card:first-child{order:1}
+  .pay-sums .focus{order:2}
+  .pay-sums .methods{order:3}
+  .pay-sums .receivers{order:4}
+  .pay-sums .methods,.pay-sums .receivers{grid-column:1 / -1}
+  .prow{display:flex;flex-wrap:wrap;gap:6px 8px}
+  .prow.head{display:none}
+  .prow .who{flex:1}
+  .prow .money{margin-left:auto}
+  .prow .for{flex:1 1 100%;color:var(--muted);font-size:13px}
+  .prow time{color:var(--muted);font-size:13px}
+  .cal-wrap{grid-template-columns:1fr}
+  .cal-side,.week-view{display:none}
+  .day-view{display:flex;flex-direction:column}
+  .phone-filters{display:flex}
+  .phone-filters{flex-wrap:wrap;gap:4px 8px;padding:8px 10px 6px;border-bottom:1px solid #dadce0}
+  .phone-filters label{font-size:12px}
+  .gviews button.on{background:#fff;color:#5B6B66;font-weight:500}
+  .gviews button[data-view="day"]{background:#204F40;color:#fff;font-weight:600}
+  .phonemonth{display:block!important}
+  .tabbar{position:fixed;left:0;right:0;bottom:0;height:72px;background:#fff;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);z-index:5}
+  .tabbar button{flex-direction:column;gap:3px;font-size:11px;padding:8px 2px;border-radius:0;justify-content:center}
+  .tabbar button.active{color:#fff;background:var(--green);font-weight:750;border-radius:12px;margin:8px 4px}
+  .sheet{width:100%;height:100%;max-height:none;border-radius:0;padding:18px 16px 24px}
+  .shade{padding:0;align-items:stretch}
+  .two{grid-template-columns:1fr}
+  .gcal-tools{flex-wrap:wrap}
+  .gcal-tools h2{font-size:16px;flex-basis:100%}
+  .csearch{order:5;flex:1 0 100%;width:auto}
+  .event{font-size:10px;padding:2px 3px}
+  .gd b{font-size:16px}
+  .gd.now b{width:26px;height:26px}
+}
+.phonemonth{display:none;background:#fff;border:1px solid #dadce0;border-radius:12px;padding:8px 10px;margin-bottom:10px}
+.phonemonth strong{font-size:14px}
+.dots{display:flex;justify-content:space-between;font-size:12px;color:#70757a;margin-top:6px}
+.dots .today{color:#fff;background:#204F40;border-radius:50%;width:22px;height:22px;display:grid;place-items:center}
+h1,h2,h3,.top h1,.section h2,.sheet h2,.block h2,.staff h3,.gcal-tools h2{font-weight:600;letter-spacing:-0.02em}
+.top h1{font-size:22px}
+.section h2,.block h2,.sheet h2{font-size:16px}
+.card .n,.metrics .n,.block .lead{font-size:22px;font-weight:600;letter-spacing:-0.02em}
+button,.pill,.nav button,.seg button,.taps button,.lrow .grow,.lesson .who2,.row b,.mark,.avatar,.day,.back,.field,.exports button,.foot button,.todaybtn,.action .count,.who b,.nav button.active,.gviews .on,.tabbar button.active,.card .k,.lrow .num span,.metrics .k,.lesson time,.lesson time small,.lrow .grow small{font-weight:500}
+.num,.card .n,.metrics .n,.money,.lrow .num,.lesson time,.row b,.block .lead,.sums .n,.trow .num,.split b,.alert b,.pay-sums .line b,.subtotal b,.prow .money{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.lrow .num,.metrics .n,.money{text-align:right}
+.brand div,.brand strong{display:none}
+.lrow{font-size:15px}
+.lrow .num{font-size:15px;font-weight:500}
+.lesson,.card,.action,.list,.search,.block,.payline{border-radius:8px}
+.search{height:40px}
+.search input,.taps button{font-size:15px}
+.taps button,.foot button,.exports button,.seg button{border-radius:6px}
+.pill{border-radius:999px;font-size:13px;min-height:26px;font-weight:500}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="nav">
+    <div class="brand"><img src="../static/logo.jpg" alt=""><div><strong>HZ Education Melbourne</strong></div></div>
+    <button data-tab="today">今天</button>
+    <button data-tab="calendar">课表</button>
+    <button data-tab="package">学生</button>
+    <button data-tab="pay">工资</button>
+    <button data-tab="finance">财务</button>
+    <div class="more">更多</div>
+    <button class="quiet">课后记录</button>
+    <button class="quiet" data-tab="cash">收款与欠费</button>
+    <button class="quiet">价格表</button>
+    <button class="quiet">操作日志</button>
+    <button class="quiet">设置</button>
+  </aside>
+  <main class="main">
+    <section data-page="today">
+      <div class="top"><div><h1>今天</h1><p>周二 11月24日 · 墨尔本时间</p></div><div class="who"><b>Helen校长端</b></div></div>
+      <label class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input placeholder="搜索老师或学生，直接打开他们的页面" aria-label="搜索老师或学生"></label>
+      <div class="cards">
+        <div class="card"><div class="k">今日营业额</div><div class="n">$486</div><div class="s">今天已上的课</div></div>
+        <div class="card good"><div class="k">今日利润</div><div class="n">$214</div><div class="s">扣课酬和当天成本</div></div>
+        <div class="card"><div class="k">本月营业额</div><div class="n">$18,640</div><div class="s">11月已上的课</div></div>
+        <div class="card good"><div class="k">本月利润</div><div class="n">$8,820</div><div class="s">还没扣 Vincent 分成</div></div>
+      </div>
+      <div class="section"><h2>今天的课</h2>
+        <article class="lesson done"><time>15:00<small>1 小时</small></time><div class="who2"><span class="mark">A</span><div>赵恩希 · Y6<span>Angela · 1:1 · 已扣课</span></div></div><div class="taps"><button class="go">已上了</button></div></article>
+        <article class="lesson t-angela"><time>16:00<small>1 小时</small></time><div class="who2"><span class="mark">A</span><div>陈一诺 · Y6<span>Angela · 1:1</span></div></div><div class="taps"><button class="go">上了</button><button>请假</button></div></article>
+        <article class="lesson t-kelsey"><time>16:00<small>1.5 小时</small></time><div class="who2"><span class="mark">K</span><div>王星然 · Y4<span>Kelsey · 1:2</span></div></div><div class="taps"><button class="go">上了</button><button>请假</button></div></article>
+        <article class="lesson t-vincent"><time>17:00<small>1 小时</small></time><div class="who2"><span class="mark">V</span><div>周可 · Y11<span>Vincent · 1:1</span></div></div><div class="taps"><button class="go">上了</button><button>请假</button></div></article>
+        <article class="lesson t-helen"><time>18:00<small>1.5 小时</small></time><div class="who2"><span class="mark">H</span><div>李沐阳 · Y12<span>Helen · 本人 1:1</span></div></div><div class="taps"><button class="go">上了</button><button>请假</button></div></article>
+      </div>
+      <div class="section" style="margin-top:18px"><h2>要处理</h2>
+        <div class="actions">
+          <div class="action"><h3>剩余不超过 3 节 <span class="count">2</span></h3>
+            <div class="row"><div>陈一诺<small>数学 · 每节 1 小时</small></div><b>2 节</b></div>
+            <div class="row"><div>赵恩希<small>数学 · 每节 1 小时</small></div><b>3 节</b></div>
+          </div>
+          <div class="action"><h3>欠费或没课了还排着 <span class="count">1</span></h3>
+            <div class="row"><div>王星然<small>课时已用完 · 周四 16:00 仍有课</small></div><b>去收款</b></div>
+          </div>
+          <div class="action"><h3>老师收款还没上交 <span class="count">1</span></h3>
+            <div class="row"><div>Kelsey<small>11月22日 · 现金 · 王星然家长</small></div><b>$1,200</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section data-page="pay">
+      <div class="top"><div><h1>老师工资</h1><p>只算已经上完、扣过课时的课。数字供核对，不会自动打款。</p></div>
+        <div class="period"><div class="seg"><button>日</button><button class="on">周</button><button>双周</button><button>月</button><button>自定义</button></div></div>
+      </div>
+      <label class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input placeholder="搜索老师或学生" value=""></label>
+      <p style="color:#5B6B66;margin:-6px 0 14px">11月23日 – 11月29日</p>
+      <article class="staff t-angela"><div class="avatar">A</div><div class="mid"><h3>Angela</h3><div class="meta">8 节 · 9.5 小时<br>课酬的 40%，保底 $35 / 小时</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$760</div></div><div><div class="k">应付</div><div class="n pay">$312</div></div></div></article>
+      <article class="staff t-kelsey"><div class="avatar">K</div><div class="mid"><h3>Kelsey</h3><div class="meta">6 节 · 9.0 小时<br>课酬的 40%</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$540</div></div><div><div class="k">应付</div><div class="n pay">$216</div></div></div></article>
+      <article class="staff t-vincent"><div class="avatar">V</div><div class="mid"><h3>Vincent</h3><div class="meta">5 节 · 6.0 小时<br>课酬的 40% · 新学生分成另算</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$620</div></div><div><div class="k">应付</div><div class="n pay">$248</div></div></div></article>
+      <article class="staff t-ethan"><div class="avatar">E</div><div class="mid"><h3>Ethan</h3><div class="meta">3 节 · 4.5 小时<br>课酬的 40%</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$255</div></div><div><div class="k">应付</div><div class="n pay">$102</div></div></div></article>
+      <article class="staff t-christina"><div class="avatar">C</div><div class="mid"><h3>Christina</h3><div class="meta">4 节 · 4.0 小时<br>课酬的 40%</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$320</div></div><div><div class="k">应付</div><div class="n pay">$128</div></div></div></article>
+      <article class="staff t-helen"><div class="avatar">H</div><div class="mid"><h3>Helen</h3><div class="meta">3 节 · 4.5 小时<br>本人上课，不另计工资</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$675</div></div><div><div class="k">应付</div><div class="n pay">$0</div></div></div></article>
+    </section>
+
+    <section data-page="payday">
+      <div class="top"><div><button class="back">‹ 全部老师</button><h1>Angela</h1><p>11月23日 – 11月29日 · 按天上的课 · 课酬的 40%，保底 $35 / 小时</p></div>
+        <div class="metrics"><div><div class="k">课酬基数</div><div class="n">$760</div></div><div><div class="k">应付</div><div class="n pay">$312</div></div></div>
+      </div>
+      <div class="day">周一 11月23日</div>
+      <div class="payline t-angela"><b>16:00–17:00</b><span>陈一诺 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$35.00 保底</span></div>
+      <div class="payline t-angela"><b>17:00–18:00</b><span>赵恩希 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$32.38</span></div>
+      <div class="day">周二 11月24日</div>
+      <div class="payline t-angela"><b>16:00–17:00</b><span>陈一诺 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$35.00 保底</span></div>
+      <div class="day">周四 11月26日</div>
+      <div class="payline t-angela"><b>18:00–19:00</b><span>陈一诺 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$32.38</span></div>
+      <p style="color:#5B6B66;font-size:13px">一节课的价值 = 课时包总价 ÷（付费节数 + 赠送节数）。$1,700 ÷ 21 = $80.95。赠送的那一节也按这个价，不是 $0。</p>
+    </section>
+
+    <section data-page="finance">
+      <div class="top fin-top"><h1>财务报表</h1>
+        <div class="exports"><button>导出 Excel</button><button class="primary">导出 PDF</button></div>
+        <p>2026年11月1日–30日 · 演示数字</p>
+      </div>
+      <div class="period"><div class="seg"><button>日</button><button>周</button><button>双周</button><button class="on">月</button><button>自定义</button></div></div>
+      <div class="sums">
+        <div class="card"><div class="k">营业额</div><div class="n">$18,640</div><div class="s">已上完的课</div></div>
+        <div class="card"><div class="k">成本</div><div class="n">$1,620</div><div class="s">房租、保险和其他</div></div>
+        <div class="card"><div class="k">机构利润</div><div class="n">$8,820</div><div class="s">营业额 − 课酬 − 成本</div></div>
+        <div class="card"><div class="k">利润率</div><div class="n">47.3%</div><div class="s">机构利润 ÷ 营业额</div></div>
+        <div class="card"><div class="k">Vincent 分成</div><div class="n">$2,426.48</div><div class="s">新学生利润的 30%</div></div>
+        <div class="card"><div class="k">Helen 本人上课收入</div><div class="n">$1,860</div><div class="s">已含在营业额里</div></div>
+        <div class="card focus"><div class="k">Helen 净利润</div><div class="n">$6,393.52</div><div class="s">机构利润 − Vincent 分成</div></div>
+      </div>
+      <div class="alert"><div>老师代收未上交<small>Kelsey · 11月22日 · 现金<br>王星然家长</small></div><b>$1,200.00</b></div>
+      <div class="fin-grid">
+        <div class="section">
+          <h2>按老师</h2>
+          <article class="trow t-angela"><span class="pill">Angela</span><div class="grow">课酬的 40%，保底 $35 / 小时<small>课酬基数 $6,200 · 8 节</small></div><div class="num">$2,480</div></article>
+          <article class="trow t-kelsey"><span class="pill">Kelsey</span><div class="grow">课酬的 40%<small>课酬基数 $4,900 · 6 节</small></div><div class="num">$1,960</div></article>
+          <article class="trow t-vincent"><span class="pill">Vincent</span><div class="grow">自己上课的 40%<small>新学生分成另计 · 5 节</small></div><div class="num">$1,640</div></article>
+          <article class="trow t-ethan"><span class="pill">Ethan</span><div class="grow">课酬的 40%<small>课酬基数 $3,100 · 3 节</small></div><div class="num">$1,240</div></article>
+          <article class="trow t-christina"><span class="pill">Christina</span><div class="grow">课酬的 40%<small>课酬基数 $2,200 · 4 节</small></div><div class="num">$880</div></article>
+          <article class="trow t-helen"><span class="pill">Helen</span><div class="grow">本人上课，不另计工资<small>收入 $1,860 已在营业额里</small></div><div class="num">$0</div></article>
+        </div>
+        <div>
+          <div class="section">
+            <h2>成本</h2>
+            <div class="block">
+              <div class="split"><span>房租 · 每月</span><b>$1,311.75</b></div>
+              <div class="split"><span>保险</span><b>$186.40</b></div>
+              <div class="split"><span>网费</span><b>$79.00</b></div>
+              <div class="split"><span>软件</span><b>$42.85</b></div>
+              <div class="split"><span>合计</span><b>$1,620.00</b></div>
+            </div>
+          </div>
+          <div class="section">
+            <h2>收款方式</h2>
+            <div class="block">
+              <div class="split"><span>银行转账</span><b>$12,450</b></div>
+              <div class="split"><span>刷卡</span><b>$3,280</b></div>
+              <div class="split"><span>支付宝</span><b>$2,640</b></div>
+              <div class="split"><span>微信</span><b>$1,530</b></div>
+              <div class="split"><span>现金</span><b>$1,400</b></div>
+              <div class="split"><span>实收合计</span><b>$21,300</b></div>
+            </div>
+          </div>
+          <div class="section">
+            <h2>谁收的</h2>
+            <div class="block">
+              <div class="split"><span>Helen 本人收</span><b>$16,400</b></div>
+              <div class="split"><span>Angela 代收，已上交</span><b>$3,700</b></div>
+              <div class="split"><span>Kelsey 代收，未上交</span><b>$1,200</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section data-page="cash">
+      <div class="top fin-top"><h1>收款与欠费</h1>
+        <div class="exports"><button class="primary">+ 记一笔收款</button><button>导出 Excel</button><button>导出 PDF</button></div>
+        <p>11月23日–29日 · 演示数字</p>
+      </div>
+      <div class="pay-tools">
+        <div class="seg"><button>日</button><button class="on">周</button><button>双周</button><button>月</button><button>自定义</button></div>
+        <label class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input placeholder="搜索学生、老师或收款人" aria-label="搜索收款"></label>
+      </div>
+      <div class="pay-sums">
+        <div class="card"><div class="k">总收款</div><div class="n">$9,895.00</div><div class="s">本周 7 笔 · 2 笔未核对</div></div>
+        <div class="card methods"><div class="k">按方式</div>
+          <div class="line"><span>银行转账</span><b>$2,975.00</b></div>
+          <div class="line"><span>刷卡</span><b>$980.00</b></div>
+          <div class="line"><span>支付宝</span><b>$2,400.00</b></div>
+          <div class="line"><span>微信</span><b>$1,700.00</b></div>
+          <div class="line"><span>现金</span><b>$1,840.00</b></div>
+        </div>
+        <div class="card receivers"><div class="k">按收款人</div>
+          <div class="line"><span>Helen</span><b>$6,995.00</b></div>
+          <div class="line"><span>Angela · 已上交</span><b>$1,700.00</b></div>
+          <div class="line"><span>Kelsey · 未上交</span><b>$1,200.00</b></div>
+        </div>
+        <div class="card focus"><div class="k">老师代收未上交</div><div class="n">$1,200.00</div><div class="s">Kelsey · 现金代收</div><button class="hand">标为已上交</button></div>
+      </div>
+      <div class="section">
+        <h2>欠费</h2>
+        <div class="owe-row">
+          <article class="trow t-kelsey"><span class="pill">Kelsey</span><div class="grow">王星然<small>剩余 0 节 · 周四 16:00 仍有课</small></div><div class="num">仍排着</div></article>
+          <article class="trow t-christina"><span class="pill">Christina</span><div class="grow">林晓<small>补课费还没付</small></div><div class="num">$80.00</div></article>
+        </div>
+      </div>
+      <div class="section">
+        <h2>收款明细</h2>
+        <div class="prow head"><span>时间</span><span>学生</span><span>项目</span><span>金额</span><span>方式</span><span>收款人</span><span>核对</span></div>
+        <div class="daylabel">周二 11月24日</div>
+        <article class="prow"><time>10:05</time><div class="who"><span class="pill t-helen">Helen</span><b>李沐阳</b></div><div class="for">本人 1.5 小时 · 8 节</div><b class="money">$2,400.00</b><div class="method">支付宝</div><div class="recv">Helen</div><div class="tick"><i></i>未核对</div></article>
+        <article class="prow"><time>14:18</time><div class="who"><span class="pill t-kelsey">Kelsey</span><b>王星然</b></div><div class="for">1:1 · 20 节</div><b class="money">$1,200.00</b><div class="method">现金</div><div class="recv">Kelsey <span class="tag">未上交</span></div><div class="tick on"><i>✓</i>已核对</div></article>
+        <article class="prow"><time>15:46</time><div class="who"><span class="pill t-angela">Angela</span><b>赵恩希</b></div><div class="for">1:1 · 20 节 + 赠 1 节</div><b class="money">$1,700.00</b><div class="method">微信</div><div class="recv">Angela</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <article class="prow"><time>18:05</time><div class="who"><span class="pill t-christina">Christina</span><b>林晓</b></div><div class="for">1:1 · 8 节</div><b class="money">$640.00</b><div class="method">现金</div><div class="recv">Helen</div><div class="tick"><i></i>未核对</div></article>
+        <div class="subtotal">当日小计 <b>$5,940.00</b></div>
+        <div class="daylabel">周一 11月23日</div>
+        <article class="prow"><time>09:12</time><div class="who"><span class="pill t-angela">Angela</span><b>陈一诺</b></div><div class="for">1:1 · 20 节 + 赠 1 节</div><b class="money">$1,700.00</b><div class="method">银行转账</div><div class="recv">Helen</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <article class="prow"><time>16:40</time><div class="who"><span class="pill t-vincent">Vincent</span><b>周可</b></div><div class="for">1:1 · 续费 10 节</div><b class="money">$980.00</b><div class="method">刷卡</div><div class="recv">Helen</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <div class="subtotal">当日小计 <b>$2,680.00</b></div>
+        <div class="daylabel">周四 11月26日</div>
+        <article class="prow"><time>11:30</time><div class="who"><span class="pill t-ethan">Ethan</span><b>陈子墨</b></div><div class="for">1:1 · 15 节</div><b class="money">$1,275.00</b><div class="method">银行转账</div><div class="recv">Helen</div><div class="tick on"><i>✓</i>已核对</div></article>
+        <div class="subtotal">当日小计 <b>$1,275.00</b></div>
+      </div>
+    </section>
+
+    <section data-page="calendar">
+      <div class="cal-wrap">
+        <aside class="cal-side mini">
+          <h3>2026年11月 <span>‹ ›</span></h3>
+          <table><thead><tr><th>一</th><th>二</th><th>三</th><th>四</th><th>五</th><th>六</th><th>日</th></tr></thead>
+          <tbody>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td><td>1</td></tr>
+            <tr><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td></tr>
+            <tr><td>9</td><td>10</td><td>11</td><td>12</td><td>13</td><td>14</td><td>15</td></tr>
+            <tr><td>16</td><td>17</td><td>18</td><td>19</td><td>20</td><td>21</td><td>22</td></tr>
+            <tr><td class="wk">23</td><td class="wk"><span class="today">24</span></td><td class="wk">25</td><td class="wk">26</td><td class="wk">27</td><td class="wk">28</td><td class="wk">29</td></tr>
+            <tr><td>30</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          </tbody></table>
+          <div class="tfilters">
+            <h4>老师</h4>
+            <label class="t-helen"><input type="checkbox" checked> Helen</label>
+            <label class="t-vincent"><input type="checkbox" checked> Vincent</label>
+            <label class="t-angela"><input type="checkbox" checked> Angela</label>
+            <label class="t-kelsey"><input type="checkbox" checked> Kelsey</label>
+            <label class="t-ethan"><input type="checkbox" checked> Ethan</label>
+            <label class="t-christina"><input type="checkbox" checked> Christina</label>
+          </div>
+          <p class="hintline">点空白处新建课。拖动色块改时间。</p>
+        </aside>
+        <div>
+          <div class="gcal">
+            <div class="gcal-tools">
+              <button class="todaybtn">今天</button>
+              <button class="iconbtn" aria-label="上一周">‹</button>
+              <button class="iconbtn" aria-label="下一周">›</button>
+              <label class="csearch"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input id="cal-search" type="search" placeholder="搜索学生或老师" aria-label="搜索学生或老师"></label>
+              <h2>2026年11月</h2>
+              <div class="gviews"><button data-view="day">日</button><button class="on" data-view="week">周</button><button data-view="month">月</button></div>
+            </div>
+            <div class="week-view">
+              <div class="grid">
+                <div class="gh"></div>
+                <div class="gd"><small>周一</small><b>23</b></div>
+                <div class="gd now"><small>周二</small><b>24</b></div>
+                <div class="gd"><small>周三</small><b>25</b></div>
+                <div class="gd"><small>周四</small><b>26</b></div>
+                <div class="gd"><small>周五</small><b>27</b></div>
+                <div class="gd"><small>周六</small><b>28</b></div>
+                <div class="gd"><small>周日</small><b>29</b></div>
+              </div>
+              <div class="hours">
+                <div class="gutter">
+                  <div>9:00</div><div>10:00</div><div>11:00</div><div>12:00</div><div>13:00</div><div>14:00</div><div>15:00</div><div>16:00</div><div>17:00</div><div>18:00</div><div>19:00</div><div>20:00</div>
+                  <div class="close">21:00</div>
+                </div>
+                <div class="cols">
+                  <div class="col">
+                    <div class="event ev-v" style="top:240px;height:46px"><b>周可</b><span>Y11 · 1:1</span></div>
+                    <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event done ev-a" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                    <div class="event ev-h" style="top:456px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <button class="newslot" style="top:192px;height:46px">+ 新建课</button>
+                    <div class="event ev-e" style="top:312px;height:70px"><b>陈子墨</b><span>Y3 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-v ghost" style="top:336px;height:46px"><b>周可</b><span>Y11 · 1:1</span></div>
+                    <div class="event ev-v dragging" style="top:384px;height:46px"><b>周可</b><span>Y11 · 1:1</span><em class="tip">改到 周四 17:00</em></div>
+                    <div class="event ev-a" style="top:432px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-c" style="top:384px;height:46px"><b>林晓</b><span>Y8 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-k" style="top:24px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                    <div class="event ev-h" style="top:96px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
+                  </div>
+                  <div class="col">
+                    <div class="event ev-c" style="top:0;height:46px"><b>林晓</b><span>Y8 · 1:1</span></div>
+                  </div>
+                </div>
+                <div class="nowline" style="top:368px"><i></i><em>16:40</em></div>
+              </div>
+            </div>
+            <div class="day-view">
+              <div class="phone-filters">
+                <label class="t-helen"><input type="checkbox" checked> Helen</label>
+                <label class="t-vincent"><input type="checkbox" checked> Vincent</label>
+                <label class="t-angela"><input type="checkbox" checked> Angela</label>
+                <label class="t-kelsey"><input type="checkbox" checked> Kelsey</label>
+                <label class="t-ethan"><input type="checkbox" checked> Ethan</label>
+                <label class="t-christina"><input type="checkbox" checked> Christina</label>
+              </div>
+              <div class="grid" style="grid-template-columns:56px 1fr">
+                <div class="gh"></div>
+                <div class="gd now"><small>周二</small><b>24</b></div>
+              </div>
+              <div class="hours">
+                <div class="gutter">
+                  <div>9:00</div><div>10:00</div><div>11:00</div><div>12:00</div><div>13:00</div><div>14:00</div><div>15:00</div><div>16:00</div><div>17:00</div><div>18:00</div><div>19:00</div><div>20:00</div>
+                  <div class="close">21:00</div>
+                </div>
+                <div class="cols" style="grid-template-columns:1fr">
+                  <div class="col">
+                    <button class="newslot" style="top:96px;height:46px">+ 新建课</button>
+                    <div class="event done ev-a" style="top:288px;height:46px"><b>赵恩希</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-a" style="top:336px;height:46px"><b>陈一诺</b><span>Y6 · 1:1</span></div>
+                    <div class="event ev-k" style="top:384px;height:70px"><b>王星然</b><span>Y4 · 1:2</span></div>
+                    <div class="event ev-h" style="top:456px;height:70px"><b>李沐阳</b><span>Y12 · 1:1</span></div>
+                  </div>
+                </div>
+                <div class="nowline" style="top:368px"><i></i><em>16:40</em></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section data-page="package">
+      <div class="top"><div><h1>学生</h1><p>每张卡是一位学生。左边的颜色是任课老师。</p></div></div>
+      <label class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input placeholder="搜索老师或学生"></label>
+      <article class="staff t-angela"><div class="avatar">陈</div><div class="mid"><h3>陈一诺</h3><div class="meta">Angela · Y6 · 数学<br>剩余 2 节（每节 1 小时）</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:18px;color:#8A6D1F">该续费</div></div></div></article>
+      <article class="staff t-angela"><div class="avatar">赵</div><div class="mid"><h3>赵恩希</h3><div class="meta">Angela · Y6 · 数学<br>剩余 3 节（每节 1 小时）</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:18px;color:#8A6D1F">该续费</div></div></div></article>
+      <article class="staff t-kelsey"><div class="avatar">王</div><div class="mid"><h3>王星然</h3><div class="meta">Kelsey · Y4 · 数学<br>课时已用完，周四仍有课</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:18px;color:#8A6D1F">欠费</div></div></div></article>
+      <article class="staff t-vincent"><div class="avatar">周</div><div class="mid"><h3>周可</h3><div class="meta">Vincent · Y11 · 数学<br>剩余 12 节（每节 1 小时）</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:18px">正常</div></div></div></article>
+      <article class="staff t-helen"><div class="avatar">李</div><div class="mid"><h3>李沐阳</h3><div class="meta">Helen · Y12 · 数学<br>剩余 8 节（每节 1.5 小时）</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:18px">正常</div></div></div></article>
+      <article class="staff t-ethan"><div class="avatar">陈</div><div class="mid"><h3>陈子墨</h3><div class="meta">Ethan · Y3 · 数学<br>剩余 15 节（每节 1 小时）</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:18px">正常</div></div></div></article>
+      <article class="staff t-christina"><div class="avatar">林</div><div class="mid"><h3>林晓</h3><div class="meta">Christina · Y8 · 数学<br>剩余 6 节（每节 1 小时）</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:18px">正常</div></div></div></article>
+    </section>
+  </main>
+</div>
+<nav class="tabbar">
+  <button data-tab="today">今天</button>
+  <button data-tab="calendar">课表</button>
+  <button data-tab="package">学生</button>
+  <button data-tab="pay">工资</button>
+  <button>更多</button>
+</nav>
+<div class="shade" data-page="package">
+  <form class="sheet">
+    <h2>买课时</h2>
+    <p class="sub">价格按付款当天的价目自动填入，可以改。不含 GST。</p>
+    <label class="field">学生<select><option>陈一诺 · 数学 · 一对一</option><option>李沐阳 · 数学</option></select></label>
+    <div class="two">
+      <label class="field">类型<select><option>1:1</option><option>1:2</option><option>Helen 本人 1:1</option><option>学期班</option></select></label>
+      <label class="field">每节时长<select><option>1 小时</option><option>1.5 小时</option></select></label>
+    </div>
+    <div class="two">
+      <label class="field">年级<input class="readonly" value="Y6" readonly><span style="font-weight:500;color:#6b7280">来自学生档案。每年 1 月自动升一级。</span></label>
+      <label class="field">购买节数<input value="20"></label>
+    </div>
+    <label class="field">付款日期<input type="text" value="2027-02-03"></label>
+    <div class="hint"><b>已自动填入 $1,700.00</b><br>2027 价目 · 1:1 · Prep–Y6 · $85 / 小时 × 20 节。<br>另赠 1 节，20 节付费课上完后才能用。每节成本 $1,700 ÷ 21 = $80.95。</div>
+    <label class="field total">合计 AUD<input value="1700.00"></label>
+    <div class="two">
+      <label class="field">收款方式<select><option>银行转账</option><option>刷卡</option><option>支付宝</option><option>微信</option><option>现金</option></select></label>
+      <label class="field">收款人<select><option>Helen（本人）</option><option>Angela</option><option>Kelsey</option><option>Vincent</option></select></label>
+    </div>
+    <label class="field">备注<input placeholder="选填。老师代收时，这里可写已上交或未上交。"></label>
+    <div class="foot"><button type="button">取消</button><button class="primary" type="button">确认购买</button></div>
+  </form>
+</div>
+<script>
+const calWho={'ev-a':'Angela','ev-k':'Kelsey','ev-v':'Vincent','ev-e':'Ethan','ev-h':'Helen','ev-c':'Christina'};
+document.querySelectorAll('.event').forEach(el=>{
+  const teacher=Object.keys(calWho).find(key=>el.classList.contains(key))||'';
+  el.dataset.find=((teacher?calWho[teacher]+' ':'')+(el.textContent||'')).replace(/\s+/g,' ');
+});
+const calSearch=document.getElementById('cal-search');
+if(calSearch) calSearch.addEventListener('input',()=>{
+  const q=calSearch.value.trim().toLowerCase();
+  document.querySelectorAll('.event').forEach(el=>{
+    const hit=!q || (el.dataset.find||'').toLowerCase().includes(q);
+    el.classList.toggle('search-hit', !!q && hit);
+    el.classList.toggle('search-dim', !!q && !hit);
+  });
+});
+const page=new URLSearchParams(location.search).get('page')||'today';
+document.body.dataset.page=page;
+const phoneLabel={finance:['finance','财务'],cash:['cash','收款']};
+if(phoneLabel[page]){
+  const more=document.querySelector('.tabbar button:last-child');
+  if(more){more.dataset.tab=phoneLabel[page][0];more.textContent=phoneLabel[page][1];}
+}
+const tab={payday:'pay',finance:'finance',calendar:'calendar',package:'package',pay:'pay',today:'today',cash:'cash'}[page];
+document.querySelectorAll('[data-tab]').forEach(b=>{if(b.dataset.tab===tab)b.classList.add('active');});
+</script>
+</body>
+</html>

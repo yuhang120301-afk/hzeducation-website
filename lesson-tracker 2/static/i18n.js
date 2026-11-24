@@ -157,8 +157,8 @@
  '手机号':'Phone number','密码':'Password','登录':'Sign in','例如 +61 412 345 678':'e.g. +61 412 345 678','请输入密码':'Enter your password',
  '首次登录或忘记密码，请联系老师。':'Contact your school for a new account or password help.','手机号格式请与老师开通账号时保持一致。':'Use the same phone-number format as your registered account.',
  '当前是本机演示版，仅含虚构学生，可体验完整流程。':'Local demo with fictional students. Explore all roles below.',
- '老板':'Owner','管理员':'Administrator','任课老师':'Teacher','家长端':'Parent','家长':'Parent','老师中心':'Teacher portal','家长中心':'Parent portal','机构管理':'School management',
- '本机演示版 · 虚构数据 · 可分别体验老板、管理员、任课老师和家长账号':'Local demo · Fictional data · Explore owner, administrator, teacher and parent accounts',
+ 'Helen校长端':'Helen’s portal','老板':'Owner','管理员':'Administrator','任课老师':'Teacher','家长端':'Parent','家长':'Parent','老师中心':'Teacher portal','家长中心':'Parent portal','机构管理':'School management',
+ '本机演示版 · 虚构数据 · 可分别体验Helen校长端、管理员、任课老师和家长账号':'Local demo · Fictional data · Explore Helen’s portal, administrator, teacher and parent accounts',
  '把每一次进步，认真记下来。':'A thoughtful record of every step forward.',
  '账目总结':'Reconciliation','核对收款、退款与课时变动，每笔数字都有明细。':'Review receipts, refunds and lesson credits with transaction-level details.',
  '由老板开通管理员账号，分工管理机构日常事务。':'Create administrator accounts to manage daily school operations.',
@@ -176,7 +176,7 @@
  '日期 / 学生':'Date / student','类型':'Type','课时变动':'Credit change','备注':'Note','登记人 / 操作':'Recorded by / actions','登记人':'Recorded by','上课扣除':'Lesson deduction','课时充值':'Credit top-up','撤销返还 / 扣回':'Reversal','已撤销':'Reversed','撤销':'Reverse','暂无课时变动记录。':'No credit transactions yet.',
  '关闭':'Close','取消':'Cancel','登记上课':'Record a lesson','扣除课时':'Credits to deduct','充值课时':'Credits added','上课日期':'Lesson date','充值日期':'Payment date','备注（选填）':'Note (optional)','确认扣除':'Confirm deduction','确认充值':'Confirm top-up',
  '例如：补录历史课时':'e.g. Record a past lesson','例如：新学期购买 10 课时':'e.g. Purchase 10 credits for the new term','上课已登记，课时已扣除。':'Lesson recorded and credits deducted.','课时已充值。':'Credits added.','请先添加学生。':'Add a student first.',
- '学生姓名':'Student name','例如：陈一诺':'e.g. Alex Chen','课程名称':'Course name','例如：数学 · 一对一':'e.g. Mathematics · Private lesson','家长手机号':'Parent phone number','同一手机号可关联多个孩子。已有账号会直接关联。':'One parent account can link multiple children. Existing accounts are linked automatically.',
+ '学生姓名':'Student name','例如：陈一诺':'e.g. Yino','课程名称':'Course name','例如：数学 · 一对一':'e.g. Mathematics · Private lesson','家长手机号':'Parent phone number','同一手机号可关联多个孩子。已有账号会直接关联。':'One parent account can link multiple children. Existing accounts are linked automatically.',
  '家长初始密码':'Initial parent password','新账号需至少 10 位':'At least 10 characters for a new account','已有家长账号可留空，其原密码保持不变。请单独告知家长登录信息。':'Leave blank for an existing parent; their password stays unchanged. Share new login details privately.',
  '创建学生':'Create student','学生已添加，可在列表中充值课时。':'Student added. You can now add credits.','撤销这笔记录？':'Reverse this transaction?','撤销原因':'Reason for reversal','例如：重复登记，返还课时':'e.g. Duplicate entry; restore credits','确认撤销':'Confirm reversal','已撤销，课时余额已更新。':'Transaction reversed and credit balance updated.',
  '当前密码':'Current password','新密码':'New password','至少 10 位，修改成功后需重新登录。':'At least 10 characters. You will need to sign in again.','保存新密码':'Save password','密码已修改，请重新登录。':'Password changed. Please sign in again.',
@@ -281,7 +281,7 @@
  function apply(){
   observer.disconnect();
   document.documentElement.lang=window.uiLocale==='en'?'en':'zh-CN';
-  document.title='HELEN’S MATH SECRETS · '+(window.uiLocale==='en'?'Learning portal':'教学管理');
+  document.title='HZ Education Melbourne';
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   let node;while((node=walker.nextNode()))translateNode(node);
   document.querySelectorAll('[placeholder],[aria-label],[title]').forEach(el=>{
