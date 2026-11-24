@@ -707,6 +707,26 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.admin.request('refunds',data)[0],400)
         self.assertEqual(self.balance(sid),200)
 
+    def test_zero_cash_refund_adjusts_lessons_without_money(self):
+        sid=self.new_student();self.entry(sid,'credit','4')
+        query='reconciliation?period=day&date='+date.today().isoformat()
+        before=self.admin.request(query)[1]['totals']
+        data={'student_id':sid,'amount':'1','cash_amount':'0','payment_method':'cash','date':date.today().isoformat(),'note':'只退课时','request_id':str(uuid.uuid4())}
+        code,result=self.admin.request('refunds',data)
+        self.assertEqual(code,201,result)
+        self.assertEqual(self.balance(sid),300)
+        state=self.admin.request('state')[1]
+        refund=next(e for e in state['entries'] if e['student_id']==sid and e['kind']=='refund')
+        self.assertEqual(refund['cash_delta'],0)
+        self.assertEqual(refund['delta'],-100)
+        after=self.admin.request(query)[1]
+        self.assertEqual(after['totals']['refunds_cents']-before['refunds_cents'],0)
+        self.assertEqual(after['totals']['refund_units']-before['refund_units'],100)
+        self.assertTrue(after['balance_check'])
+        self.assertEqual(self.correct_entry(refund,amount=1,cash_amount='0',payment_method='cash')[0],200)
+        self.assertEqual(self.admin.request('refunds',{**data,'cash_amount':'-1','request_id':str(uuid.uuid4())})[0],400)
+        self.assertEqual(self.balance(sid),300)
+
     def test_recurring_schedule_dates_retry_and_no_charge(self):
         for mode,days in [('weekly',7),('fortnightly',14)]:
             tid,_=self.new_teacher();sid=self.new_student();key=str(uuid.uuid4())
