@@ -142,6 +142,14 @@ function accountStatus(account){
  if(needsRenewal(account)) return '该续费';
  return '正常';
 }
+function legacyMark(group){
+ const names=[];
+ group.forEach(account=>{
+  const listed=Array.isArray(account.legacy_subjects)?account.legacy_subjects:(account.legacy?[account.subject_name||account.course]:[]);
+  listed.forEach(name=>{if(name && !names.includes(name)) names.push(name);});
+ });
+ return names.length?`<span class="legacy-badge">老学员 · ${names.map(userHTML).join('、')}</span>`:'';
+}
 function studentFold(group, admin){
  const person=group[0];
  const ids=new Set(group.map(account=>String(account.id)));
@@ -152,7 +160,8 @@ function studentFold(group, admin){
  const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑档案</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加科目</button>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">删除并归档</button>`:''}</div>`:'';
  const enrolments=group.map(account=>{
   const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money)).join('')||'<li>还没有课时包。</li>';
-  const price=state.user.role==='owner'&&account.course_type_name?`<form class="legacy-price" data-legacy-form="${account.id}"><p class="footnote">${account.legacy?'<span class="legacy-badge">老学员</span> ':''}2027 价目 ${account.list_hourly_cents==null?'还没有':'$'+(account.list_hourly_cents/100).toFixed(2)+' / 小时'}。留空并保存就改回价目。</p><label class="field">这位学生的每小时价格 AUD<input name="hourly" inputmode="decimal" value="${account.custom_hourly_cents==null?'':(account.custom_hourly_cents/100).toFixed(2)}" placeholder="用 2027 价目"></label><button class="btn" type="submit">保存价格</button></form>`:'';
+  const subjectLabel=account.subject_name||account.course||'本科目';
+  const price=state.user.role==='owner'&&account.course_type_name?`<form class="legacy-price" data-legacy-form="${account.id}"><p class="footnote">${account.legacy?`<span class="legacy-badge">老学员 · ${userHTML(subjectLabel)}</span> `:''}2027 价目 ${account.list_hourly_cents==null?'还没有':'$'+(account.list_hourly_cents/100).toFixed(2)+' / 小时'}。留空并保存，这一科就改回价目。</p><label class="field">${userHTML(subjectLabel)} 每小时价格 AUD<input name="hourly" inputmode="decimal" value="${account.custom_hourly_cents==null?'':(account.custom_hourly_cents/100).toFixed(2)}" placeholder="用 2027 价目"></label><button class="btn" type="submit">保存价格</button></form>`:'';
   return `<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}</small></div><div class="num">${accountStatus(account)}</div></article>${price}<ul class="pack-list">${packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button>${state.user.role==='owner'?`<button class="btn refund-action" data-stop-course="${account.id}" type="button">停课/删除这门课</button>`:''}</p>`:''}`;
  }).join('');
  const stopped=(state.archived_students||[]).filter(account=>account.profile_id===person.profile_id);
@@ -171,9 +180,9 @@ function renderStudents(){
   const subjects=group.map(account=>[account.grade||person.grade, account.subject_name||account.course, account.course_type_name].filter(Boolean).join(' · ')).join('，');
   const balance=group.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · ');
   const health=String(person.health_notes||'').trim();
-  const legacy=group.some(account=>account.legacy);
+  const legacy=legacyMark(group);
   const pack=group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
-  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(person.name.slice(-1))}</div><div style="flex:1"><h2>${userHTML(person.name)}${legacy?' <span class="legacy-badge">老学员</span>':''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div><div><div class="muted">剩余课时</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${group.some(account=>account.balance<=0)?'欠费':group.some(needsRenewal)?'该续费':'正常'}</strong></div>${admin?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:''}</article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
+  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(person.name.slice(-1))}</div><div style="flex:1"><h2>${userHTML(person.name)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div><div><div class="muted">剩余课时</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${group.some(account=>account.balance<=0)?'欠费':group.some(needsRenewal)?'该续费':'正常'}</strong></div>${admin?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:''}</article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
  }).join(''):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
  if(state.user.role==='owner'){
   const archived=state.archived_students||[];

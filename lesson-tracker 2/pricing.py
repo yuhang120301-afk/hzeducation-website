@@ -81,6 +81,7 @@ def schema(c):
     if 'validity_note' not in cols:
         c.execute("ALTER TABLE price_tables ADD COLUMN validity_note TEXT NOT NULL DEFAULT ''")
     publish_seed(c)
+    ensure_subject_prices(c)
 
 
 def seed_2027(c):
@@ -115,6 +116,133 @@ def publish_seed(c):
 
 
 TYPE_PRODUCT = {'一对一': 'one_to_one', '一对二': 'one_to_two', '小班课': 'term'}
+LEGACY_SUBJECTS = ('数学', '英语')
+SUBJECT_PRICE_KEY = 'legacy_subject_prices_v1'
+
+
+def canonical_subject(text):
+    raw = str(text or '').strip()
+    if '数学' in raw:
+        return '数学'
+    if '英语' in raw:
+        return '英语'
+    return raw
+
+
+def _field(row, key):
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None
+
+
+def subject_of(c, student):
+    named = canonical_subject(_field(student, 'subject_name'))
+    if named:
+        return named
+    subject_id = _field(student, 'subject_id')
+    if subject_id:
+        row = c.execute('SELECT name FROM subjects WHERE id=?', (int(subject_id),)).fetchone()
+        if row and row['name']:
+            return canonical_subject(row['name'])
+    return canonical_subject(_field(student, 'course'))
+
+
+def ensure_subject_prices(c):
+    """Copy each old single price onto 数学 and 英语. New table only: no rebuild, no VACUUM."""
+    c.execute('''CREATE TABLE IF NOT EXISTS student_subject_prices (
+        id INTEGER PRIMARY KEY,
+        profile_id INTEGER NOT NULL,
+        product TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        lesson_minutes INTEGER NOT NULL,
+        per_lesson_cents INTEGER NOT NULL CHECK(per_lesson_cents>=0),
+        note TEXT NOT NULL DEFAULT '',
+        updated_by INTEGER NOT NULL,
+        UNIQUE(profile_id, product, subject, lesson_minutes)
+    )''')
+    if c.execute('SELECT 1 FROM app_meta WHERE key=?', (SUBJECT_PRICE_KEY,)).fetchone():
+        return
+    names = {}
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='students'").fetchone():
+        subjects_ready = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subjects'").fetchone()
+        for row in c.execute('SELECT profile_id, course, subject_id FROM students'):
+            label = ''
+            if row['subject_id'] and subjects_ready:
+                found = c.execute('SELECT name FROM subjects WHERE id=?', (row['subject_id'],)).fetchone()
+                label = found['name'] if found else ''
+            label = canonical_subject(label or row['course'] or '')
+            if label:
+                names.setdefault(row['profile_id'], set()).add(label)
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='student_prices'").fetchone():
+        for row in c.execute('SELECT profile_id, product, lesson_minutes, per_lesson_cents, note, updated_by FROM student_prices'):
+            targets = set(LEGACY_SUBJECTS)
+            targets.update(names.get(row['profile_id'], ()))
+            for subject in targets:
+                c.execute('''INSERT OR IGNORE INTO student_subject_prices
+                    (profile_id, product, subject, lesson_minutes, per_lesson_cents, note, updated_by)
+                    VALUES(?,?,?,?,?,?,?)''',
+                    (row['profile_id'], row['product'], subject, row['lesson_minutes'],
+                     row['per_lesson_cents'], row['note'] or '老学员', row['updated_by']))
+    c.execute('INSERT OR IGNORE INTO app_meta(key,value) VALUES(?,?)', (SUBJECT_PRICE_KEY, '1'))
+
+
+def subject_custom_rows(c, profile_id, product, subject):
+    if not profile_id or not product or not subject:
+        return []
+    ensure_subject_prices(c)
+    return c.execute('''SELECT lesson_minutes, per_lesson_cents, product, subject FROM student_subject_prices
+        WHERE profile_id=? AND product=? AND subject=?''', (profile_id, product, subject)).fetchall()
+
+
+def profile_custom_rows(c, profile_id):
+    if not profile_id:
+        return []
+    ensure_subject_prices(c)
+    return c.execute('''SELECT lesson_minutes, per_lesson_cents, product, subject FROM student_subject_prices
+        WHERE profile_id=?''', (profile_id,)).fetchall()
+
+
+def subject_lesson_cents(c, profile_id, product, subject, minutes):
+    if not profile_id or not product or not subject:
+        return None
+    ensure_subject_prices(c)
+    row = c.execute('''SELECT per_lesson_cents FROM student_subject_prices
+        WHERE profile_id=? AND product=? AND subject=? AND lesson_minutes=?''',
+        (profile_id, product, subject, int(minutes))).fetchone()
+    return row['per_lesson_cents'] if row else None
+
+
+def price_differs(rows, level, item):
+    band = matching_row(rows, item['product'], level) if level else None
+    if not band:
+        return True
+    return int(item['per_lesson_cents']) != per_lesson_cents(band['hourly_cents'], item['lesson_minutes'])
+
+
+def hourly_from_custom(customs):
+    custom_hourly = None
+    for row in customs:
+        if row['lesson_minutes'] == 60:
+            custom_hourly = row['per_lesson_cents']
+    if custom_hourly is None and customs:
+        sample = customs[0]
+        minutes = sample['lesson_minutes'] or 60
+        custom_hourly = int((Decimal(sample['per_lesson_cents']) * 60 / Decimal(minutes)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return custom_hourly
+
+
+def legacy_subject_names(rows, level, customs):
+    found = []
+    for subject in dict.fromkeys(row['subject'] for row in customs):
+        subject_rows = [row for row in customs if row['subject'] == subject]
+        if any(price_differs(rows, level, row) for row in subject_rows):
+            found.append(subject)
+    order = {name: index for index, name in enumerate(LEGACY_SUBJECTS)}
+    found.sort(key=lambda name: (order.get(name, 99), name))
+    return found
 
 
 def presets(c, user, student_id=None, level=None, course_type_id=None, day=None):
@@ -173,8 +301,7 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
     source = 'table'
     hourly = band['hourly_cents']
     if student and student['profile_id']:
-        custom = c.execute('SELECT per_lesson_cents, lesson_minutes FROM student_prices WHERE profile_id=? AND product=?',
-            (student['profile_id'], product)).fetchall()
+        custom = subject_custom_rows(c, student['profile_id'], product, subject_of(c, student))
         if custom:
             source = 'custom'
             by_minutes = {row['lesson_minutes']: row['per_lesson_cents'] for row in custom}
@@ -203,7 +330,7 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
 
 
 def legacy_price(c, student, on=None):
-    """A student is legacy only when Helen stored a per-lesson price that is not the 2027 list."""
+    """Legacy is per subject. An empty subject uses the 2027 list and is not badged."""
     on = on or now_local().date()
     student = annotate(dict(student), on)
     name = student.get('course_type_name') or ''
@@ -212,44 +339,39 @@ def legacy_price(c, student, on=None):
         name = kind['name'] if kind else ''
     product = TYPE_PRODUCT.get(name)
     level = student.get('level_now') or ''
+    subject = subject_of(c, student)
     table = table_on(c, on.isoformat())
     rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
     band = matching_row(rows, product, level) if product and level else None
     list_hourly = band['hourly_cents'] if band else None
-    customs = []
-    if student.get('profile_id') and product and product != 'helen':
-        customs = c.execute('SELECT lesson_minutes, per_lesson_cents FROM student_prices WHERE profile_id=? AND product=?',
-            (student['profile_id'], product)).fetchall()
-    custom_hourly = None
-    legacy = False
-    for row in customs:
-        if row['lesson_minutes'] == 60:
-            custom_hourly = row['per_lesson_cents']
-        if list_hourly is None or row['per_lesson_cents'] != per_lesson_cents(list_hourly, row['lesson_minutes']):
-            legacy = True
-    if custom_hourly is None and customs:
-        sample = customs[0]
-        minutes = sample['lesson_minutes'] or 60
-        custom_hourly = int((Decimal(sample['per_lesson_cents']) * 60 / Decimal(minutes)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
-    return {'legacy': bool(customs) and legacy, 'list_hourly_cents': list_hourly,
-        'custom_hourly_cents': custom_hourly if customs else None, 'product': product, 'level': level,
-        'course_type': name}
+    customs = subject_custom_rows(c, student.get('profile_id'), product, subject) if product and product != 'helen' else []
+    all_custom = profile_custom_rows(c, student.get('profile_id'))
+    legacy = bool(customs) and any(price_differs(rows, level, row) for row in customs)
+    return {'legacy': legacy, 'legacy_subjects': legacy_subject_names(rows, level, all_custom),
+        'list_hourly_cents': list_hourly, 'custom_hourly_cents': hourly_from_custom(customs) if customs else None,
+        'product': product, 'subject': subject, 'level': level, 'course_type': name}
 
 
 def save_legacy_price(c, user, data):
     require_owner(user)
     import accounting
-    student = c.execute('''SELECT s.*, ct.name course_type_name FROM students s
-        LEFT JOIN course_types ct ON ct.id=s.course_type_id WHERE s.id=? AND s.archived=0''',
+    student = c.execute('''SELECT s.*, ct.name course_type_name, sb.name subject_name FROM students s
+        LEFT JOIN course_types ct ON ct.id=s.course_type_id
+        LEFT JOIN subjects sb ON sb.id=s.subject_id
+        WHERE s.id=? AND s.archived=0''',
         (int(data.get('student_id') or 0),)).fetchone()
     if not student:
         raise ValueError('学生不存在。')
     info = legacy_price(c, student)
     product = info['product']
+    subject = info['subject']
     if not product:
         raise ValueError('请先选择课程类型。')
+    if not subject:
+        raise ValueError('请先选择科目。')
     if data.get('clear') is True or str(data.get('hourly') or '').strip() == '':
-        c.execute('DELETE FROM student_prices WHERE profile_id=? AND product=?', (student['profile_id'], product))
+        c.execute('DELETE FROM student_subject_prices WHERE profile_id=? AND product=? AND subject=?',
+            (student['profile_id'], product, subject))
         return {'ok': True, 'legacy': False}
     cents = accounting.money(data.get('hourly'))
     if info['product'] == 'term':
@@ -264,22 +386,24 @@ def save_legacy_price(c, user, data):
         minutes_list = [60, 90]
     for minutes in minutes_list:
         each = per_lesson_cents(cents, minutes)
-        c.execute('''INSERT INTO student_prices(profile_id,product,lesson_minutes,per_lesson_cents,note,updated_by)
-            VALUES(?,?,?,?,?,?)
-            ON CONFLICT(profile_id,product,lesson_minutes) DO UPDATE SET
+        c.execute('''INSERT INTO student_subject_prices(profile_id,product,subject,lesson_minutes,per_lesson_cents,note,updated_by)
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(profile_id,product,subject,lesson_minutes) DO UPDATE SET
             per_lesson_cents=excluded.per_lesson_cents, note=excluded.note, updated_by=excluded.updated_by''',
-            (student['profile_id'], product, minutes, each, '老学员', user['id']))
+            (student['profile_id'], product, subject, minutes, each, '老学员', user['id']))
     return {'ok': True, 'legacy': cents != info['list_hourly_cents']}
 
 
 def charged_fee_cents(c, student_id, lesson, amount_units):
-    """Use Helen's locked hourly price when a lesson has no package cash price."""
-    student = c.execute('''SELECT s.*, ct.name course_type_name FROM students s
-        LEFT JOIN course_types ct ON ct.id=s.course_type_id WHERE s.id=?''', (student_id,)).fetchone()
+    """This subject's locked hourly price, or the 2027 list when that field is empty."""
+    student = c.execute('''SELECT s.*, ct.name course_type_name, sb.name subject_name FROM students s
+        LEFT JOIN course_types ct ON ct.id=s.course_type_id
+        LEFT JOIN subjects sb ON sb.id=s.subject_id WHERE s.id=?''', (student_id,)).fetchone()
     if not student:
         return None
-    hourly = legacy_price(c, student)['custom_hourly_cents']
-    if not hourly:
+    info = legacy_price(c, student)
+    hourly = info['custom_hourly_cents'] if info['custom_hourly_cents'] is not None else info['list_hourly_cents']
+    if hourly is None:
         return None
     start = dt.datetime.fromisoformat(lesson['starts_at'])
     end = dt.datetime.fromisoformat(lesson['ends_at'])
@@ -461,15 +585,14 @@ def trial_cents(single_lesson_cents):
 
 
 def list_lesson_cents(c, student_id, day, product, minutes):
-    """One lesson at the year-and-type list price. Subject is ignored. A locked student price wins."""
+    """One lesson at this subject's locked price, or the 2027 list when that field is empty."""
     student = c.execute('SELECT * FROM students WHERE id=?', (int(student_id),)).fetchone()
     if not student or product not in TYPE_PRODUCT.values():
         return None
     level = annotate(dict(student), dt.date.fromisoformat(str(day)[:10]))['level_now']
-    custom = c.execute('''SELECT per_lesson_cents FROM student_prices
-        WHERE profile_id=? AND product=? AND lesson_minutes=?''', (student['profile_id'], product, int(minutes))).fetchone()
-    if custom:
-        return custom['per_lesson_cents']
+    custom = subject_lesson_cents(c, student['profile_id'], product, subject_of(c, student), int(minutes))
+    if custom is not None:
+        return custom
     table = table_on(c, str(day)[:10])
     rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
     band = matching_row(rows, product, level) if level else None
@@ -528,8 +651,8 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
         discount = 0
         terms = []
     minutes = int(lesson_minutes or 0)
-    custom = c.execute('''SELECT per_lesson_cents FROM student_prices
-        WHERE profile_id=? AND product=? AND lesson_minutes=?''', (student['profile_id'], product, minutes if product != 'term' else minutes)).fetchone()
+    subject = subject_of(c, student)
+    custom = subject_lesson_cents(c, student['profile_id'], product, subject, minutes)
     source = 'none'
     each = None
     hourly = None
@@ -538,10 +661,9 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
     band = matching_row(rows, product, level) if level else None
     if product == 'term' and band and not minutes:
         minutes = band['lesson_minutes']
-        custom = c.execute('''SELECT per_lesson_cents FROM student_prices
-            WHERE profile_id=? AND product=? AND lesson_minutes=?''', (student['profile_id'], product, minutes)).fetchone()
-    if custom:
-        each = custom['per_lesson_cents']
+        custom = subject_lesson_cents(c, student['profile_id'], product, subject, minutes)
+    if custom is not None:
+        each = custom
         source = 'custom'
     elif band and (product == 'term' or minutes in (60, 90)):
         use_minutes = band['lesson_minutes'] if product == 'term' else minutes
@@ -622,9 +744,10 @@ def list_prices(c, user):
         item = dict(table)
         item['rows'] = [dict(r) for r in c.execute("SELECT * FROM price_rows WHERE table_id=? AND product!='helen' ORDER BY product, level_from, id", (table['id'],))]
         tables.append(item)
-    custom = [dict(r) for r in c.execute('''SELECT p.*, s.name student_name FROM student_prices p
+    ensure_subject_prices(c)
+    custom = [dict(r) for r in c.execute('''SELECT p.*, s.name student_name FROM student_subject_prices p
         JOIN students s ON s.profile_id=p.profile_id
-        GROUP BY p.id ORDER BY s.name, p.product, p.lesson_minutes''')]
+        GROUP BY p.id ORDER BY s.name, p.subject, p.product, p.lesson_minutes''')]
     return {'tables': tables, 'custom': custom, 'levels': list(LEVELS), 'terms': TERM_COUNTS, 'products': PRODUCT_LABELS, 'by_type': prices_by_type(c)}
 
 
@@ -671,21 +794,26 @@ def save_custom(c, user, data):
     product = data.get('product')
     if product not in PRODUCTS:
         raise ValueError('请选择课程类型。')
+    subject = canonical_subject(data.get('subject'))
+    if not subject:
+        raise ValueError('请选择科目。')
     minutes = int(data.get('lesson_minutes') or 0)
     if minutes not in LENGTHS:
         raise ValueError('请选择课时长度。')
     note = str(data.get('note') or '').strip()
     if len(note) > 200:
         raise ValueError('备注最多 200 个字。')
+    ensure_subject_prices(c)
     if data.get('remove') is True:
-        c.execute('DELETE FROM student_prices WHERE profile_id=? AND product=? AND lesson_minutes=?', (profile_id, product, minutes))
+        c.execute('DELETE FROM student_subject_prices WHERE profile_id=? AND product=? AND subject=? AND lesson_minutes=?',
+            (profile_id, product, subject, minutes))
         return {'ok': True}
     cents = accounting.money(data.get('per_lesson'))
-    c.execute('''INSERT INTO student_prices(profile_id,product,lesson_minutes,per_lesson_cents,note,updated_by)
-        VALUES(?,?,?,?,?,?)
-        ON CONFLICT(profile_id,product,lesson_minutes) DO UPDATE SET
+    c.execute('''INSERT INTO student_subject_prices(profile_id,product,subject,lesson_minutes,per_lesson_cents,note,updated_by)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(profile_id,product,subject,lesson_minutes) DO UPDATE SET
         per_lesson_cents=excluded.per_lesson_cents, note=excluded.note, updated_by=excluded.updated_by''',
-        (profile_id, product, minutes, cents, note, user['id']))
+        (profile_id, product, subject, minutes, cents, note, user['id']))
     return {'ok': True}
 
 
