@@ -283,6 +283,7 @@ def seed_portal_cast(c):
         c.execute('''INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by,received_by,handed_over)
             VALUES(?,?,?,?,?,?,?)''', (ledger['id'], cents, method, '', helen['id'], recv, handed))
     c.execute("INSERT INTO audit_log(actor_id,action,summary,ops_json) VALUES(?,?,'演示：登记陈一诺的课时包','[]')", (helen['id'], 'purchase'))
+    teaching.ensure_catalogs(c)
     c.execute("INSERT INTO app_meta VALUES('portal_cast_v1','1')")
 
 class Handler(BaseHTTPRequestHandler):
@@ -373,6 +374,15 @@ class Handler(BaseHTTPRequestHandler):
                         filename=f'teacher-pay-{result["start"]}-to-{result["end"]}.csv'
                         return self.response(200,blob,content_type='text/csv; charset=utf-8',extra=[('Content-Disposition',f'attachment; filename="{filename}"')])
                     return self.response(200,result)
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/today':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    return self.response(200, finance.today_board(c, user, params.get('date',[None])[0]))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/api/prices':
@@ -524,11 +534,12 @@ class Handler(BaseHTTPRequestHandler):
                     result=payroll.handle_post(c,user,self.path,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/accounting/cash'):
+                if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/accounting/cash','/api/accounting/handover'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/administrators':result=accounting.add_administrator(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/administrators/edit':result=accounting.edit_administrator(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/administrators/status':result=accounting.set_active(c,user,data)
+                    elif self.path=='/api/accounting/handover':result=accounting.mark_handover(c,user,data)
                     else:result=accounting.supplement_cash(c,user,data)
                     c.commit()
                     return self.response(200,result)

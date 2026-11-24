@@ -357,16 +357,58 @@ function showPreview(column, start, end){
  column.insertAdjacentHTML('beforeend', `<div class="gcal-preview" style="top:${((start-GCAL_START*60)/60)*GCAL_PX}px;height:${height}px"><em class="drag-tip">改到 ${weekdayName(day)} ${gcalClock(start)}</em></div>`);
 }
 function clearPreview(){document.querySelectorAll('.gcal-preview').forEach(node=>node.remove());}
+function durationLabel(lesson){
+ const [sh,sm]=lesson.starts_at.slice(11,16).split(':').map(Number);
+ const [eh,em]=lesson.ends_at.slice(11,16).split(':').map(Number);
+ const hours=Math.max(0,((eh*60+em)-(sh*60+sm))/60);
+ const text=Number.isInteger(hours)?String(hours):String(Math.round(hours*10)/10);
+ return `${text} 小时`;
+}
+function boardMoney(cents){
+ const value=(cents||0)/100;
+ return '$'+value.toLocaleString('en-AU',{minimumFractionDigits:value%1?2:0,maximumFractionDigits:2});
+}
 async function renderToday(){
  const lessons=(state.lessons||[]).filter(lesson=>lesson.starts_at.slice(0,10)===state.today && lesson.status!=='cancelled').sort((a,b)=>a.starts_at.localeCompare(b.starts_at));
- const renew=studentGroups().filter(group=>group.some(needsRenewal));
- $('#surface').innerHTML=`<section class="stats"><div class="stat featured"><div class="stat-label">今天的课</div><div class="stat-value">${lessons.length}<small>节</small></div><div class="stat-note">${escapeHTML(state.today)} · ${escapeHTML(state.timezone)}</div></div><div class="stat"><div class="stat-label">需要续费</div><div class="stat-value">${renew.length}<small>位</small></div><div class="stat-note">剩余不超过 3 节</div></div><div class="stat" id="today-cash"><div class="stat-label">本周净收款</div><div class="stat-value">…</div><div class="stat-note">收款减退款，不是利润</div></div></section><section class="panel pending-lessons"><h2>今天</h2>${lessons.length?lessons.map(lesson=>`<button class="pending-row" data-lesson-detail="${lesson.id}"><span><strong>${lesson.students.map(student=>userHTML(student.name)).join('、')||userHTML(lesson.title)}</strong><small>${lesson.starts_at.slice(11,16)}–${lesson.ends_at.slice(11,16)} · ${userHTML(lesson.teacher_name)} · ${lessonStatus(lesson)}</small></span><span>${lesson.status==='completed'?'已扣课':'查看'} →</span></button>`).join(''):'<p class="empty">今天还没有课。</p>'}</section><section class="panel" style="margin-top:18px;padding:18px"><h2>余额不足 3 的学生</h2>${renew.length?renew.map(group=>`<p>${userHTML(group[0].name)} · ${group.filter(needsRenewal).map(account=>userHTML(account.course)+' '+fmt(regularHours(account))+' '+unitFor(account)).join('，')}</p>`).join(''):'<p class="muted">目前没有人低于 3。</p>'}</section>`;
- document.querySelectorAll('[data-lesson-detail]').forEach(button=>button.onclick=()=>lessonDetail(button.dataset.lessonDetail));
+ const methods={bank:'银行转账',cash:'现金',card:'刷卡',alipay:'支付宝',wechat:'微信',other:'其他'};
+ $('#surface').innerHTML=`<div class="today-board"><label class="today-search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input id="today-search" type="search" placeholder="搜索老师或学生，直接打开他们的页面" aria-label="搜索老师或学生"></label><div id="today-hits" class="today-hits" hidden></div><div class="today-cards" id="today-cards"><div class="card"><div class="k">今日营业额</div><div class="n">…</div><div class="s">今天已上的课</div></div><div class="card good"><div class="k">今日利润</div><div class="n">…</div><div class="s">扣课酬和当天成本</div></div><div class="card"><div class="k">本月营业额</div><div class="n">…</div><div class="s">本月已上的课</div></div><div class="card good"><div class="k">本月利润</div><div class="n">…</div><div class="s">还没扣 Vincent 分成</div></div></div><div class="section"><h2>今天的课</h2>${lessons.map(lesson=>{
+  const tone=teacherTone(lesson.teacher_name);
+  const who=(lesson.students||[]).map(student=>[student.name,student.grade].filter(Boolean).join(' · ')).join(' · ')||lesson.title;
+  const kind=lesson.course_type_name||'';
+  const mine=(lesson.teacher_name||'').toLowerCase().includes('helen')?'本人 · ':'';
+  const done=lesson.status==='completed';
+  return `<article class="today-lesson ${done?'done':''} t-${tone}"><time>${lesson.starts_at.slice(11,16)}<small>${durationLabel(lesson)}</small></time><div class="who2"><span class="mark">${userHTML((lesson.teacher_name||'?').slice(0,1))}</span><div>${userHTML(who)}<span>${userHTML(lesson.teacher_name)} · ${mine}${userHTML(kind)}</span></div></div><div class="taps">${done?'<button type="button" class="go" disabled>已上了</button>':`<button type="button" class="go" data-today-done="${lesson.id}">上了</button><button type="button" data-today-leave="${lesson.id}">请假</button>`}</div></article>`;
+ }).join('')||'<p class="muted">今天还没有课。</p>'}</div><div class="section"><h2>要处理</h2><div class="today-actions" id="today-actions"><div class="today-action"><h3>正在读取</h3></div></div></div></div>`;
+ const box=$('#today-search'), hits=$('#today-hits');
+ box.oninput=()=>{
+  const query=box.value.trim().toLowerCase();
+  if(!query){hits.hidden=true;hits.innerHTML='';return;}
+  const students=studentGroups().map(group=>group[0]).filter(student=>student.name.toLowerCase().includes(query));
+  const teachers=(state.teachers||[]).filter(teacher=>teacher.name.toLowerCase().includes(query));
+  hits.hidden=false;
+  hits.innerHTML=[...students.map(student=>`<button type="button" data-open-student="${student.id}">学生 · ${userHTML(student.name)}</button>`),...teachers.map(teacher=>`<button type="button" data-open-teacher="${teacher.id}">老师 · ${userHTML(teacher.name)}</button>`)].join('')||'<p>没有匹配的老师或学生。</p>';
+  hits.querySelectorAll('[data-open-student]').forEach(button=>button.onclick=()=>{profileId=button.dataset.openStudent;view='profile';render();});
+  hits.querySelectorAll('[data-open-teacher]').forEach(button=>button.onclick=()=>{teacherFilter=button.dataset.openTeacher;view='schedule';render();});
+ };
+ document.querySelectorAll('[data-today-done]').forEach(button=>button.onclick=()=>quickCloseModal(lessonById(button.dataset.todayDone)));
+ document.querySelectorAll('[data-today-leave]').forEach(button=>button.onclick=async()=>{
+  const lesson=lessonById(button.dataset.todayLeave);
+  const scope=await askSeriesScope(lesson);
+  if(!scope) return;
+  try{await api('lessons/cancel',{lesson_id:lesson.id,version:lesson.version,series_version:lesson.series_version,scope,reason:'学生请假'});toast('已请假，没有扣课时。');}catch(error){toast(error.message);}
+ });
  try{
-  const data=await api('reconciliation?period=week&date='+encodeURIComponent(state.today));
+  const data=await api('today?date='+encodeURIComponent(state.today));
   if(view!=='today') return;
-  $('#today-cash').innerHTML=`<div class="stat-label">本周净收款</div><div class="stat-value">${cashFmt(data.totals.net_cash_cents)}</div><div class="stat-note">收款 ${cashFmt(data.totals.receipts_cents)} · 退款 ${cashFmt(data.totals.refunds_cents)}</div>`;
- }catch(error){if(view==='today') $('#today-cash').querySelector('.stat-note').textContent=error.message;}
+  const cards=[['今日营业额',boardMoney(data.today.turnover_cents),'今天已上的课'],['今日利润',boardMoney(data.today.profit_cents),'扣课酬和当天成本'],['本月营业额',boardMoney(data.month.turnover_cents),'本月已上的课'],['本月利润',boardMoney(data.month.profit_cents),'还没扣 Vincent 分成']];
+  $('#today-cards').innerHTML=cards.map((card,index)=>`<div class="card ${index%2?'good':''}"><div class="k">${card[0]}</div><div class="n">${card[1]}</div><div class="s">${card[2]}</div></div>`).join('');
+  const low=(data.low_balance||[]).filter(row=>row.lessons_left<=3);
+  const booked=data.arrears?.booked_without_credit||[];
+  const debts=data.arrears?.debts||[];
+  const unhanded=data.unhanded||[];
+  const row=(name,meta,amount)=>`<div class="row"><div>${userHTML(name)}<small>${meta}</small></div><b>${amount}</b></div>`;
+  $('#today-actions').innerHTML=`<div class="today-action"><h3>剩余不超过 3 节 <span class="count">${low.length}</span></h3>${low.map(item=>row(item.name,`${item.grade||''} · ${item.course}`,`${item.lessons_left} 节`)).join('')||'<p class="muted">没有人低于 3 节。</p>'}</div><div class="today-action"><h3>欠费或没课了还排着 <span class="count">${booked.length+debts.length}</span></h3>${booked.map(item=>row(item.student_name,'课时已用完 · 仍有课','去收款')).join('')}${debts.map(item=>row(item.student_name,item.reason||'欠费',boardMoney(item.amount))).join('')|| (booked.length?'':'<p class="muted">没有欠费。</p>')}</div><div class="today-action"><h3>老师收款还没上交 <span class="count">${unhanded.length}</span></h3>${unhanded.map(item=>row(item.receiver_name||'',`${item.lesson_date||''} · ${methods[item.payment_method]||item.payment_method||''} · ${item.student_name||''}`,boardMoney(item.cash_delta))).join('')||'<p class="muted">没有未上交的代收。</p>'}</div>`;
+ }catch(error){if(view==='today') $('#today-actions').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`;}
 }
 function quickCloseModal(lesson){
  const fields=lesson.students.map(student=>`<fieldset class="report-student"><legend>${userHTML(student.name)} · ${unitFor(student)}</legend><label class="field">本次扣除<input name="amount_${student.id}" type="number" min="0.01" max="10000" step="0.01" value="${(expectedUnits(lesson,student)/100)}" required></label><label class="field">这节课课酬 AUD<input name="fee_${student.id}" inputmode="decimal" placeholder="留空则按课时包单价，赠课为 0"></label></fieldset>`).join('');

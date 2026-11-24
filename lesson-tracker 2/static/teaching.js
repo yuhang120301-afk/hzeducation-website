@@ -9,10 +9,8 @@ const lessonStatus=l=>l.status==='scheduled'&&l.ends_at<state.now?'待写课后�
 function navigationItems(){
  const role=state.user.role;
  if(role==='owner') return [
-  ['每天',[['today','今天','clock'],['schedule','课表排课','grid'],['feedback','确认课时','check']]],
-  ['学生',[['overview','学生与余额','users'],['records','余额明细','book']]],
-  ['财务',[['pay','老师工资','book'],['accounting','收款与欠费','grid'],['finance','财务报表','book']]],
-  ['设置',[['setup','设置','users'],['audit','操作日志','book']]]
+  ['',[['today','今天','clock'],['schedule','课表','grid'],['overview','学生','users'],['pay','工资','book'],['finance','财务','book']]],
+  ['更多',[['feedback','课后记录','check'],['accounting','收款与欠费','grid'],['prices','价格表','book'],['audit','操作日志','book'],['setup','设置','users']]]
  ];
  const items=[['schedule',role==='admin'?'排课日历':role==='teacher'?'我的课程':'孩子的课表','clock'],['feedback','课后记录','book'],['overview',role==='admin'?'学生与课时':role==='teacher'?'我的学生':'剩余余额','grid'],['records','余额明细','book']];
  if(role==='admin') items.push(['teachers','老师管理','users'],['settings','课程与地点设置','grid']);
@@ -35,6 +33,7 @@ function headerActions(){
  const student=`<button class="btn" id="add-student">${icon('plus')}添加学生</button>`;
  if(view==='teachers') return `<div class="head-actions"><button class="btn primary" id="add-teacher">${icon('plus')}添加老师</button></div>`;
  if(view==='administrators') return `<div class="head-actions"><button class="btn primary" id="add-admin">${icon('plus')}添加管理员</button></div>`;
+ if(view==='today' && role==='owner') return `<div class="head-actions"><span class="today-who">Helen校长端</span></div>`;
  if(view==='overview') return `<div class="head-actions">${student}${schedule}</div>`;
  if(view==='schedule' || (role==='admin' && !['settings','accounting'].includes(view))) return `<div class="head-actions">${schedule}</div>`;
  return '';
@@ -63,10 +62,11 @@ function dashboard(){
  const nav=navigationItems(), flat=flatNavigation(), current=flat.find(item=>item[0]===view)||flat[0];
  view=current[0];
  const center=role==='owner'?'Helen校长端':admin?'机构管理':staff?'老师中心':'家长中心';
- const shown=['teachers','settings','administrators'].includes(view)?'setup':view;
- const subtitles={today:'今天的课、需要续费的学生，以及本周收到的钱。',schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'查看余额、充值和退款。':staff?'查看学生余额，按各自计费方式管理。':'剩余余额与学习记录，随时查看。',records:'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'核对每天收到的家长付款，以及还没上交的代收。',pay:'按已经上完、扣过课时的课计算。数字供核对，不会自动打款。',finance:'营业额、成本、机构利润和 Helen 净利润。',audit:'可以查看并撤销还没有被别人改过的操作。',profile:'课程和课后记录按日期排列。',setup:'老师、课程名称、管理员和每日备份。'};
- const navHtml=nav.map(([label,items])=>`${label?`<p class="nav-label">${label}</p>`:''}${items.map(item=>`<button class="nav-item ${shown===item[0]?'active':''}" data-view="${item[0]}">${icon(item[2])}${item[1]}</button>`).join('')}`).join('');
- $('#app').innerHTML=`<div class="shell"><aside class="sidebar">${brand()}<nav>${navHtml}</nav><div class="side-foot"><strong>HZ Education Melbourne</strong>把每一次进步，认真记下来。</div></aside><button type="button" class="nav-backdrop" id="nav-backdrop" aria-label="关闭菜单"></button><main class="main">${state.demo?'<div class="demo-banner">本机演示版 · 虚构数据 · 可分别体验Helen校长端、管理员、任课老师和家长账号</div>':''}<header class="topbar"><button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开菜单"><span></span><span></span><span></span></button><div class="breadcrumb">${center}<span>/　${current[1]}</span></div><div class="account"><span class="avatar">${userHTML(state.user.name.slice(0,1))}</span><span>${userHTML(state.user.name)}</span><span class="role-label">${role==='owner'?'Helen校长端':admin?'管理员':staff?'任课老师':'家长'}</span><button class="text-btn" id="password">修改密码</button><button class="text-btn logout" id="logout">退出</button></div></header><div class="content"><div class="page-head"><div><h1>${current[1]}</h1><p>${escapeHTML(subtitles[view]||'')}</p></div>${headerActions()}</div><div id="surface"></div></div></main></div>`;
+ const shown={teachers:'setup',settings:'setup',administrators:'setup',profile:'overview'}[view]||view;
+ const todayLine=`${typeof weekdayName==='function'?weekdayName(state.today):''} ${Number(state.today.slice(5,7))}月${Number(state.today.slice(8))}日 · 墨尔本时间`;
+ const subtitles={today:todayLine,schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'每张卡是一位学生。左边的颜色是任课老师。':staff?'查看学生余额，按各自计费方式管理。':'剩余余额与学习记录，随时查看。',records:'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'核对每天收到的家长付款，以及还没上交的代收。',pay:'按已经上完、扣过课时的课计算。数字供核对，不会自动打款。',finance:'营业额、成本、机构利润和 Helen 净利润。',audit:'可以查看并撤销还没有被别人改过的操作。',profile:'课程和课后记录按日期排列。',setup:'老师、课程名称、管理员和每日备份。',prices:'每种课程各自的价和课时包。暂定的数字可以改。'};
+ const navHtml=nav.map(([label,items])=>`${label==='更多'?'<p class="nav-more">更多</p>':label?`<p class="nav-label">${label}</p>`:''}${items.map(item=>`<button class="nav-item ${shown===item[0]?'active':''}" data-view="${item[0]}">${icon(item[2])}${item[1]}</button>`).join('')}`).join('');
+ $('#app').innerHTML=`<div class="shell"><aside class="sidebar ${role==='owner'?'a2':''}">${brand()}<nav>${navHtml}</nav><div class="side-foot"><strong>HZ Education Melbourne</strong>把每一次进步，认真记下来。</div></aside><button type="button" class="nav-backdrop" id="nav-backdrop" aria-label="关闭菜单"></button><main class="main">${state.demo?'<div class="demo-banner">本机演示版 · 虚构数据 · 可分别体验Helen校长端、管理员、任课老师和家长账号</div>':''}<header class="topbar"><button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开菜单"><span></span><span></span><span></span></button><div class="breadcrumb">${center}<span>/　${current[1]}</span></div><div class="account"><span class="avatar">${userHTML(state.user.name.slice(0,1))}</span><span>${userHTML(state.user.name)}</span><span class="role-label">${role==='owner'?'Helen校长端':admin?'管理员':staff?'任课老师':'家长'}</span><button class="text-btn" id="password">修改密码</button><button class="text-btn logout" id="logout">退出</button></div></header><div class="content"><div class="page-head ${role==='owner'?'a2-head':''}"><div><h1>${current[1]}</h1><p>${escapeHTML(subtitles[view]||'')}</p></div>${headerActions()}</div><div id="surface"></div></div></main></div>`;
  const closeNav=()=>document.querySelector('.shell')?.classList.remove('nav-open');
  document.querySelectorAll('.sidebar [data-view]').forEach(button=>button.onclick=()=>{view=button.dataset.view;selected='';closeNav();render();});
  $('#nav-toggle').onclick=()=>document.querySelector('.shell').classList.toggle('nav-open');
@@ -81,6 +81,7 @@ function dashboard(){
  if(view==='accounting')renderAccounting();
  if(view==='pay')renderPay();
  if(view==='finance')renderFinance();
+ if(view==='prices')renderPrices();
  if(view==='audit')renderAudit();
  if(view==='profile')renderProfile();
  if(view==='setup')renderSetup();
@@ -99,7 +100,7 @@ function studentFilter(){return `<select id="student-filter" class="select-filte
 function renderOverview(){
  const students=state.students,total=students.reduce((n,s)=>n+regularHours(s),0),staff=isStaff();
  $('#surface').innerHTML=`<section class="stats"><div class="stat featured"><div class="stat-label">${staff?'学生剩余余额':'孩子剩余余额'}${icon('clock')}</div><div class="stat-value">${balanceSummary(students)}</div><div class="stat-note">赠送 ${balanceSummary(students,true)}</div></div><div class="stat"><div class="stat-label">${staff?'关联学生':'关联孩子'}${icon('users')}</div><div class="stat-value">${studentGroups().length}<small>位</small></div><div class="stat-note">${staff?'可在课表中查看课程安排':'仅显示自己孩子的信息'}</div></div><div class="stat"><div class="stat-label">需要续费</div><div class="stat-value">${studentGroups().filter(g=>g.some(s=>needsRenewal(s))).length}<small>位</small></div><div class="stat-note">至少一个科目的余额不足 3 课时／小时，请续费</div></div></section>${staff?'<div class="section-head"><h2>学生课时</h2><input id="search" class="search" type="search" placeholder="搜索学生、课程或手机号" aria-label="搜索学生"></div><div id="student-list"></div>':parentCards()}<section class="recent"><div class="section-head"><h2>最近课时记录</h2><button class="action" id="all-records">全部记录 →</button></div><div id="records-list"></div></section>`;
- if(staff){if(['owner','admin'].includes(state.user.role)){$('#search').insertAdjacentHTML('afterend',`<select id="student-status-filter" class="select-filter" aria-label="按学生课时状态筛选"><option value="all">全部状态</option><option value="normal">正常（余额不少于 3）</option><option value="renewal">需续费（余额不足 3）</option></select>`);$('#student-status-filter').value=studentStatus;$('#student-status-filter').onchange=e=>{studentStatus=e.target.value;renderStudents();};}$('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderStudents();};renderStudents();document.querySelectorAll('.student-profile h3').forEach(heading=>heading.onclick=()=>{const student=state.students.find(item=>item.name===heading.textContent);if(!student)return;profileId=String(student.id);view='profile';render();});}
+ if(staff){if(['owner','admin'].includes(state.user.role)){$('#search').insertAdjacentHTML('afterend',`<select id="student-status-filter" class="select-filter" aria-label="按学生课时状态筛选"><option value="all">全部状态</option><option value="normal">正常（余额不少于 3）</option><option value="renewal">需续费（余额不足 3）</option></select>`);$('#student-status-filter').value=studentStatus;$('#student-status-filter').onchange=e=>{studentStatus=e.target.value;renderStudents();};}$('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderStudents();};renderStudents();document.querySelectorAll('.student-profile h3, #student-list .staff h3').forEach(heading=>heading.onclick=()=>{const student=state.students.find(item=>item.name===heading.textContent);if(!student)return;profileId=String(student.id);view='profile';render();});}
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=()=>{view='records';selected=b.dataset.child;render();});
  $('#all-records').onclick=()=>{view='records';selected='';render();};renderRecords();
 }
@@ -142,7 +143,7 @@ function timeCalendar(rows){
 }
 const lessonColors=[['green','绿色'],['blue','蓝色'],['purple','紫色'],['pink','粉色'],['orange','橙色'],['yellow','黄色'],['gray','灰色']];
 function lessonCard(l){
- const owner=state.user.role==='owner',color=lessonColors.some(([v])=>v===l.color)?l.color:'green',students=l.students.map(s=>userHTML(s.name)).join('、');
+ const owner=state.user.role==='owner',color=lessonColors.some(([v])=>v===l.color)?l.color:'green',students=l.students.map(s=>userHTML(s.name)).join(' · ');
  return `<button class="lesson-card ${l.status} ${owner?'owner-lesson color-'+color:''}" data-lesson-detail="${l.id}" ${owner&&l.status==='scheduled'?'draggable="true" title="拖动到其他日期可调整课程"':''}>${owner?`<strong class="lesson-students">${students}</strong>`:''}<div class="lesson-time">${l.starts_at.slice(11)}–${l.ends_at.slice(11)} ${typeBadge(l.course_type_name)}</div><strong class="lesson-subject">${userHTML(l.subject_name||l.title)}</strong><span>${userHTML(l.teacher_name)}</span>${owner?'':`<span class="lesson-students">${students}</span>`}<div class="lesson-card-foot"><span class="lesson-state">${lessonStatus(l)}</span><span>${lessonChargeLabel(l)}</span></div></button>`;
 }
 function lessonColorPicker(l){return `<fieldset class="lesson-color-picker"><legend>课程颜色</legend>${lessonColors.map(([v,label])=>`<label class="color-choice color-${v}" title="${label}"><input type="radio" name="color" value="${v}" ${(l?.color||'green')===v?'checked':''}><span>${label}</span></label>`).join('')}</fieldset>`;}

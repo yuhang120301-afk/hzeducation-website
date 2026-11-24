@@ -255,6 +255,10 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
     table = table_on(c, on.isoformat())
     rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
     band = matching_row(rows, product, level) if level else None
+    type_id = student['course_type_id'] if 'course_type_id' in student.keys() else None
+    typed = [row for row in rows if type_id and row.get('course_type_id') == type_id and not row.get('placeholder')]
+    if typed:
+        band = next((row for row in typed if int(row['lesson_minutes'] or 0) == int(lesson_minutes or 0)), typed[0])
     if product == 'term' and band and not minutes:
         minutes = band['lesson_minutes']
         custom = c.execute('''SELECT per_lesson_cents FROM student_prices
