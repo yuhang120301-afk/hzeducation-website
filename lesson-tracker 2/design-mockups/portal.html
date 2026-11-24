@@ -83,6 +83,14 @@ button{cursor:default}
 .avatar{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-weight:750;flex:none;font-size:18px}
 .staff .mid{flex:1;min-width:0}
 .staff h3{margin:0 0 4px;font-size:20px;color:var(--green)}
+.list{background:#fff;border:1px solid var(--line);border-radius:12px}
+.lrow{display:flex;align-items:center;gap:18px;padding:14px 16px;border-top:1px solid var(--line);font-size:17px}
+.lrow:first-child{border-top:0}
+.pill{display:inline-flex;align-items:center;justify-content:center;min-width:88px;min-height:32px;padding:0 12px;border-radius:999px;background:var(--tone);color:var(--on-dot);font-size:15px;font-weight:650}
+.lrow .grow{flex:1;min-width:0;font-weight:650}
+.lrow .grow small{display:block;color:var(--muted);font-size:14px;font-weight:500;margin-top:2px}
+.lrow .num{min-width:88px;text-align:right;font-size:20px;font-weight:700;color:var(--green);font-variant-numeric:tabular-nums}
+.lrow .num span{display:block;font-size:12px;font-weight:500;color:var(--muted)}
 .staff .meta{color:var(--muted);font-size:14px;line-height:1.5}
 .metrics{display:flex;gap:22px;text-align:right}
 .metrics div{min-width:84px}
@@ -168,8 +176,7 @@ body[data-page="pay"] [data-page="pay"],
 body[data-page="payday"] [data-page="payday"],
 body[data-page="finance"] [data-page="finance"],
 body[data-page="calendar"] [data-page="calendar"],
-body[data-page="package"] [data-page="package"]{display:block}
-body[data-page="package"] .shade{display:grid}
+body[data-page="package"] section[data-page="package"]{display:block}
 .shade{display:none}
 @media(max-width:800px){
   .app{display:block}
@@ -184,6 +191,9 @@ body[data-page="package"] .shade{display:grid}
   .taps{grid-area:b}
   .taps button{flex:1}
   .staff{flex-wrap:wrap}
+  .lrow{align-items:flex-start;flex-wrap:wrap;gap:6px 12px;padding:12px 14px}
+  .lrow .grow{flex:1 1 160px}
+  .lrow .num{margin-left:auto;font-size:18px}
   .metrics{width:100%;justify-content:space-between;text-align:left}
   .payline{grid-template-columns:1fr 1fr}
   .payline .money{text-align:left}
@@ -263,10 +273,14 @@ body[data-page="package"] .shade{display:grid}
       </div>
       <label class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input placeholder="搜索老师或学生" value=""></label>
       <p style="color:#5B6B66;margin:-6px 0 14px">11月23日 – 11月29日</p>
-      <article class="staff t-angela"><div class="avatar">A</div><div class="mid"><h3>Angela</h3><div class="meta">8 节 · 9.5 小时<br>课酬的 40%，保底 $35 / 小时</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$760</div></div><div><div class="k">应付</div><div class="n pay">$312</div></div></div></article>
-      <article class="staff t-kelsey"><div class="avatar">K</div><div class="mid"><h3>Kelsey</h3><div class="meta">6 节 · 9.0 小时<br>课酬的 40%</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$540</div></div><div><div class="k">应付</div><div class="n pay">$216</div></div></div></article>
-      <article class="staff t-vincent"><div class="avatar">V</div><div class="mid"><h3>Vincent</h3><div class="meta">5 节 · 6.0 小时<br>课酬的 40% · 新学生分成另算</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$620</div></div><div><div class="k">应付</div><div class="n pay">$248</div></div></div></article>
-      <article class="staff t-ethan"><div class="avatar">E</div><div class="mid"><h3>Ethan</h3><div class="meta">3 节 · 4.5 小时<br>课酬的 40%</div></div><div class="metrics"><div><div class="k">课酬基数</div><div class="n">$255</div></div><div><div class="k">应付</div><div class="n pay">$102</div></div></div></article>
+      <div class="list">
+        <div class="lrow t-angela"><span class="pill">Angela</span><div class="grow">8 节 · 9.5 小时<small>课酬的 40%，保底 $35 / 小时</small></div><div class="num"><span>课酬基数</span>$760</div><div class="num"><span>应付</span>$312</div></div>
+        <div class="lrow t-kelsey"><span class="pill">Kelsey</span><div class="grow">6 节 · 9.0 小时<small>课酬的 40%</small></div><div class="num"><span>课酬基数</span>$540</div><div class="num"><span>应付</span>$216</div></div>
+        <div class="lrow t-vincent"><span class="pill">Vincent</span><div class="grow">5 节 · 6.0 小时<small>课酬的 40% · 新学生分成另算</small></div><div class="num"><span>课酬基数</span>$620</div><div class="num"><span>应付</span>$248</div></div>
+        <div class="lrow t-ethan"><span class="pill">Ethan</span><div class="grow">3 节 · 4.5 小时<small>课酬的 40%</small></div><div class="num"><span>课酬基数</span>$255</div><div class="num"><span>应付</span>$102</div></div>
+        <div class="lrow t-christina"><span class="pill">Christina</span><div class="grow">4 节 · 4.0 小时<small>课酬的 40%</small></div><div class="num"><span>课酬基数</span>$320</div><div class="num"><span>应付</span>$128</div></div>
+        <div class="lrow t-helen"><span class="pill">Helen</span><div class="grow">3 节 · 4.5 小时<small>本人上课，不另计工资</small></div><div class="num"><span>课酬基数</span>$675</div><div class="num"><span>应付</span>$0</div></div>
+      </div>
     </section>
 
     <section data-page="payday">
@@ -274,12 +288,18 @@ body[data-page="package"] .shade{display:grid}
         <div class="metrics"><div><div class="k">课酬基数</div><div class="n">$760</div></div><div><div class="k">应付</div><div class="n pay">$312</div></div></div>
       </div>
       <div class="day">周一 11月23日</div>
-      <div class="payline"><b>16:00–17:00</b><span>陈一诺 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$35.00 保底</span></div>
-      <div class="payline"><b>17:00–18:00</b><span>赵恩希 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$32.38</span></div>
+      <div class="list">
+        <div class="lrow t-angela"><span class="pill">Angela</span><div class="grow">16:00–17:00 · 陈一诺<small>1 小时 · 1:1</small></div><div class="num"><span>课酬</span>$80.95</div><div class="num"><span>应付</span>$35.00</div></div>
+        <div class="lrow t-angela"><span class="pill">Angela</span><div class="grow">17:00–18:00 · 赵恩希<small>1 小时 · 1:1</small></div><div class="num"><span>课酬</span>$80.95</div><div class="num"><span>应付</span>$32.38</div></div>
+      </div>
       <div class="day">周二 11月24日</div>
-      <div class="payline"><b>16:00–17:00</b><span>陈一诺 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$35.00 保底</span></div>
+      <div class="list">
+        <div class="lrow t-angela"><span class="pill">Angela</span><div class="grow">16:00–17:00 · 陈一诺<small>1 小时 · 1:1</small></div><div class="num"><span>课酬</span>$80.95</div><div class="num"><span>应付</span>$35.00</div></div>
+      </div>
       <div class="day">周四 11月26日</div>
-      <div class="payline"><b>18:00–19:00</b><span>陈一诺 · 1 小时</span><span>1:1</span><span class="money">课酬 $80.95</span><span class="money cut">$32.38</span></div>
+      <div class="list">
+        <div class="lrow t-angela"><span class="pill">Angela</span><div class="grow">18:00–19:00 · 陈一诺<small>1 小时 · 1:1</small></div><div class="num"><span>课酬</span>$80.95</div><div class="num"><span>应付</span>$32.38</div></div>
+      </div>
       <p style="color:#5B6B66;font-size:13px">一节课的价值 = 课时包总价 ÷（付费节数 + 赠送节数）。$1,700 ÷ 21 = $80.95。赠送的那一节也按这个价，不是 $0。</p>
     </section>
 
@@ -390,8 +410,17 @@ body[data-page="package"] .shade{display:grid}
     </section>
 
     <section data-page="package">
-      <div class="top"><div><h1>学生</h1><p>点「买课时」登记新的课时包。旧的按小时余额会继续用，直到用完。</p></div></div>
-      <article class="staff t-angela"><div class="avatar">陈</div><div class="mid"><h3>陈一诺</h3><div class="meta">Y6 · 数学 · 一对一<br>剩余 2 节（每节 1 小时）</div></div><div class="metrics"><div><div class="k">状态</div><div class="n" style="font-size:16px;color:#8A6D1F">该续费</div></div></div></article>
+      <div class="top"><div><h1>学生</h1><p>一行一个学生。色标是任课老师，方便一眼认出是谁的学生。</p></div></div>
+      <label class="search"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg><input placeholder="搜索老师或学生"></label>
+      <div class="list">
+        <div class="lrow t-angela"><span class="pill">Angela</span><div class="grow">陈一诺<small>Y6 · 数学 · 剩余 2 节（每节 1 小时）</small></div><div class="num" style="color:#8A6D1F">该续费</div></div>
+        <div class="lrow t-angela"><span class="pill">Angela</span><div class="grow">赵恩希<small>Y6 · 数学 · 剩余 3 节（每节 1 小时）</small></div><div class="num" style="color:#8A6D1F">该续费</div></div>
+        <div class="lrow t-kelsey"><span class="pill">Kelsey</span><div class="grow">王星然<small>Y4 · 数学 · 课时已用完，周四仍有课</small></div><div class="num" style="color:#8A6D1F">欠费</div></div>
+        <div class="lrow t-vincent"><span class="pill">Vincent</span><div class="grow">周可<small>Y11 · 数学 · 剩余 12 节（每节 1 小时）</small></div><div class="num">正常</div></div>
+        <div class="lrow t-helen"><span class="pill">Helen</span><div class="grow">李沐阳<small>Y12 · 数学 · 剩余 8 节（每节 1.5 小时）</small></div><div class="num">正常</div></div>
+        <div class="lrow t-ethan"><span class="pill">Ethan</span><div class="grow">陈子墨<small>Y3 · 数学 · 剩余 15 节（每节 1 小时）</small></div><div class="num">正常</div></div>
+        <div class="lrow t-christina"><span class="pill">Christina</span><div class="grow">林晓<small>Y8 · 数学 · 剩余 6 节（每节 1 小时）</small></div><div class="num">正常</div></div>
+      </div>
     </section>
   </main>
 </div>
