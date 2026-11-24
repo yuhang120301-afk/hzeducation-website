@@ -90,9 +90,8 @@ def _plan(c):
         last = max(date.fromisoformat(row['starts_at'][:10]) for row in found)
         missing = []
         for index, day in enumerate(calendar):
-            if day <= last:
-                continue
             starts = f'{day.isoformat()}T{start}'
+            # A cancelled row stays cancelled. A missing week, including Christmas, is inserted.
             if _lesson_for(c, title, starts):
                 continue
             missing.append((index, day, starts, f'{day.isoformat()}T{end}'))
@@ -198,7 +197,7 @@ def run(db_path, apply=False, out_path=None):
 
 def _emit(db_path, apply, out_path, lines, insert, skipped):
     mode = 'APPLY' if apply else 'DRY-RUN'
-    summary = [f'{mode}  database={db_path}', f'insert={insert} skipped_slots={skipped}']
+    summary = [f'{mode}  database={db_path}', f'total_insert={insert} skipped_slots={skipped}']
     text = '\n'.join(lines + [''] + summary) + '\n'
     if out_path:
         summary.append(f'detail: {out_path}')
