@@ -3,7 +3,6 @@ import argparse
 import datetime as dt
 import hashlib
 import hmac
-import html
 import json
 import os
 import re
@@ -39,7 +38,7 @@ def demo_seed_allowed():
         return False
     return True
 SECURE = os.environ.get('LESSON_SECURE_COOKIE') == '1'
-ORG_NAME = os.environ.get('LESSON_ORG_NAME', 'HZ Education Melbourne')[:60]
+ORG_NAME = 'HZ Education Melbourne'
 NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
 
 def contact_details():
@@ -424,8 +423,6 @@ class Handler(BaseHTTPRequestHandler):
         name = files[path]
         mime = {'html':'text/html; charset=utf-8','js':'application/javascript; charset=utf-8','css':'text/css; charset=utf-8','svg':'image/svg+xml','jpg':'image/jpeg'}[name.rsplit('.',1)[1]]
         content = (ROOT/'static'/name).read_bytes()
-        if name == 'index.html':
-            content = content.decode().replace('<title>HZ Education Melbourne</title>','<title>'+html.escape(ORG_NAME)+'</title>').encode()
         return self.response(200,content,content_type=mime)
 
     def do_POST(self):
