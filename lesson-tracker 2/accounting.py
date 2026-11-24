@@ -127,7 +127,7 @@ def reconciliation(c,user,period,day):
         LEFT JOIN ledger reversal ON reversal.reversal_of=l.id
         LEFT JOIN cash_entries cash ON cash.ledger_id=l.id
         LEFT JOIN users recv ON recv.id=cash.received_by
-        WHERE l.lesson_date>=? AND l.lesson_date<=? ORDER BY l.lesson_date DESC,l.id DESC''',(start.isoformat(),end.isoformat()))]
+        WHERE l.lesson_date>=? AND l.lesson_date<=?''' + __import__('vouchers').hide_sql(c,'l') + ' ORDER BY l.lesson_date DESC,l.id DESC''',(start.isoformat(),end.isoformat()))]
     totals=blank_totals();daily={}
     day_value=start
     while day_value<=end:
@@ -221,7 +221,7 @@ def cash_breakdown(c, start, end):
         LEFT JOIN users u ON u.id=cash.received_by
         LEFT JOIN students s ON s.id=l.student_id
         WHERE l.lesson_date>=? AND l.lesson_date<=?
-          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=l.id)''',(start.isoformat(),end.isoformat())).fetchall()
+          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=l.id)''' + __import__('vouchers').hide_sql(c,'l'),(start.isoformat(),end.isoformat())).fetchall()
     by_method, by_receiver = {}, {}
     received=refunded=0
     for row in rows:
