@@ -172,6 +172,8 @@ def _create_base_tables(c):
         auditlog.schema(c)
         if demo_seed_allowed():
             seed_portal_cast(c)
+        import vouchers
+        vouchers.schema(c)
 
 def seed_portal_cast(c):
     """Demo teachers and students from the approved mockups. Additive and skipped once recorded."""
@@ -426,6 +428,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/vouchers':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    import vouchers
+                    found=vouchers.search(c,user,params.get('student',[None])[0],params.get('kind',[None])[0],params.get('status',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0],params.get('q',[None])[0])
+                    if params.get('id',[None])[0]:
+                        found['events']=vouchers.events(c,user,params.get('id')[0])
+                    return self.response(200,found)
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/api/audit':
             with connect() as c:
                 user=self.current(c)
@@ -518,7 +533,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.response(200, {'user':{'id':user['id'],'name':user['name'],'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         if path == '/robots.txt':
             return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
-        files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
+        files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/vouchers.js':'vouchers.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
         if path not in files:
             if path.startswith('/api/'):
                 return self.response(404, {'error':'页面不存在。'})
@@ -563,6 +578,15 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
                     c.commit()
                     return self.response(200,{'ok':True})
+                if self.path in ('/api/vouchers/approve','/api/vouchers/unapprove','/api/vouchers/edit','/api/vouchers/void'):
+                    c.execute('BEGIN IMMEDIATE')
+                    import vouchers
+                    if self.path.endswith('/approve'): result=vouchers.approve(c,user,data.get('id'))
+                    elif self.path.endswith('/unapprove'): result=vouchers.unapprove(c,user,data.get('id'))
+                    elif self.path.endswith('/edit'): result=vouchers.edit(c,user,data,units,text_value)
+                    else: result=vouchers.void(c,user,data.get('id'),units)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path == '/api/students/course/stop':
                     c.execute('BEGIN IMMEDIATE')
                     result=deletion.stop_course(c,user,data)
@@ -799,6 +823,11 @@ class Handler(BaseHTTPRequestHandler):
         lid=c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id,reversal_of) VALUES(?,?,?,?,?,?,?,?)',(sid,delta,kind,day,note,user['id'],request_id,reversal_of)).lastrowid
         breakdown=credit_batches.apply(c,lid,kind,data,units,original if reversal_of else None)
         if cash:accounting.record_cash(c,lid,*cash,user['id'])
+        import vouchers
+        if reversal_of:
+            vouchers.attach_reversal(c,user,reversal_of,lid)
+        elif kind in ('credit','refund'):
+            vouchers.issue_ledger(c,user,lid)
         c.commit()
         return self.response(201,{'ok':True,**breakdown})
 

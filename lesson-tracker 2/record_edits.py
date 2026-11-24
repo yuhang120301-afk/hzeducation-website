@@ -56,6 +56,8 @@ def edit(c,user,data,units,text_value):
     entry=c.execute('SELECT * FROM ledger WHERE id=?',(int(data.get('entry_id',0)),)).fetchone()
     if not entry:raise ValueError('单据不存在。')
     if int(data.get('version',0))!=entry['version']:raise ValueError('单据已更新，请刷新后重新编辑。')
+    import vouchers
+    vouchers.guard_edit(c, entry['id'])
     reason=text_value(data.get('reason'),'修改原因',250)
     date=dt.date.fromisoformat(str(data.get('date',entry['lesson_date']))).isoformat()
     if date>accounting.now_local().date().isoformat():raise ValueError('单据日期不能在未来。')
@@ -95,4 +97,6 @@ def edit(c,user,data,units,text_value):
         c.execute('UPDATE lessons SET version=version+1 WHERE id IN (SELECT lesson_id FROM lesson_reports WHERE ledger_id=?)',(entry['id'],))
     after={'entry':dict(c.execute('SELECT * FROM ledger WHERE id=?',(entry['id'],)).fetchone()),'cash':dict(c.execute('SELECT * FROM cash_entries WHERE ledger_id=?',(entry['id'],)).fetchone() or {})}
     c.execute('INSERT INTO ledger_edits(ledger_id,actor_id,reason,before_json,after_json) VALUES(?,?,?,?,?)',(entry['id'],user['id'],reason,json.dumps(before,ensure_ascii=False),json.dumps(after,ensure_ascii=False)))
+    import vouchers
+    vouchers.sync_from_ledger(c, user, entry['id'])
     return {'ok':True}

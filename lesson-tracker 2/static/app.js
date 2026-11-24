@@ -168,7 +168,7 @@ function studentFold(group, admin){
  const stoppedHtml=stopped.length?`<h3>已停的课</h3>${stopped.map(account=>`<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b><small>已停课${account.balance?` · 还剩 ${fmt(account.balance)} ${unitFor(account)}`:''}</small></div><button class="btn" data-restore-course="${account.id}" type="button">恢复这门课</button></article>`).join('')}`:'';
  const history=lessons.slice(0,12).map(lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}"><div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div></article>`).join('')||'<p class="muted">还没有课。</p>';
  const pays=payments.slice(0,12).map(entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${entry.kind==='credit'?'收款':'退款'}<small>${userHTML(entry.note||entry.course||'')}</small></div><div class="num">${entry.cash_delta!=null?money(entry.cash_delta):fmt(Math.abs(entry.delta))+' '+unitFor(entry)}<small>${escapeHTML(methods[entry.payment_method]||'')}</small></div></article>`).join('')||'<p class="muted">还没有收款或退款。</p>';
- return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''}</p>${actions}<h3>报名与课时包</h3>${enrolments}${stoppedHtml}<h3>上课记录</h3>${history}<h3>收款</h3>${pays}<h3>备注</h3><p>${person.notes?userHTML(person.notes):'没有备注。'}</p><p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button></p>`;
+ return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''}</p>${actions}<h3>报名与课时包</h3>${enrolments}${stoppedHtml}<h3>上课记录</h3>${history}<h3>收款</h3>${pays}<h3>备注</h3><p>${person.notes?userHTML(person.notes):'没有备注。'}</p><p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button> ${state.user.role==='owner'?`<button class="action" data-vouchers="${person.id}" type="button">单据 →</button>`:''}</p>`;
 }
 function renderStudents(){
  const admin=['owner','admin'].includes(state.user.role);
@@ -205,6 +205,7 @@ function renderStudents(){
   try{await api('prices/legacy',{student_id:Number(form.dataset.legacyForm),hourly,clear:!String(hourly||'').trim()}); toast(String(hourly||'').trim()?'价格已保存。':'已改回 2027 价目。'); await refresh();}catch(error){toast(error.message);}
  });
  document.querySelectorAll('[data-history]').forEach(b=>b.onclick=event=>{event.stopPropagation(); selected=b.dataset.history;view='records';render();});
+ document.querySelectorAll('[data-vouchers]').forEach(b=>b.onclick=event=>{event.stopPropagation(); voucherStudent=b.dataset.vouchers; view='vouchers'; render();});
 }
 function stopCourseModal(id){
  const account=state.students.find(s=>s.id==id);
