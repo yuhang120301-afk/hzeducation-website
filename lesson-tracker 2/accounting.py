@@ -119,7 +119,7 @@ def add_row(t,row):
 def reconciliation(c,user,period,day):
     require_owner(user)
     start,end=bounds(period,day)
-    rows=[dict(r) for r in c.execute('''SELECT l.*,s.name student_name,s.course,s.billing_unit,u.name actor_name,
+    rows=[dict(r) for r in c.execute('''SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,pack.total_cents pack_cents,u.name actor_name,
         original.kind original_kind, original.lesson_date original_date,original.id original_id,
         reversal.id reversed_by,cash.cash_delta,cash.payment_method,cash.reference,cash.handed_over,cash.received_by,
         recv.name receiver_name, l.created_at recorded_at FROM ledger l JOIN students s ON l.student_id=s.id
@@ -127,7 +127,12 @@ def reconciliation(c,user,period,day):
         LEFT JOIN ledger reversal ON reversal.reversal_of=l.id
         LEFT JOIN cash_entries cash ON cash.ledger_id=l.id
         LEFT JOIN users recv ON recv.id=cash.received_by
-        WHERE l.lesson_date>=? AND l.lesson_date<=?''' + __import__('vouchers').hide_sql(c,'l') + ' ORDER BY l.lesson_date DESC,l.id DESC''',(start.isoformat(),end.isoformat()))]
+        LEFT JOIN subjects sb ON sb.id=s.subject_id
+        LEFT JOIN credit_batches pack ON pack.ledger_id=l.id
+        WHERE l.lesson_date>=? AND l.lesson_date<=?''' + __import__('vouchers').hide_sql(c,'l') + ' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC''',(start.isoformat(),end.isoformat()))]
+    for row in rows:
+        row['subject_name'] = row.get('subject_name') or row.get('course') or ''
+        row['shown_cents'] = row['pack_cents'] if not row.get('cash_delta') and row.get('pack_cents') else row.get('cash_delta')
     totals=blank_totals();daily={}
     day_value=start
     while day_value<=end:

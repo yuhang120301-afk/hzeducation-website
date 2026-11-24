@@ -447,7 +447,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not user:return self.response(401,{'error':'请先登录。'})
                 try:
                     params=parse_qs(urlsplit(self.path).query)
-                    return self.response(200,{'entries':auditlog.search(c,user,params.get('actor',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])})
+                    return self.response(200,auditlog.search(c,user,params.get('actor',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0]))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/health':
@@ -467,12 +467,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not user:
                     return self.response(200, {'user':None,'demo':DEMO,'organization':ORG_NAME,'contact':contact_details()})
                 try:
-                    requested=parse_qs(urlsplit(self.path).query).get('through',[teaching.now_local().date().isoformat()])[0]
-                    horizon=max(teaching.now_local().date()+teaching.dt.timedelta(days=366),teaching.dt.date.fromisoformat(requested)+teaching.dt.timedelta(days=30))
-                except (ValueError,OverflowError):return self.response(400,{'error':'日期无效。'})
-                c.execute('BEGIN IMMEDIATE')
-                teaching.recurrence.extend(c,horizon.isoformat(),units,text_value)
-                c.commit()
+                    requested=parse_qs(urlsplit(self.path).query).get('through')
+                    if requested:
+                        teaching.dt.date.fromisoformat(requested[0])
+                except (ValueError,OverflowError,IndexError):return self.response(400,{'error':'日期无效。'})
                 condition = '' if user['role'] in ('owner','admin') else ' WHERE s.parent_id=?'
                 params = () if user['role'] in ('owner','admin') else (user['id'],)
                 if user['role']=='teacher':
@@ -525,13 +523,15 @@ class Handler(BaseHTTPRequestHandler):
                 entry_condition=condition
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
-                entries = [dict(x) for x in c.execute('SELECT l.*,s.name student_name,s.course,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,r.id reversed_by FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id'+entry_condition+' ORDER BY l.id DESC',params)]
+                entries = [dict(x) for x in c.execute('SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,pack.total_cents pack_cents,r.id reversed_by FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN subjects sb ON sb.id=s.subject_id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id LEFT JOIN credit_batches pack ON pack.ledger_id=l.id'+entry_condition+' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC',params)]
                 if user['role']=='parent':
                     entries=[e for e in entries if e['kind']!='reversal' and not e['reversed_by']]
                     for e in entries:
                         for key in ('request_id','reversal_of','version'):e.pop(key,None)
                     for s in students:s.pop('credit_batches',None)
-                return self.response(200, {'user':{'id':user['id'],'name':user['name'],'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
+                for person in students+archived_students:
+                    person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
+                return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         if path == '/robots.txt':
             return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
         files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/vouchers.js':'vouchers.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}

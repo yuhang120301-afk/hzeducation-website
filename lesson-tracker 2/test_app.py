@@ -493,18 +493,38 @@ class AppTests(unittest.TestCase):
         self.assertEqual([l['occurrence_index'] for l in after],[0,1,2])
         self.assertEqual([l['starts_at'] for l in before],[l['starts_at'] for l in after])
 
+    def test_viewing_the_calendar_does_not_insert_lessons(self):
+        tid,_=self.new_teacher();sid=self.new_student()
+        self.schedule(tid,[sid],day='2026-11-02',repeat='weekly',repeat_end='forever')
+        before=len([l for l in self.admin.request('state')[1]['lessons'] if l['teacher_id']==tid])
+        after=self.admin.request('state?through=2028-02-01')[1]
+        self.assertEqual(len([l for l in after['lessons'] if l['teacher_id']==tid]), before)
+        self.assertFalse(any(l['teacher_id']==tid and l['starts_at'].startswith('2028-01') for l in after['lessons']))
+
     def test_forever_future_conflict_is_visible_and_resumes(self):
+        import sqlite3, recurrence, server
         tid,_=self.new_teacher();sid=self.new_student()
         _,conflict=self.schedule(tid,[sid],day='2028-01-03')
         code,r=self.schedule(tid,[sid],day='2026-11-02',repeat='weekly',repeat_end='forever')
         self.assertEqual(code,200,r)
-        state=self.admin.request('state?through=2028-02-01')[1]
-        self.assertTrue(any('2028-01-03' in w for w in state['recurrence_warnings']))
+        before=len([l for l in self.admin.request('state?through=2028-02-01')[1]['lessons'] if l['teacher_id']==tid])
+        with sqlite3.connect(self.tmp.name+'/test.sqlite3') as c:
+            c.row_factory=sqlite3.Row
+            recurrence.extend(c, '2028-02-01', server.units, server.text_value)
+            c.commit()
+        state=self.admin.request('state')[1]
+        self.assertTrue(any(isinstance(w, dict) and w.get('date')=='2028-01-03' and w.get('students') for w in state['recurrence_warnings']))
+        self.assertEqual(len([l for l in state['lessons'] if l['teacher_id']==tid and l['starts_at'].startswith('2028-01-03') and l['status']=='scheduled']), 1)
         l=self.lesson(conflict['lesson_id'])
         self.assertEqual(self.admin.request('lessons/cancel',{'lesson_id':l['id'],'version':l['version'],'reason':'Remove conflict'})[0],200)
-        state=self.admin.request('state?through=2028-02-01')[1]
-        self.assertFalse(any('2028-01-03' in w for w in state['recurrence_warnings']))
+        with sqlite3.connect(self.tmp.name+'/test.sqlite3') as c:
+            c.row_factory=sqlite3.Row
+            recurrence.extend(c, '2028-02-01', server.units, server.text_value)
+            c.commit()
+        state=self.admin.request('state')[1]
+        self.assertFalse(any(isinstance(w, dict) and w.get('date')=='2028-01-03' for w in state['recurrence_warnings']))
         self.assertTrue(any(l['teacher_id']==tid and l['starts_at']=='2028-01-03T10:00' and l['status']=='scheduled' for l in state['lessons']))
+        self.assertGreater(len([l for l in state['lessons'] if l['teacher_id']==tid]), before)
 
     def test_recurring_move_scope_conflicts_and_permissions(self):
         tid,tutor=self.new_teacher();sid=self.new_student()
