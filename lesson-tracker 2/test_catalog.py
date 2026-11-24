@@ -33,6 +33,15 @@ class CatalogTests(unittest.TestCase):
             teaching.save_catalog_item(c, {'id': 1, 'role': 'owner'}, 'course_types', {'name': '集训营'}, server.text_value)
             self.assertIsNotNone(c.execute("SELECT 1 FROM course_types WHERE name='集训营'").fetchone())
 
+    def test_old_course_names_are_hidden_again(self):
+        with server.connect() as c:
+            c.execute("INSERT INTO course_types(name, sort_order, active) VALUES('跟踪辅导', 90, 1)")
+            c.execute("DELETE FROM app_meta WHERE key='catalog_focus_v2'")
+            teaching.refocus_catalog(c)
+            self.assertEqual(c.execute("SELECT active FROM course_types WHERE name='跟踪辅导'").fetchone()['active'], 0)
+            self.assertEqual(c.execute("SELECT active FROM course_types WHERE name='一对一'").fetchone()['active'], 1)
+            self.assertEqual(c.execute("SELECT active FROM subjects WHERE name='数学'").fetchone()['active'], 1)
+
     def test_daily_pay_period_is_one_day(self):
         start, end = payroll.period_bounds('day', '2026-11-24', None, None)
         self.assertEqual(start.isoformat(), '2026-11-24')
