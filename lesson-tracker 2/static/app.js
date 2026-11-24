@@ -41,23 +41,68 @@ function studentGroups(){
  state.students.forEach(s=>{const key=s.profile_id||s.id;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(s);});
  return [...groups.values()];
 }
+function studentToneName(name){
+ if(typeof teacherTone==='function') return teacherTone(name);
+ const n=(name||'').toLowerCase();
+ if(n.includes('helen')) return 'helen';
+ if(n.includes('vincent')) return 'vincent';
+ if(n.includes('angela')) return 'angela';
+ if(n.includes('kelsey')) return 'kelsey';
+ if(n.includes('ethan')) return 'ethan';
+ if(n.includes('christina')) return 'christina';
+ return 'other';
+}
+function teacherForAccounts(accounts){
+ const ids=new Set(accounts.map(account=>String(account.id)));
+ const lesson=(state.lessons||[]).find(item=>(item.students||[]).some(student=>ids.has(String(student.id))) && item.status!=='cancelled');
+ return lesson?.teacher_name||'待定';
+}
+function accountStatus(account){
+ if(account.balance<=0) return '欠费';
+ if(needsRenewal(account)) return '该续费';
+ return '正常';
+}
+function studentFold(group, admin){
+ const person=group[0];
+ const ids=new Set(group.map(account=>String(account.id)));
+ const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(student=>ids.has(String(student.id)))).sort((a,b)=>b.starts_at.localeCompare(a.starts_at));
+ const payments=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && ['credit','refund'].includes(entry.kind));
+ const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
+ const methods=typeof paymentNames==='object'?paymentNames:{};
+ const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑档案</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加科目</button>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">删除并归档</button>`:''}</div>`:'';
+ const enrolments=group.map(account=>{
+  const packs=(account.credit_batches||[]).map(batch=>`<li>${batch.legacy?'原有课时':escapeHTML(batch.credited_on||'课时包')} · 购买 ${fmt(batch.purchased||0)} · 赠送 ${fmt(batch.gifted||0)} · 还剩 ${fmt((batch.paid_left||0)+(batch.gift_left||0))}</li>`).join('')||'<li>还没有课时包。</li>';
+  return `<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}</small></div><div class="num">${accountStatus(account)}</div></article><ul class="pack-list">${packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button></p>`:''}`;
+ }).join('');
+ const history=lessons.slice(0,12).map(lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}"><div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div></article>`).join('')||'<p class="muted">还没有课。</p>';
+ const pays=payments.slice(0,12).map(entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${entry.kind==='credit'?'收款':'退款'}<small>${userHTML(entry.note||entry.course||'')}</small></div><div class="num">${entry.cash_delta!=null?money(entry.cash_delta):fmt(Math.abs(entry.delta))+' '+unitFor(entry)}<small>${escapeHTML(methods[entry.payment_method]||'')}</small></div></article>`).join('')||'<p class="muted">还没有收款或退款。</p>';
+ return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''}</p>${actions}<h3>报名与课时包</h3>${enrolments}<h3>上课记录</h3>${history}<h3>收款</h3>${pays}<h3>备注</h3><p>${person.notes?userHTML(person.notes):'没有备注。'}</p><p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button></p>`;
+}
 function renderStudents(){
  const admin=['owner','admin'].includes(state.user.role);
- const groups=studentGroups().map(group=>group.filter(s=>!admin||studentStatus==='all'||(studentStatus==='renewal'?needsRenewal(s):!needsRenewal(s)))).filter(group=>group.some(s=>`${s.name} ${s.course} ${s.phone} ${s.grade||''}`.toLowerCase().includes(search.toLowerCase())));
- $('#student-list').innerHTML=groups.length?`<div class="student-profile-list">${groups.map(group=>{const s=group[0];return `<article class="staff t-${(typeof teacherTone==='function'?teacherTone((state.lessons||[]).find(lesson=>(lesson.students||[]).some(student=>group.some(account=>String(student.id)===String(account.id))))?.teacher_name):'other')}"><div class="avatar">${userHTML(s.name.slice(-1))}</div><div class="mid"><h3>${userHTML(s.name)}</h3><div class="meta">${group.map(account=>{const teacher=(state.lessons||[]).find(lesson=>(lesson.students||[]).some(student=>String(student.id)===String(account.id))&&lesson.status!=='cancelled');const left=fmt(regularHours(account));const line=account.balance<=0?'课时已用完，仍可能排着课':`剩余 ${left} ${unitFor(account)}`;return `${userHTML(teacher?.teacher_name||'待定')} · ${userHTML(account.grade||s.grade||'')} · ${userHTML(account.subject_name||account.course)} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<br>${line}`;}).join('<br>')}</div></div><div class="metrics"><div><div class="k">状态</div><div class="n">${group.some(account=>account.balance<=0)?'欠费':group.some(needsRenewal)?'该续费':'正常'}</div></div></div><div class="profile-actions">${admin?`<button class="btn" data-profile="${s.id}">编辑档案</button>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-student="${s.id}">删除并归档</button>`:''}<button class="btn" data-guardian="${s.id}">家长账号</button><button class="btn" data-add-course="${s.id}">添加科目</button>`:''}${group.map(account=>admin?`<button class="action" data-lesson="${account.id}">排课</button><button class="action" data-credit="${account.id}">充值</button><button class="action refund-action" data-refund="${account.id}">退课退款</button>`:'').join('')}<button class="action muted" data-history="${group[0].id}">明细</button></div></article>`;}).join('')}</div>`:`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
+ const groups=studentGroups().map(group=>group.filter(s=>!admin||studentStatus==='all'||(studentStatus==='renewal'?needsRenewal(s):!needsRenewal(s)))).filter(group=>group.some(s=>`${s.name} ${s.course} ${s.subject_name||''} ${s.phone} ${s.grade||''}`.toLowerCase().includes(search.toLowerCase())));
+ $('#student-list').innerHTML=groups.length?groups.map(group=>{
+  const person=group[0];
+  const teacher=teacherForAccounts(group);
+  const tone=studentToneName(teacher);
+  const subjects=group.map(account=>[account.grade||person.grade, account.subject_name||account.course, account.course_type_name].filter(Boolean).join(' · ')).join('，');
+  const balance=group.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · ');
+  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(person.name.slice(-1))}</div><div style="flex:1"><h2>${userHTML(person.name)}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p></div><div><div class="muted">剩余课时</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${group.some(account=>account.balance<=0)?'欠费':group.some(needsRenewal)?'该续费':'正常'}</strong></div></article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
+ }).join(''):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
  if(state.user.role==='owner'){
   const archived=Object.values((state.archived_students||[]).reduce((groups,s)=>{(groups[s.profile_id]??=[]).push(s);return groups;},{}));
   $('#student-list').insertAdjacentHTML('beforeend',`<details class="panel" style="margin-top:20px;padding:20px"><summary>已归档学生（${archived.length}）</summary>${archived.map(group=>`<div class="profile-heading" style="padding:16px 0"><div><strong>${userHTML(group[0].name)}</strong>${group.map(s=>`<div>${userHTML(s.course)}${balanceSplit(s)}</div>`).join('')}</div><button class="btn" data-restore-student="${group[0].id}">恢复档案</button></div>`).join('')||'<p>暂无已归档学生。</p>'}</details>`);
   document.querySelectorAll('[data-restore-student]').forEach(b=>b.onclick=()=>{const s=state.archived_students.find(s=>s.id==b.dataset.restoreStudent);modal('恢复学生档案',`<div class="form-context">${userHTML(s.name)}<br>恢复后重新显示在学生列表中，可以排课和充值；原余额及记录保留。</div>`,'确认恢复',async()=>{await api('profiles/restore',{id:s.id});toast('学生档案已恢复。');});});
  }
- document.querySelectorAll('[data-delete-student]').forEach(b=>b.onclick=()=>deleteProfileModal('student',state.students.find(s=>s.id==b.dataset.deleteStudent)));
- document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=()=>profileModal(b.dataset.profile));
- document.querySelectorAll('[data-guardian]').forEach(b=>b.onclick=()=>guardianModal(b.dataset.guardian));
- document.querySelectorAll('[data-add-course]').forEach(b=>b.onclick=()=>addCourseModal(b.dataset.addCourse));
- document.querySelectorAll('[data-lesson]').forEach(b=>b.onclick=()=>scheduleModal(null,b.dataset.lesson));
- document.querySelectorAll('[data-refund]').forEach(b=>b.onclick=()=>refundModal(b.dataset.refund));
- document.querySelectorAll('[data-credit]').forEach(b=>b.onclick=()=>entryModal('credit',b.dataset.credit));
- document.querySelectorAll('[data-history]').forEach(b=>b.onclick=()=>{selected=b.dataset.history;view='records';render();});
+ document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=()=>{const fold=card.nextElementSibling; if(fold&&fold.tagName==='DETAILS') fold.open=!fold.open;});
+ document.querySelectorAll('[data-delete-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); deleteProfileModal('student',state.students.find(s=>s.id==b.dataset.deleteStudent));});
+ document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=event=>{event.stopPropagation(); profileModal(b.dataset.profile);});
+ document.querySelectorAll('[data-guardian]').forEach(b=>b.onclick=event=>{event.stopPropagation(); guardianModal(b.dataset.guardian);});
+ document.querySelectorAll('[data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
+ document.querySelectorAll('[data-lesson]').forEach(b=>b.onclick=event=>{event.stopPropagation(); scheduleModal(null,b.dataset.lesson);});
+ document.querySelectorAll('[data-refund]').forEach(b=>b.onclick=event=>{event.stopPropagation(); refundModal(b.dataset.refund);});
+ document.querySelectorAll('[data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
+ document.querySelectorAll('[data-history]').forEach(b=>b.onclick=event=>{event.stopPropagation(); selected=b.dataset.history;view='records';render();});
 }
 function addCourseModal(id){
  const s=state.students.find(s=>s.id==id),existing=state.students.filter(x=>x.profile_id===s.profile_id).map(x=>x.course);
