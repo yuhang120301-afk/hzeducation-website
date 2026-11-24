@@ -271,8 +271,8 @@ def confirmed_rows(c, start, end):
         JOIN students s ON s.id=r.student_id
         JOIN ledger led ON led.id=r.ledger_id
         WHERE l.status!='cancelled' AND substr(l.starts_at,1,10)>=? AND substr(l.starts_at,1,10)<=?
-          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=r.ledger_id)
-        ORDER BY l.starts_at, l.id, s.name''', (start.isoformat(), end.isoformat())).fetchall()
+          AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=r.ledger_id)'''
+        + __import__('vouchers').hide_sql(c, 'led') + ' ORDER BY l.starts_at, l.id, s.name''', (start.isoformat(), end.isoformat())).fetchall()
 
 
 def resolved_fee(c, row):
