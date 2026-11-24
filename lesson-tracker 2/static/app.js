@@ -157,27 +157,47 @@ function legacyMark(group){
  });
  return names.length?`<span class="legacy-badge">老学员 · ${names.map(userHTML).join('、')}</span>`:'';
 }
+function sectionOpen(id, fallback){
+ try{const saved=localStorage.getItem('hz-profile-fold:'+id); if(saved==='0'||saved==='1') return saved==='1';}catch(error){}
+ return fallback;
+}
+function profileSection(id, title, body, fallbackOpen){
+ return `<details class="profile-section" data-profile-section="${id}" ${sectionOpen(id, fallbackOpen)?'open':''}><summary>${title}</summary><div class="profile-section-body">${body}</div></details>`;
+}
+function previewList(items, render, emptyText){
+ if(!items.length) return `<p class="muted">${emptyText}</p>`;
+ const head=items.slice(0,5).map(render).join('');
+ if(items.length<=5) return head;
+ return `${head}<details class="more-records"><summary>展开全部 (${items.length})</summary>${items.slice(5).map(render).join('')}</details>`;
+}
+function bindProfileSections(){
+ document.querySelectorAll('[data-profile-section]').forEach(section=>{
+  section.ontoggle=()=>{try{localStorage.setItem('hz-profile-fold:'+section.dataset.profileSection, section.open?'1':'0');}catch(error){}};
+ });
+}
 function studentFold(group, admin){
  const person=group[0];
- const ids=new Set(group.map(account=>String(account.id)));
- const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(student=>ids.has(String(student.id)))).sort((a,b)=>b.starts_at.localeCompare(a.starts_at));
- const payments=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && ['credit','refund'].includes(entry.kind));
+ const stopped=(state.archived_students||[]).filter(account=>account.profile_id===person.profile_id).sort((a,b)=>(b.id||0)-(a.id||0));
+ const ids=new Set(group.map(account=>String(account.id)).concat(stopped.map(account=>String(account.id))));
+ const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(student=>ids.has(String(student.id)))).sort((a,b)=>b.starts_at.localeCompare(a.starts_at)||(b.id||0)-(a.id||0));
+ const payments=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && ['credit','refund'].includes(entry.kind)).sort((a,b)=>(b.lesson_date||'').localeCompare(a.lesson_date||'')||(b.id||0)-(a.id||0));
+ const recent=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && entry.kind==='lesson').sort((a,b)=>(b.lesson_date||'').localeCompare(a.lesson_date||'')||(b.id||0)-(a.id||0));
  const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
  const methods=typeof paymentNames==='object'?paymentNames:{};
- const empty=group.every(account=>account.no_course);
+ const active=group.filter(account=>!account.no_course);
  const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加课程</button>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">删除并归档</button>`:''}</div>`:'';
- const enrolments=group.map(account=>{
+ const enrolments=active.map(account=>{
   const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money)).join('')||'<li>还没有课时包。</li>';
   const subjectLabel=account.subject_name||account.course||'本科目';
   const price=state.user.role==='owner'&&account.course_type_name?`<form class="legacy-price" data-legacy-form="${account.id}"><p class="footnote">${account.legacy?`<span class="legacy-badge">老学员 · ${userHTML(subjectLabel)}</span> `:''}2027 价目 ${account.list_hourly_cents==null?'还没有':'$'+(account.list_hourly_cents/100).toFixed(2)+' / 小时'}。留空并保存，这一科就改回价目。</p><label class="field">${userHTML(subjectLabel)} 每小时价格 AUD<input name="hourly" inputmode="decimal" value="${account.custom_hourly_cents==null?'':(account.custom_hourly_cents/100).toFixed(2)}" placeholder="用 2027 价目"></label><button class="btn" type="submit">保存价格</button></form>`:'';
   return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}</small></div><div class="num">${accountStatus(account, group)}</div></article>${price}<ul class="pack-list">${packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button><button class="btn" data-relink-course="${account.id}" type="button">把已停课的以后课移过来</button>${state.user.role==='owner'?`<button class="btn refund-action" data-stop-course="${account.id}" type="button">停课/删除这门课</button>`:''}</p>`:''}`;
  }).join('');
- const stopped=(state.archived_students||[]).filter(account=>account.profile_id===person.profile_id);
- const stoppedHtml=stopped.length?`<h3>已停的课</h3>${stopped.map(account=>`<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b><small>已停课${account.balance?` · 还剩 ${fmt(account.balance)} ${unitFor(account)}`:''}</small></div><button class="btn" data-restore-course="${account.id}" type="button">恢复这门课</button></article>`).join('')}`:'';
- const history=lessons.slice(0,12).map(lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}"><div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div></article>`).join('')||'<p class="muted">还没有课。</p>';
- const pays=payments.slice(0,12).map(entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${entry.kind==='credit'?'收款':'退款'}<small>${userHTML(entry.note||entry.course||'')}</small></div><div class="num">${entryMoney(entry)}<small>${escapeHTML(methods[entry.payment_method]||'')}</small></div></article>`).join('')||'<p class="muted">还没有收款或退款。</p>';
- const recent=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && entry.kind==='lesson').slice(0,8).map(entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${userHTML(entry.student_name)}<small>${userHTML(entry.subject_name||entry.course||'')}</small></div><div class="num">${entry.delta>0?'+':'−'}${fmt(Math.abs(entry.delta))} ${unitFor(entry)}</div></article>`).join('')||'<p class="muted">还没有这名学生的课时记录。</p>';
- return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''} ${studyTag(person)}</p>${actions}<h3>报名与课时包</h3>${empty?'<p>未选课 / 请添加课程</p>':enrolments}${stoppedHtml}<h3>最近课时记录</h3>${recent}<h3>上课记录</h3>${history}<h3>收款</h3>${pays}<h3>备注</h3><p>${person.notes?userHTML(person.notes):'没有备注。'}</p><p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button> ${state.user.role==='owner'?`<button class="action" data-vouchers="${person.id}" type="button">单据 →</button>`:''}</p>`;
+ const lessonRow=lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}"><div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div></article>`;
+ const payRow=entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${entry.kind==='credit'?'收款':'退款'}<small>${userHTML(entry.note||entry.subject_name||entry.course||'')}</small></div><div class="num">${entryMoney(entry)}<small>${escapeHTML(methods[entry.payment_method]||'')}</small></div></article>`;
+ const recentRow=entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${userHTML(entry.student_name)}<small>${userHTML(entry.subject_name||entry.course||'')}</small></div><div class="num">${entry.delta>0?'+':'−'}${fmt(Math.abs(entry.delta))} ${unitFor(entry)}</div></article>`;
+ const stoppedRow=account=>`<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b><small>已停课${account.balance?` · 还剩 ${fmt(account.balance)} ${unitFor(account)}`:''}。上课记录和账目仍在。</small></div>${state.user.role==='owner'?`<button class="btn" data-restore-course="${account.id}" type="button">恢复这门课</button>`:''}</article>`;
+ const links=`<p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button> ${state.user.role==='owner'?`<button class="action" data-vouchers="${person.id}" type="button">单据 →</button>`:''}</p>`;
+ return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''} ${studyTag(person)}</p>${actions}${profileSection('courses','报名与课时包',active.length?enrolments:'<p>未选课 / 请添加课程</p>',true)}${profileSection('recent','最近课时记录',previewList(recent, recentRow, '还没有这名学生的课时记录。'),true)}${profileSection('lessons','上课记录',previewList(lessons, lessonRow, '还没有课。'),true)}${profileSection('payments','收款',previewList(payments, payRow, '还没有收款或退款。'),true)}${profileSection('notes','备注',`<p>${person.notes?userHTML(person.notes):'没有备注。'}</p>${links}`,true)}${stopped.length?profileSection('stopped',`已停课程 (${stopped.length})`,previewList(stopped, stoppedRow, ''),false):''}`;
 }
 function renderStudents(){
  const admin=['owner','admin'].includes(state.user.role);
@@ -186,19 +206,16 @@ function renderStudents(){
   const person=group[0];
   const teacher=teacherForAccounts(group);
   const tone=studentToneName(teacher);
-  const empty=group.every(account=>account.no_course);
-  const subjects=empty?'未选课 / 请添加课程':group.map(account=>[shownLevel(account), account.subject_name||account.course, account.course_type_name].filter(Boolean).join(' · ')).join('，');
-  const balance=empty?'—':group.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · ');
+  const active=group.filter(account=>!account.no_course);
+  const subjects=active.length?active.map(account=>[shownLevel(account), account.subject_name||account.course, account.course_type_name].filter(Boolean).join(' · ')).join('，'):'未选课 / 请添加课程';
+  const balance=active.length?active.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · '):'—';
   const health=String(person.health_notes||'').trim();
   const legacy=legacyMark(group);
   const pack=group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
-  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&!empty?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div><div><div class="muted">${empty?'课程':'剩余课时'}</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${empty?'未选课':group.some(account=>accountStatus(account, group)==='欠费')?'欠费':group.some(needsRenewal)?'该续费':'正常'}</strong></div>${admin?(empty?`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`:`<button class="btn" data-credit="${person.id}" type="button">充值</button>`):''}</article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
+  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div><div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课'}</strong></div>${admin?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}</article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
  }).join(''):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
- if(state.user.role==='owner'){
-  const archived=state.archived_students||[];
-  $('#student-list').insertAdjacentHTML('beforeend',`<details class="panel" style="margin-top:20px;padding:20px"><summary>已停的课（${archived.length}）</summary>${archived.map(account=>`<div class="profile-heading" style="padding:16px 0"><div><strong>${userHTML(account.name)}</strong><div>${userHTML(account.subject_name||account.course)}${balanceSplit(account)}</div></div><button class="btn" data-restore-course="${account.id}">恢复这门课</button></div>`).join('')||'<p>暂无已停的课。</p>'}</details>`);
- }
  document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=()=>{const fold=card.nextElementSibling; if(fold&&fold.tagName==='DETAILS') fold.open=!fold.open;});
+ bindProfileSections();
  document.querySelectorAll('[data-delete-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); deleteProfileModal('student',state.students.find(s=>s.id==b.dataset.deleteStudent));});
  document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=event=>{event.stopPropagation(); profileModal(b.dataset.profile);});
  document.querySelectorAll('[data-guardian]').forEach(b=>b.onclick=event=>{event.stopPropagation(); guardianModal(b.dataset.guardian);});
