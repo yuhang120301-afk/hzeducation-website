@@ -151,7 +151,7 @@ def publish_seed(c):
 
 
 TYPE_PRODUCT = {'一对一': 'one_to_one', '一对二': 'one_to_two', '小班课': 'term'}
-COMBO_SUBJECT = '数学加英语'
+COMBO_SUBJECT = '数学 + 英语'
 COMBO_PRODUCT = 'term'
 COMBO_LEVEL = 'Prep'
 COMBO_HOURLY_CENTS = 4500
@@ -210,11 +210,9 @@ def canonical_subject(text):
     """数学 and 英语 collapse longer labels. VCE maths and 新加坡数学 stay separate."""
     raw = str(text or '').strip()
     import teaching
-    named = teaching.vce_subject(raw) or teaching.singapore_subject(raw)
+    named = teaching.combo_subject(raw) or teaching.vce_subject(raw) or teaching.singapore_subject(raw)
     if named:
-        return named
-    if '数学加英语' in raw or raw.casefold() in ('maths and english', 'math and english'):
-        return COMBO_SUBJECT
+        return COMBO_SUBJECT if teaching.combo_subject(raw) else named
     if '数学' in raw:
         return '数学'
     if '英语' in raw:
@@ -370,17 +368,29 @@ def singapore_offer(student, level, name, validity):
         'validity': validity, 'source': 'custom' if override is not None else 'catalog', 'reason': ''}
 
 
+def level_is_primary(year, today=None):
+    """Prep–Year 6 in the calendar year. A stored 2027 Year 7 is Year 6 during 2026."""
+    year = str(year or '')
+    if year in PRIMARY_CLASS_LEVELS:
+        return True
+    if year not in LEVELS or year == 'K':
+        return False
+    shown, _past = calendar_level(year, today or now_local().date())
+    return shown in PRIMARY_CLASS_LEVELS
+
+
 def align_primary_class(subject_name, type_name, level):
-    """Prep–Year 6 小班课 is 数学加英语. Year 7+ 小班课 stays a single subject."""
-    subject = str(subject_name or '')
+    """Prep–Year 6 小班课 is 数学 + 英语. Year 7+ 小班课 stays a single subject."""
+    import teaching
+    subject = teaching.combo_subject(subject_name) or str(subject_name or '')
     kind = str(type_name or '')
     year = str(level or '')
-    primary = year in PRIMARY_CLASS_LEVELS
+    primary = level_is_primary(year)
     if subject == COMBO_SUBJECT:
         if year and not primary:
-            raise ValueError('数学加英语只开到 Year 6。')
+            raise ValueError('数学 + 英语只开到 Year 6。')
         if kind and kind != '小班课':
-            raise ValueError('数学加英语是小班课。')
+            raise ValueError('数学 + 英语是小班课。')
         return COMBO_SUBJECT
     if kind == '小班课' and primary and subject in ('', '数学', '英语'):
         return COMBO_SUBJECT
@@ -394,7 +404,7 @@ def apply_primary_class(c, course, subject_id, type_id, type_name, level):
         return course, subject_id, type_id
     found = c.execute('SELECT id FROM subjects WHERE name=? AND active=1', (mapped,)).fetchone()
     if not found:
-        raise ValueError('请先启用数学加英语。')
+        raise ValueError('请先启用数学 + 英语。')
     small = c.execute("SELECT id FROM course_types WHERE name='小班课' AND active=1").fetchone()
     return mapped, found['id'], (small['id'] if small else type_id)
 
@@ -424,13 +434,14 @@ def combo_offer(c, student, level, name, product, validity, on):
     stored = stored_level(dict(student)) if student else str(level or '')
     if not name:
         return _empty_offer(stored, name, product, validity, '请先选择年级和课程类型。')
-    if stored and stored not in PRIMARY_CLASS_LEVELS:
-        return _empty_offer(stored, name, 'term', validity, '数学加英语只开到 Year 6。')
+    if stored and not level_is_primary(stored):
+        return _empty_offer(stored, name, 'term', validity, '数学 + 英语只开到 Year 6。')
     if name != '小班课':
-        return _empty_offer(stored, name, 'term', validity, '数学加英语是小班课。')
+        return _empty_offer(stored, name, 'term', validity, '数学 + 英语是小班课。')
     table = table_on(c, on.isoformat())
     rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
-    band = matching_row(rows, 'term', stored or COMBO_LEVEL)
+    lookup = stored if stored in PRIMARY_CLASS_LEVELS else COMBO_LEVEL
+    band = matching_row(rows, 'term', lookup)
     if not band:
         return _empty_offer(stored, name, 'term', validity, '这个年级还没有价目。')
     return {'level': stored, 'course_type': name, 'product': 'term', 'product_label': name,
@@ -472,8 +483,8 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
         return singapore_offer(student, stored_level(dict(student)) if student else level, name, validity)
     if subject_name == COMBO_SUBJECT:
         return combo_offer(c, student, level, name, product, validity, on)
-    if subject_name in ('数学', '英语') and product == 'term' and str(level or '') in PRIMARY_CLASS_LEVELS:
-        return _empty_offer(level, name, product, validity, '小学小班课是数学加英语。数学或英语请选一对一或一对二。')
+    if subject_name in ('数学', '英语') and product == 'term' and level_is_primary(level):
+        return _empty_offer(level, name, product, validity, '小学小班课是数学 + 英语。数学或英语请选一对一或一对二。')
     if name and not product:
         return _empty_offer(level, name, '', validity, '还没有价格')
     if not level or not product:
@@ -487,7 +498,7 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
     packages = []
     if product == 'term':
         minutes = int(band['lesson_minutes'] or 150)
-        display = COMBO_SUBJECT if str(level or '') in PRIMARY_CLASS_LEVELS else name
+        display = COMBO_SUBJECT if level_is_primary(level) else name
         packages = term_packages(display, band)
     else:
         for minutes in (60, 90):
@@ -589,11 +600,12 @@ def price_for(c, student, day=None):
         if override is not None:
             return override
         level = stored_level(dict(student)) or COMBO_LEVEL
-        if level not in PRIMARY_CLASS_LEVELS:
+        if level and not level_is_primary(level):
             return None
         table = table_on(c, on.isoformat())
         rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
-        band = matching_row(rows, 'term', level)
+        lookup = level if level in PRIMARY_CLASS_LEVELS else COMBO_LEVEL
+        band = matching_row(rows, 'term', lookup)
         return band['hourly_cents'] if band else None
     info = legacy_price(c, student, on)
     if info.get('custom_hourly_cents') is not None:

@@ -28,10 +28,10 @@ class PriceSnapshotTests(unittest.TestCase):
             pricing.schema(c)
             parent = c.execute("INSERT INTO users(phone,name,password,role) VALUES('0477000002','家长','x','parent')").lastrowid
             profile = c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
-            subject = c.execute("SELECT id FROM subjects WHERE name='数学加英语'").fetchone()['id']
+            subject = c.execute("SELECT id FROM subjects WHERE name='数学 + 英语'").fetchone()['id']
             kind = c.execute("SELECT id FROM course_types WHERE name='小班课'").fetchone()['id']
             sid = c.execute('''INSERT INTO students(name,course,parent_id,profile_id,balance,subject_id,course_type_id,level_code)
-                VALUES('Mia','数学加英语',?,?,0,?,?,'Prep')''', (parent, profile, subject, kind)).lastrowid
+                VALUES('Mia','数学 + 英语',?,?,0,?,?,'Prep')''', (parent, profile, subject, kind)).lastrowid
             student = c.execute('SELECT * FROM students WHERE id=?', (sid,)).fetchone()
             self.assertEqual(pricing.price_for(c, student, '2027-03-01'), pricing.COMBO_HOURLY_CENTS)
             ledger = c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,200,'credit','2027-03-01','充值',?, 'snap-1')",
