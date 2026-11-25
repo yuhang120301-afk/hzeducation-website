@@ -278,12 +278,17 @@ function studentGroupById(id){
  const profileOnly=raw.startsWith('p');
  const key=profileOnly?raw.slice(1):raw;
  const groups=studentGroups();
- if(profileOnly) return groups.find(group=>group.some(student=>String(student.profile_id)===key))||null;
+ if(profileOnly){
+  const found=groups.find(group=>group.some(student=>String(student.profile_id)===key));
+  if(found) return found;
+  const left=(state.left_students||[]).filter(student=>String(student.profile_id)===key);
+  return left.length?left:null;
+ }
  const byEnrolment=groups.find(group=>group.some(student=>String(student.id)===key));
  if(byEnrolment) return byEnrolment;
  const byProfile=groups.find(group=>group.some(student=>String(student.profile_id)===key));
  if(byProfile) return byProfile;
- const pool=state.withdrawn_students||[];
+ const pool=(state.withdrawn_students||[]).concat(state.left_students||[]);
  const hit=pool.find(student=>String(student.id)===key||String(student.profile_id)===key);
  if(!hit) return null;
  return pool.filter(student=>String(student.profile_id)===String(hit.profile_id));
@@ -397,7 +402,7 @@ function studentFold(group, admin){
  const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
  const methods=typeof paymentNames==='object'?paymentNames:{};
  const active=group.filter(account=>!account.no_course&&!account.archived&&!account.voided);
- const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">${active.length?'添加课程':'开课'}</button>${state.user.role==='owner'&&!withdrawn?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">退学</button>`:''}${state.user.role==='owner'&&withdrawn?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</div>`:'';
+ const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">${active.length?'添加课程':'开课'}</button>${state.user.role==='owner'&&!withdrawn?(person.left_on?`<button class="btn" data-return-student="${person.profile_id}" type="button">恢复</button>`:`<button class="btn" data-leave-student="${person.profile_id}" type="button">不再上课</button>`):''}${state.user.role==='owner'&&!withdrawn?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">退学</button>`:''}${state.user.role==='owner'&&withdrawn?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</div>`:'';
  const enrolments=active.map(account=>{
   const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money, account)).join('')||'<li>还没有课时包。</li>';
   const subjectLabel=account.subject_name||account.course||'本科目';
@@ -433,10 +438,48 @@ function renderStudents(){
  const groups=source.filter(group=>studyFilter==='withdrawn'||studyFilter==='all'||(group[0].study_status||'studying')===studyFilter).map(group=>studyFilter==='withdrawn'?group:group.filter(s=>s.no_course||!admin||studentStatus==='all'||(studentStatus==='renewal'?needsRenewal(s):!needsRenewal(s)))).filter(group=>group.length&&group.some(s=>`${s.name} ${s.course} ${s.subject_name||''} ${s.phone} ${s.grade||''}`.toLowerCase().includes(search.toLowerCase())));
  const searching=String(search||'')!=='';
  const empty=studyFilter==='withdrawn'?'暂无退学学员。':(search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。');
- $('#student-list').innerHTML=groups.length?(admin?yearLevelFolds(groups, searching):groups.map(group=>studentListCard(group, admin)).join('')):`<div class="panel empty">${empty}</div>`;
+ $('#student-list').innerHTML=(groups.length?(admin?yearLevelFolds(groups, searching):groups.map(group=>studentListCard(group, admin)).join('')):`<div class="panel empty">${empty}</div>`)+leftPeopleSection();
  document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; const openId=card.dataset.openStudent; saveListPlace(openId); openDetail(String(openId).startsWith('p')?'/profiles/'+String(openId).slice(1):'/students/'+card.dataset.openStudent);});
  document.querySelectorAll('#student-list [data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
  document.querySelectorAll('#student-list [data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
+ document.querySelectorAll('#left-people [data-return-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); returnStudent(b.dataset.returnStudent);});
+ document.querySelectorAll('#left-people .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; const openId=card.dataset.openStudent; openDetail(String(openId).startsWith('p')?'/profiles/'+String(openId).slice(1):'/students/'+card.dataset.openStudent);});
+}
+function leftPeopleSection(){
+ if(!state.user || state.user.role!=='owner') return '';
+ const rows=state.left_students||[];
+ if(!rows.length) return '';
+ const groups=new Map();
+ rows.forEach(student=>{const key=personKey(student); if(!groups.has(key)) groups.set(key,[]); groups.get(key).push(student);});
+ const cards=[...groups.values()].map(group=>{
+  const person=group[0];
+  const active=group.filter(account=>!account.no_course&&!account.archived&&!account.voided);
+  const label=active.length?active.map(account=>account.subject_name||account.course).filter(Boolean).join('，'):'暂无课程';
+  return `<article class="pay-card" data-open-student="${person.id}"><div style="flex:1"><h2>${userHTML(person.name)}</h2><p class="muted">${userHTML(label)}</p>${person.left_reason?`<p class="footnote">${userHTML(person.left_reason)}</p>`:''}</div><button class="btn" type="button" data-return-student="${person.profile_id}">恢复</button></article>`;
+ }).join('');
+ return `<details class="year-fold" id="left-people"><summary><span class="year-fold-label">已离开</span><span class="year-fold-count">${groups.size} 位</span></summary><div class="year-fold-students">${cards}</div></details>`;
+}
+async function returnStudent(profileId){
+ try{await api('students/return',{profile_id:Number(profileId)}); toast('已恢复到学生列表。'); await refresh();}
+ catch(error){toast(error.message);}
+}
+function leaveModal(person){
+ if(!person) return;
+ modal('不再上课',`<div class="form-context">${userHTML(person.name)}<br>例如搬去新西兰，或者不再来上课。记录和余额都留着。</div><label class="field">原因（可以不填）<textarea name="reason" maxlength="200" placeholder="例如：搬去新西兰"></textarea></label>`,'确认',async data=>{
+  const result=await api('students/leave',{profile_id:person.profile_id, reason:data.reason||''});
+  if(result.blocked){
+   const lines=(result.lessons||[]).map(lesson=>`<li>${escapeHTML(String(lesson.starts_at||'').replace('T',' '))} · ${userHTML(lesson.course||lesson.title||'')}</li>`).join('');
+   setTimeout(()=>modal('还有以后的课',`<div class="form-context">${userHTML(person.name)} 还有还没上的课。先取消这些课，再标记不再上课。</div><ul>${lines}</ul>`,'先取消这些以后的课',async()=>{
+    const ids=[...new Set((result.lessons||[]).map(lesson=>lesson.student_id))];
+    for(const id of ids) await api('students/course/stop',{student_id:id});
+    const again=await api('students/leave',{profile_id:person.profile_id, reason:data.reason||''});
+    if(again.blocked) throw new Error('还有以后的课，请先处理。');
+    toast('已记为不再上课。');
+   }),0);
+   return;
+  }
+  toast('已记为不再上课。');
+ });
 }
 function studentListCard(group, admin){
  const person=group[0];
@@ -523,6 +566,8 @@ function bindProfileActions(){
  document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=event=>{event.stopPropagation(); profileModal(b.dataset.profile);});
  document.querySelectorAll('[data-guardian]').forEach(b=>b.onclick=event=>{event.stopPropagation(); guardianModal(b.dataset.guardian);});
  document.querySelectorAll('[data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
+ document.querySelectorAll('[data-leave-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); const person=(state.students||[]).concat(state.left_students||[]).find(item=>String(item.profile_id)===String(b.dataset.leaveStudent)); leaveModal(person);});
+ document.querySelectorAll('[data-return-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); returnStudent(b.dataset.returnStudent);});
  document.querySelectorAll('[data-study-level]').forEach(b=>b.onclick=event=>{event.stopPropagation(); const account=state.students.find(s=>s.id==b.dataset.studyLevel); if(!account) return; modal('学习年级',`<div class="form-context">${userHTML(account.name)} · ${userHTML(account.subject_name||account.course)}<br>今年显示 ${userHTML(displayLevel(account.level_label)||'还没有年级')}。低于今年的学习年级不会使用。</div>${studyLevelSelect(account.study_level)}`,'保存',async data=>{await api('students/course/level',{student_id:account.id,study_level:data.study_level||''}); toast('学习年级已保存。');});});
  document.querySelectorAll('[data-lesson]').forEach(b=>b.onclick=event=>{event.stopPropagation(); scheduleModal(null,b.dataset.lesson);});
  document.querySelectorAll('[data-course-tab]').forEach(button=>button.onclick=()=>{
