@@ -88,7 +88,8 @@ def schema(c):
 DEFAULT_COURSE_TYPES = ('一对一', '一对二', '小班课')
 DEFAULT_SUBJECTS = ('数学', '英语', '科学', '物理', '化学', '中文', '写作', '高数', '中数')
 VCE_SUBJECTS = ('VCE 中数', 'VCE 低数', 'VCE 高数')
-OFFERED_SUBJECTS = ('数学', '英语', *VCE_SUBJECTS)
+SINGAPORE_SUBJECT = '新加坡数学'
+OFFERED_SUBJECTS = ('数学', '英语', *VCE_SUBJECTS, SINGAPORE_SUBJECT)
 OFFERED_TYPES = ('一对一', '一对二', '小班课')
 TYPE_ALIASES = {
     '一对一': '一对一', '1:1': '一对一', '1：1': '一对一', 'one': '一对一', 'one_to_one': '一对一',
@@ -105,6 +106,8 @@ SUBJECT_ALIASES = {
     'vce 中数': 'VCE 中数', 'vce 低数': 'VCE 低数', 'vce 高数': 'VCE 高数',
     'math methods': 'VCE 中数', 'maths methods': 'VCE 中数', 'mathematical methods': 'VCE 中数',
     'general mathematics': 'VCE 低数', 'specialist mathematics': 'VCE 高数',
+    '新加坡数学': '新加坡数学',
+    'singapore maths': '新加坡数学', 'singapore math': '新加坡数学', 'singapore mathematics': '新加坡数学',
 }
 # Longer English names first, so "math methods" is not swallowed by the generic "math" prefix.
 VCE_ALIASES = (
@@ -140,16 +143,31 @@ def vce_subject(name):
     return ''
 
 
+def singapore_subject(name):
+    """新加坡数学 stays its own subject. The name contains 数学 and must not fold into 数学."""
+    text = str(name or '').strip()
+    if not text:
+        return ''
+    if text == SINGAPORE_SUBJECT or SINGAPORE_SUBJECT in text:
+        return SINGAPORE_SUBJECT
+    key = text.casefold()
+    for alias in ('singapore mathematics', 'singapore maths', 'singapore math'):
+        if key == alias or key.startswith(alias + ' ') or key.startswith(alias + '·') or key.startswith(alias + ' ·'):
+            return SINGAPORE_SUBJECT
+    return ''
+
+
 def canonical_subject(name):
     """Science and 科学 display as the same Chinese subject. Stored labels are not rewritten.
 
     VCE 中数 / VCE 低数 / VCE 高数, and Math Methods, are not folded into 数学.
+    新加坡数学 is not folded into 数学 either.
     The unused 中数 and 高数 labels stay as themselves.
     """
     text = str(name or '').strip()
     if not text:
         return ''
-    named = vce_subject(text)
+    named = vce_subject(text) or singapore_subject(text)
     if named:
         return named
     key = text.casefold()
@@ -234,6 +252,7 @@ def ensure_catalogs(c):
     focus_catalog(c)
     refocus_catalog(c)
     activate_vce_subjects(c)
+    activate_singapore_maths(c)
 
 
 def focus_catalog(c):
@@ -287,6 +306,22 @@ def activate_vce_subjects(c):
             c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (name,))
             c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (name,))
     c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_vce_maths_v1', '1')")
+
+
+def activate_singapore_maths(c):
+    """Add 新加坡数学 on databases that already focused on 数学, 英语 and VCE.
+
+    Idempotent. Does not deactivate those subjects, and does not touch the unused 中数 / 高数 rows.
+    """
+    if c.execute("SELECT 1 FROM app_meta WHERE key='catalog_singapore_maths_v1'").fetchone():
+        return
+    sort = (OFFERED_SUBJECTS.index(SINGAPORE_SUBJECT) + 1) * 10
+    c.execute('INSERT OR IGNORE INTO subjects(name, sort_order, active) VALUES(?,?,1)', (SINGAPORE_SUBJECT, sort))
+    c.execute('UPDATE subjects SET active=1 WHERE name=?', (SINGAPORE_SUBJECT,))
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
+        c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (SINGAPORE_SUBJECT,))
+        c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (SINGAPORE_SUBJECT,))
+    c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_singapore_maths_v1', '1')")
 
 
 def _id_by_name(c, table, name):
@@ -597,6 +632,12 @@ def save_lesson(c,user,data,units,text_value):
     teacher_id=int(data.get('teacher_id',0))
     if not c.execute('SELECT 1 FROM teachers t JOIN users u ON t.user_id=u.id WHERE t.id=? AND u.active=1',(teacher_id,)).fetchone():
         raise ValueError('请选择有效的任课老师。')
+    if subject_name and subject_name['name'] == SINGAPORE_SUBJECT:
+        if not type_name or type_name['name'] not in ('一对一', '小班课'):
+            raise ValueError('新加坡数学只有一对一和小班课。')
+        boss = c.execute('''SELECT 1 FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id WHERE t.id=?''', (teacher_id,)).fetchone()
+        if not boss:
+            raise ValueError('新加坡数学只由 Helen 授课。')
     start=datetime_value(data.get('starts_at'))
     end=datetime_value(data.get('ends_at'))
     if end<=start or end-start>dt.timedelta(hours=12):

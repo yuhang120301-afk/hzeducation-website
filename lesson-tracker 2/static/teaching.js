@@ -177,14 +177,14 @@ function renderTeachers(){
  document.querySelectorAll('[data-teacher-edit]').forEach(b=>b.onclick=()=>teacherModal(state.teachers.find(t=>t.id==b.dataset.teacherEdit)));
  document.querySelectorAll('[data-teacher-status]').forEach(b=>b.onclick=()=>{const t=state.teachers.find(t=>t.id==b.dataset.teacherStatus);modal(t.active?'离职 / 停用':'恢复在职',`<div class="form-context">${userHTML(t.name)}<br>${t.active?'停用后无法登录或接受新排课。已有课程保留，请另行调整未完成课程。':'恢复后可使用原账号登录并接受排课。'}</div>`,'确认',async()=>{await api('teachers/status',{teacher_id:t.id,active:!t.active});toast('老师状态已更新。');},!!t.active);});
 }
-var offeredSubjects=['数学','英语','VCE 中数','VCE 低数','VCE 高数'];
+var offeredSubjects=['数学','英语','VCE 中数','VCE 低数','VCE 高数','新加坡数学'];
 function canonicalTeacherSubject(name){
  const text=String(name||'').trim();
  if(!text) return '';
  const key=text.toLocaleLowerCase();
  const vce=[['mathematical methods','VCE 中数'],['specialist mathematics','VCE 高数'],['general mathematics','VCE 低数'],['maths methods','VCE 中数'],['math methods','VCE 中数'],['vce 中数','VCE 中数'],['vce 低数','VCE 低数'],['vce 高数','VCE 高数']];
  for(const [alias,label] of vce){if(key===alias || key.startsWith(alias+' ') || key.startsWith(alias+'·') || key.startsWith(alias+' ·')) return label;}
- const aliases={数学:'数学',maths:'数学',math:'数学',mathematics:'数学',英语:'英语',english:'英语',科学:'科学',science:'科学',物理:'物理',化学:'化学',中文:'中文',写作:'写作',writing:'写作',高数:'高数',中数:'中数'};
+ const aliases={数学:'数学',maths:'数学',math:'数学',mathematics:'数学',英语:'英语',english:'英语',科学:'科学',science:'科学',物理:'物理',化学:'化学',中文:'中文',写作:'写作',writing:'写作',高数:'高数',中数:'中数','新加坡数学':'新加坡数学','singapore maths':'新加坡数学','singapore math':'新加坡数学','singapore mathematics':'新加坡数学'};
  return aliases[key]||aliases[text]||text;
 }
 function teacherSubjectChoices(teacher){
@@ -216,6 +216,7 @@ function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
  $('#modal').classList.add('wide');
  initScheduleStudentSearch();
  initScheduleTimes();
+ limitSingaporeChoices();
  if(!l){const repeat=$('[name=repeat]'),ending=$('[name=repeat_end]');const updateRepeat=()=>{const enabled=repeat.value!=='none',count=enabled&&ending.value==='count';$('#repeat-end-field').hidden=!enabled;ending.disabled=!enabled;$('#repeat-count-field').hidden=!count;$('[name=repeat_count]').disabled=!count;$('#repeat-help').hidden=!enabled;};repeat.onchange=updateRepeat;ending.onchange=updateRepeat;}
 }
 function askAbsenceCharge(){
@@ -318,6 +319,24 @@ function typeBadge(name){
  const label=name||'';
  const kind=label==='一对一'?'one':label==='一对二'?'two':'small';
  return label?`<span class="type-badge type-${kind}">${escapeHTML(label)}</span>`:'';
+}
+function limitSingaporeChoices(){
+ const subjectBox=document.querySelector('#modal [name=subject_id]');
+ const typeBox=document.querySelector('#modal [name=course_type_id]');
+ const teacherBox=document.querySelector('#modal [name=teacher_id]');
+ if(!subjectBox) return;
+ const apply=()=>{
+  const selected=subjectBox.selectedOptions&&subjectBox.selectedOptions[0]?subjectBox.selectedOptions[0].textContent:'';
+  const singapore=selected==='新加坡数学';
+  if(typeBox) [...typeBox.options].forEach(option=>{option.hidden=singapore&&option.textContent==='一对二'; if(option.hidden&&option.selected) typeBox.value='';});
+  if(teacherBox) [...teacherBox.options].forEach(option=>{
+   const teacher=(state.teachers||[]).find(item=>String(item.id)===option.value);
+   option.hidden=singapore&&!(teacher&&teacher.account_role==='owner');
+   if(option.hidden&&option.selected){const next=[...teacherBox.options].find(item=>!item.hidden&&item.value); teacherBox.value=next?next.value:'';}
+  });
+ };
+ subjectBox.addEventListener('change', apply);
+ apply();
 }
 function catalogSelect(list, field, current, placeholder){
  const allowed=field==='subject_id'?offeredSubjects:field==='course_type_id'?['一对一','一对二','小班课']:null;

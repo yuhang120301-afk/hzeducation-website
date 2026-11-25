@@ -416,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if path == '/api/prices/presets':
                         params=parse_qs(urlsplit(self.path).query)
-                        return self.response(200, pricing.presets(c, user, params.get('student_id',[None])[0], params.get('level',[None])[0], params.get('course_type_id',[None])[0], params.get('date',[None])[0]))
+                        return self.response(200, pricing.presets(c, user, params.get('student_id',[None])[0], params.get('level',[None])[0], params.get('course_type_id',[None])[0], params.get('date',[None])[0], params.get('subject_id',[None])[0]))
                     return self.response(200, pricing.list_prices(c, user))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
@@ -826,6 +826,10 @@ class Handler(BaseHTTPRequestHandler):
         birthday,grade,notes=profiles.fields(data)
         if 'grade' in data and not str(data.get('grade') or '').strip():
             raise ValueError('请选择年级。')
+        level_code, level_year = pricing.remember_level(data, grade)
+        if teaching.singapore_subject(course):
+            type_row = c.execute('SELECT name FROM course_types WHERE id=?', (int(data.get('course_type_id') or 0),)).fetchone()
+            pricing.assert_singapore_enrolment(course, type_row['name'] if type_row else '', level_code)
         billing_unit=profiles.billing_unit(data.get('billing_unit','lesson'))
         phone_raw = str(data.get('phone') or '').strip()
         phone = phone_value(phone_raw) if phone_raw else 'pending-' + secrets.token_hex(6)
@@ -849,7 +853,6 @@ class Handler(BaseHTTPRequestHandler):
         sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
         c.execute('INSERT OR IGNORE INTO profile_parents(profile_id, user_id) VALUES(?,?)', (profile_id, pid))
         type_id, subject_id = teaching.resolve_catalog(c, data, None, course)
-        level_code, level_year = pricing.remember_level(data, grade)
         c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=?,course_type_id=?,subject_id=?,course_note=?,level_code=?,level_year=? WHERE id=?',(birthday,grade,notes,billing_unit,type_id,subject_id,course,level_code,level_year,sid))
         c.commit()
         return self.response(201,{'ok':True,'student_id':sid})

@@ -82,6 +82,7 @@ def schema(c):
     seed_2027(c)
     import teaching
     teaching.ensure_catalogs(c)
+    ensure_enrolment_price(c)
     cols = {r['name'] for r in c.execute('PRAGMA table_info(price_tables)')}
     if 'validity_note' not in cols:
         c.execute("ALTER TABLE price_tables ADD COLUMN validity_note TEXT NOT NULL DEFAULT ''")
@@ -123,13 +124,58 @@ def publish_seed(c):
 TYPE_PRODUCT = {'一对一': 'one_to_one', '一对二': 'one_to_two', '小班课': 'term'}
 LEGACY_SUBJECTS = ('数学', '英语')
 SUBJECT_PRICE_KEY = 'legacy_subject_prices_v1'
+SINGAPORE_LEVELS = ('Y7', 'Y8', 'Y9', 'Y10')
+SINGAPORE_TYPES = ('一对一', '小班课')
+SINGAPORE_NEW_CENTS = 15000
+SINGAPORE_OLD_CENTS = 12000
+
+
+def ensure_enrolment_price(c):
+    """One nullable hourly override on the enrolment row. NULL uses the catalog. 0 is free."""
+    cols = {r['name'] for r in c.execute('PRAGMA table_info(students)')}
+    if 'custom_hourly_cents' not in cols:
+        c.execute('ALTER TABLE students ADD COLUMN custom_hourly_cents INTEGER')
+
+
+def enrolment_hourly(student):
+    """The enrolment's own hourly cents, including 0. None means the field is empty."""
+    if not student:
+        return None
+    keys = student.keys() if hasattr(student, 'keys') else ()
+    if 'custom_hourly_cents' not in keys:
+        return None
+    value = student['custom_hourly_cents']
+    if value is None:
+        return None
+    return int(value)
+
+
+def singapore_list_hourly(student):
+    """New students are $150/hour. Helen's original students default to $120/hour."""
+    original = 0
+    if student is not None:
+        try:
+            original = int(student['helen_original'] or 0)
+        except (KeyError, IndexError, TypeError, ValueError):
+            original = 0
+    return SINGAPORE_OLD_CENTS if original else SINGAPORE_NEW_CENTS
+
+
+def assert_singapore_enrolment(subject_name, type_name, level_code):
+    import teaching
+    if not teaching.singapore_subject(subject_name):
+        return
+    if type_name not in SINGAPORE_TYPES:
+        raise ValueError('新加坡数学只有一对一和小班课。')
+    if level_code not in SINGAPORE_LEVELS:
+        raise ValueError('新加坡数学只开设 Year 7 到 Year 10。')
 
 
 def canonical_subject(text):
-    """数学 and 英语 collapse longer labels. VCE maths names do not contain 数学 and stay separate."""
+    """数学 and 英语 collapse longer labels. VCE maths and 新加坡数学 stay separate."""
     raw = str(text or '').strip()
     import teaching
-    named = teaching.vce_subject(raw)
+    named = teaching.vce_subject(raw) or teaching.singapore_subject(raw)
     if named:
         return named
     if '数学' in raw:
@@ -255,9 +301,46 @@ def legacy_subject_names(rows, level, customs):
     return found
 
 
-def presets(c, user, student_id=None, level=None, course_type_id=None, day=None):
-    """Packages that match one year level and one course type. Helen's own rate is never included."""
+def _empty_offer(level, name, product, validity, reason):
+    return {'level': level or '', 'course_type': name, 'product': product, 'hourly_cents': None,
+        'packages': [], 'validity': validity, 'source': '', 'reason': reason}
+
+
+def singapore_package(name, product, hourly, minutes):
+    """20 paid lessons and no gift. The regular 20+1 pack is not used."""
+    each = per_lesson_cents(hourly, minutes)
+    total = each * 20
+    prices = [value * 10 for value in lesson_prices_cents(total, 20)]
+    return {'label': f'{name} 20 节 · {length_label(minutes)} · {money_millis(total * 10)} · 每节 {money_millis(prices[0])}',
+        'paid_lessons': 20, 'gift_lessons': 0, 'lesson_minutes': minutes, 'total_cents': total,
+        'each_millis': prices[0] if prices else 0, 'unit_fees': prices, 'terms': [], 'product': product,
+        'discount_percent': 0, 'validity': '永久有效'}
+
+
+def singapore_offer(student, level, name, validity):
+    """Singapore Maths has its own hourly price. It does not read price_rows."""
+    stored = stored_level(dict(student)) if student else str(level or '')
+    product = TYPE_PRODUCT.get(name)
+    if name not in SINGAPORE_TYPES:
+        return _empty_offer(stored, name, product, validity, '新加坡数学只有一对一和小班课。')
+    if stored not in SINGAPORE_LEVELS:
+        return _empty_offer(stored, name, product, validity, '新加坡数学只开设 Year 7 到 Year 10。')
+    override = enrolment_hourly(student)
+    hourly = override if override is not None else singapore_list_hourly(student)
+    packages = [singapore_package(name, product, hourly, minutes) for minutes in (60, 90)]
+    return {'level': stored, 'course_type': name, 'product': product, 'product_label': name,
+        'hourly_cents': hourly, 'lesson_minutes': 60, 'packages': packages,
+        'validity': validity, 'source': 'custom' if override is not None else 'catalog', 'reason': ''}
+
+
+def presets(c, user, student_id=None, level=None, course_type_id=None, day=None, subject_id=None):
+    """Packages that match one year level and one course type. Helen's own rate is never included.
+
+    新加坡数学 does not use this table. New students are $150/hour, old students $120/hour,
+    and an enrolment can replace that with its own hourly rate, including $0.
+    """
     require_owner(user)
+    import teaching
     on = dt.date.fromisoformat(str(day)) if day else now_local().date()
     student = None
     if student_id:
@@ -271,10 +354,16 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
         kind = c.execute('SELECT name FROM course_types WHERE id=?', (int(course_type_id),)).fetchone()
         name = kind['name'] if kind else ''
     product = TYPE_PRODUCT.get(name)
+    subject_name = subject_of(c, student) if student else ''
+    if not subject_name and subject_id:
+        found = c.execute('SELECT name FROM subjects WHERE id=?', (int(subject_id),)).fetchone()
+        subject_name = found['name'] if found else ''
     table = table_on(c, on.isoformat())
     validity = ''
     if table and 'validity_note' in table.keys():
         validity = table['validity_note'] or ''
+    if teaching.singapore_subject(subject_name):
+        return singapore_offer(student, stored_level(dict(student)) if student else level, name, validity)
     if not level or not product:
         return {'level': level or '', 'course_type': name, 'product': product, 'hourly_cents': None,
             'packages': [], 'validity': validity, 'source': '', 'reason': '请先选择年级和课程类型。'}
@@ -310,12 +399,13 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
                 'discount_percent': 0, 'validity': '永久有效'})
     source = 'table'
     hourly = band['hourly_cents']
+    column = enrolment_hourly(student)
     if student and student['profile_id']:
         custom = subject_custom_rows(c, student['profile_id'], product, subject_of(c, student))
-        if custom:
+        if custom and column is None:
             source = 'custom'
             by_minutes = {row['lesson_minutes']: row['per_lesson_cents'] for row in custom}
-            if by_minutes.get(60):
+            if 60 in by_minutes:
                 hourly = by_minutes[60]
             for package in packages:
                 each = by_minutes.get(package['lesson_minutes'])
@@ -334,6 +424,19 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None)
                 package['label'] = package['label'].split(' · 每节 ')[0]
                 kind = name or PRODUCT_LABELS.get(package['product'], '')
                 package['label'] = f"{kind} {'20+1 节' if package['gift_lessons'] else package['label']} · 老学员价 · 每节 {money_millis(prices[0])}"
+    if column is not None:
+        source = 'custom'
+        hourly = column
+        for package in packages:
+            each = per_lesson_cents(column, package['lesson_minutes'])
+            paid = package['paid_lessons']
+            total = apply_discount(each * paid, discount_percent(package['terms']))
+            count = paid if package['product'] == 'term' else paid + package['gift_lessons']
+            prices = lesson_prices_millis(total, count) if package['product'] == 'term' else [value * 10 for value in lesson_prices_cents(total, count)]
+            package['total_cents'] = total
+            package['each_millis'] = prices[0] if prices else 0
+            package['unit_fees'] = prices
+            package['legacy'] = True
     return {'level': level, 'course_type': name, 'product': product, 'product_label': PRODUCT_LABELS[product],
         'hourly_cents': hourly, 'lesson_minutes': band['lesson_minutes'], 'packages': packages,
         'validity': validity, 'source': source, 'reason': ''}
@@ -352,13 +455,25 @@ def legacy_price(c, student, on=None):
     subject = subject_of(c, student)
     table = table_on(c, on.isoformat())
     rows = [dict(r) for r in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+    import teaching
+    override = enrolment_hourly(student)
+    if teaching.singapore_subject(subject):
+        list_hourly = singapore_list_hourly(student)
+        legacy = override is not None and override != list_hourly
+        return {'legacy': legacy, 'legacy_subjects': [],
+            'list_hourly_cents': list_hourly, 'custom_hourly_cents': override,
+            'product': product, 'subject': subject, 'level': level, 'course_type': name}
     band = matching_row(rows, product, level) if product and level else None
     list_hourly = band['hourly_cents'] if band else None
     customs = subject_custom_rows(c, student.get('profile_id'), product, subject) if product and product != 'helen' else []
     all_custom = profile_custom_rows(c, student.get('profile_id'))
     legacy = bool(customs) and any(price_differs(rows, level, row) for row in customs)
+    custom = hourly_from_custom(customs) if customs else None
+    if override is not None:
+        custom = override
+        legacy = list_hourly is None or override != list_hourly
     return {'legacy': legacy, 'legacy_subjects': legacy_subject_names(rows, level, all_custom),
-        'list_hourly_cents': list_hourly, 'custom_hourly_cents': hourly_from_custom(customs) if customs else None,
+        'list_hourly_cents': list_hourly, 'custom_hourly_cents': custom,
         'product': product, 'subject': subject, 'level': level, 'course_type': name}
 
 
@@ -379,11 +494,14 @@ def save_legacy_price(c, user, data):
         raise ValueError('请先选择课程类型。')
     if not subject:
         raise ValueError('请先选择科目。')
+    ensure_enrolment_price(c)
     if data.get('clear') is True or str(data.get('hourly') or '').strip() == '':
+        c.execute('UPDATE students SET custom_hourly_cents=NULL WHERE id=?', (student['id'],))
         c.execute('DELETE FROM student_subject_prices WHERE profile_id=? AND product=? AND subject=?',
             (student['profile_id'], product, subject))
         return {'ok': True, 'legacy': False}
     cents = accounting.money(data.get('hourly'))
+    c.execute('UPDATE students SET custom_hourly_cents=? WHERE id=?', (cents, student['id'],))
     if info['product'] == 'term':
         minutes_list = [150]
         table = table_on(c, now_local().date().isoformat())
@@ -401,6 +519,10 @@ def save_legacy_price(c, user, data):
             ON CONFLICT(profile_id,product,subject,lesson_minutes) DO UPDATE SET
             per_lesson_cents=excluded.per_lesson_cents, note=excluded.note, updated_by=excluded.updated_by''',
             (student['profile_id'], product, subject, minutes, each, '老学员', user['id']))
+    import teaching
+    if teaching.singapore_subject(subject):
+        c.execute('DELETE FROM student_subject_prices WHERE profile_id=? AND subject=?',
+            (student['profile_id'], subject))
     return {'ok': True, 'legacy': cents != info['list_hourly_cents']}
 
 
@@ -675,6 +797,15 @@ def list_lesson_cents(c, student_id, day, product, minutes):
     student = c.execute('SELECT * FROM students WHERE id=?', (int(student_id),)).fetchone()
     if not student or product not in TYPE_PRODUCT.values():
         return None
+    import teaching
+    if teaching.singapore_subject(subject_of(c, student)):
+        if product not in ('one_to_one', 'term'):
+            return None
+        info = legacy_price(c, student)
+        hourly = info['custom_hourly_cents'] if info['custom_hourly_cents'] is not None else info['list_hourly_cents']
+        if hourly is None:
+            return None
+        return per_lesson_cents(hourly, int(minutes))
     level = annotate(dict(student), dt.date.fromisoformat(str(day)[:10]))['level_now']
     custom = subject_lesson_cents(c, student['profile_id'], product, subject_of(c, student), int(minutes))
     if custom is not None:
@@ -713,6 +844,43 @@ def matching_row(rows, product, level):
     return found
 
 
+def singapore_quote(c, student, product, lesson_minutes, paid_lessons, day):
+    """20 paid lessons, no gift, and no row from the shared price table."""
+    if product not in ('one_to_one', 'term'):
+        raise ValueError('新加坡数学只有一对一和小班课。')
+    stored = stored_level(dict(student))
+    if stored not in SINGAPORE_LEVELS:
+        raise ValueError('新加坡数学只开设 Year 7 到 Year 10。')
+    minutes = int(lesson_minutes or 0)
+    if minutes not in (60, 90):
+        raise ValueError('请选择 1 小时或 1.5 小时。')
+    try:
+        paid = int(paid_lessons or 0)
+    except (TypeError, ValueError):
+        raise ValueError('购买节数需为整数。')
+    if paid != 20:
+        raise ValueError('新加坡数学一次购买 20 节，没有赠课。')
+    info = legacy_price(c, student)
+    hourly = info['custom_hourly_cents'] if info['custom_hourly_cents'] is not None else info['list_hourly_cents']
+    each = per_lesson_cents(hourly, minutes)
+    total = each * paid
+    unit_fees = [value * 10 for value in lesson_prices_cents(total, paid)]
+    name = '一对一' if product == 'one_to_one' else '小班课'
+    table = table_on(c, str(day)[:10])
+    return {
+        'student_id': student['id'], 'profile_id': student['profile_id'], 'level': stored,
+        'product': product, 'product_label': name,
+        'lesson_minutes': minutes, 'length_label': length_label(minutes),
+        'paid_lessons': paid, 'gift_lessons': 0, 'discount_percent': 0,
+        'per_lesson_cents': each, 'hourly_cents': hourly, 'total_cents': total,
+        'unit_fees': unit_fees, 'each_millis': unit_fees[0] if unit_fees else 0,
+        'label': f'{name} · {length_label(minutes)} · {paid} 节',
+        'source': 'custom' if info['custom_hourly_cents'] is not None else 'catalog',
+        'table_from': table['effective_from'] if table else None,
+        'terms': [], 'gst': False,
+    }
+
+
 def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms=None):
     require_owner(user)
     if product not in PRODUCTS:
@@ -720,6 +888,9 @@ def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms
     student = c.execute('SELECT * FROM students WHERE id=?', (int(student_id),)).fetchone()
     if not student:
         raise ValueError('学生不存在。')
+    import teaching
+    if teaching.singapore_subject(subject_of(c, student)):
+        return singapore_quote(c, student, product, lesson_minutes, paid_lessons, day)
     on = dt.date.fromisoformat(str(day))
     level = annotate(dict(student), on)['level_now']
     terms = list(dict.fromkeys(terms or []))
@@ -916,6 +1087,35 @@ def normalize_purchase(c, user, data):
     student = c.execute('SELECT * FROM students WHERE id=? AND archived=0', (int(data.get('student_id') or 0),)).fetchone()
     if not student:
         raise ValueError('学生不存在。')
+    import teaching
+    if teaching.singapore_subject(subject_of(c, student)):
+        if product not in ('one_to_one', 'term'):
+            raise ValueError('新加坡数学只有一对一和小班课。')
+        minutes = int(data.get('lesson_minutes') or 0)
+        if minutes not in (60, 90):
+            raise ValueError('请选择 1 小时或 1.5 小时。')
+        try:
+            paid = int(str(data.get('paid_lessons') or data.get('amount') or '0'))
+        except ValueError:
+            raise ValueError('购买节数需为整数。')
+        if paid != 20:
+            raise ValueError('新加坡数学一次购买 20 节，没有赠课。')
+        offer = quote(c, user, student['id'], product, minutes, paid, data.get('date') or now_local().date().isoformat(), [])
+        if offer.get('total_cents') is None:
+            raise ValueError('新加坡数学还没有价格。')
+        import json
+        label = '一对一' if product == 'one_to_one' else '小班课'
+        detail = f'{label} · 每节 {length_label(minutes)} · {paid} 节'
+        note = str(data.get('note') or '').strip()
+        if note:
+            detail += ' · ' + note
+        if len(detail) > 300:
+            raise ValueError('备注太长。')
+        return {**data, 'kind': 'credit', 'amount': paid, 'gift_amount': 0,
+            'package_mode': 'lesson', 'lesson_minutes': minutes, 'product': product, 'note': detail,
+            'pack_label': offer.get('label') or detail, 'total_cents': offer['total_cents'],
+            'unit_fees': json.dumps(offer.get('unit_fees') or []),
+            'cash_amount': f"{offer['total_cents'] / 100:.2f}"}
     minutes = int(data.get('lesson_minutes') or 0)
     terms = []
     if product == 'term':

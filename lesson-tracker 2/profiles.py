@@ -1,6 +1,6 @@
 """Editable student profiles and guardian account administration."""
 import datetime as dt
-from teaching import AccessError, now_local, vce_subject
+from teaching import AccessError, now_local, singapore_subject, vce_subject
 
 def schema(c):
     c.execute("CREATE TABLE IF NOT EXISTS student_profiles (id INTEGER PRIMARY KEY)")
@@ -353,10 +353,13 @@ def add_course(c,user,data,text_value):
         subject_id = subject['id']
     if c.execute('SELECT 1 FROM students WHERE profile_id=? AND course=?',(s['profile_id'],course)).fetchone():
         raise ValueError('这位学生已有关联课程，无需重复添加。')
-    sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
     created=s['helen_original'] if 'helen_original' in s.keys() else 0
     type_id = int(data.get('course_type_id') or 0) or s['course_type_id']
     import pricing
+    kind = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone() if type_id else None
+    level = s['level_code'] if 'level_code' in s.keys() else ''
+    pricing.assert_singapore_enrolment(course, kind['name'] if kind else '', level)
+    sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
     pricing.schema(c)
     study = pricing.clean_study_level(data.get('study_level'))
     c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=?,level_code=?,level_year=?,study_level=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,s['level_code'] if 'level_code' in s.keys() else '', s['level_year'] if 'level_year' in s.keys() else 0, study, sid))
@@ -369,10 +372,11 @@ def same_subject(left_name, left_subject, right_name, right_subject):
     """数学 and 英语 match even when the old course name is longer, such as 数学 一对一.
 
     VCE 中数, VCE 低数 and VCE 高数 do not match 数学. Math Methods matches VCE 中数.
+    新加坡数学 does not match 数学.
     """
     def token(name, subject):
         for part in (subject, name, f'{subject or ""} {name or ""}'):
-            found = vce_subject(part)
+            found = vce_subject(part) or singapore_subject(part)
             if found:
                 return found
         text=f'{subject or ""} {name or ""}'

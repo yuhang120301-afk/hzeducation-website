@@ -12,7 +12,7 @@ import credit_batches
 import pricing
 from teaching import AccessError, OFFERED_SUBJECTS, now_local
 
-SUBJECT_REQUIRED = '请选择数学、英语、VCE 中数、VCE 低数或 VCE 高数。'
+SUBJECT_REQUIRED = '请选择数学、英语、VCE 中数、VCE 低数、VCE 高数或新加坡数学。'
 
 
 def schema(c):
@@ -80,6 +80,18 @@ def _each_millis(c, student, product, subject, minutes, level, manual):
     if manual not in (None, ''):
         import accounting
         return accounting.money(manual) * 10, 'manual'
+    import teaching
+    if teaching.singapore_subject(subject):
+        if pricing.subject_of(c, student) == teaching.SINGAPORE_SUBJECT:
+            info = pricing.legacy_price(c, student)
+            hourly = info['custom_hourly_cents'] if info['custom_hourly_cents'] is not None else info['list_hourly_cents']
+            source = 'custom' if info['custom_hourly_cents'] is not None else 'catalog'
+        else:
+            hourly = pricing.singapore_list_hourly(student)
+            source = 'catalog'
+        if hourly is None:
+            raise ValueError('新加坡数学还没有价格。')
+        return pricing.per_lesson_cents(hourly, int(minutes)) * 10, source
     custom = pricing.subject_lesson_cents(c, student['profile_id'], product, subject, int(minutes))
     if custom is not None:
         return int(custom) * 10, 'custom'
@@ -106,15 +118,28 @@ def _choice(c, data, student):
     if level not in pricing.LEVELS:
         raise ValueError('请选择年级。')
     minutes = int(data.get('lesson_minutes') or 0)
-    allowed = (120, 150) if product == 'term' else (60, 90)
-    if minutes not in allowed:
-        raise ValueError('请选择课时长度。')
+    import teaching
+    if teaching.singapore_subject(subject):
+        if kind['name'] not in pricing.SINGAPORE_TYPES:
+            raise ValueError('新加坡数学只有一对一和小班课。')
+        if level not in pricing.SINGAPORE_LEVELS:
+            raise ValueError('新加坡数学只开设 Year 7 到 Year 10。')
+        if minutes not in (60, 90, 120, 150):
+            raise ValueError('请选择课时长度。')
+    else:
+        allowed = (120, 150) if product == 'term' else (60, 90)
+        if minutes not in allowed:
+            raise ValueError('请选择课时长度。')
     teacher_id = int(data.get('teacher_id') or 0)
     teacher = c.execute('SELECT t.id, u.name FROM teachers t JOIN users u ON u.id=t.user_id WHERE t.id=? AND u.active=1', (teacher_id,)).fetchone()
     if not teacher:
         raise ValueError('请选择任课老师。')
+    if teaching.singapore_subject(subject) and not c.execute(
+            'SELECT 1 FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id WHERE t.id=?',
+            (teacher_id,)).fetchone():
+        raise ValueError('新加坡数学只由 Helen 授课。')
     each, source = _each_millis(c, student, product, subject, minutes, level, data.get('manual_price'))
-    if not each:
+    if each is None:
         raise ValueError('新课程还没有每节价格。')
     return {
         'subject': subject, 'type_id': kind['id'], 'type_name': kind['name'], 'product': product,
