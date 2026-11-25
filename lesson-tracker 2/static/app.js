@@ -688,11 +688,11 @@ function ageText(birthday){
  return years>=0?`（${years} 岁）`:'';
 }
 function profileFields(s={}){
- const current=s.level_code||s.grade||'';
+ const current=s.level_calendar||s.level_code||s.grade||'';
  const extra=current&&!isKindergarten(current)&&!yearLevels().includes(current)?`<option value="${escapeHTML(current)}" selected>${escapeHTML(current)}</option>`:'';
  const phone=String(s.phone||'').startsWith('pending-')?'':(s.phone||'');
  const checked=name=>s[name]?'checked':'';
- return `<label class="field year-level">2027 年级<select name="grade" id="year-level" required><option value="">请选择年级</option>${extra}${yearLevels().map(level=>`<option value="${level}" ${current===level?'selected':''}>${level}</option>`).join('')}</select><small>这里填的是 2027 年级。卡片显示今年年级，每年 1 月 1 日自动升一级。${s.level_label?`今年是 ${escapeHTML(displayLevel(s.level_label))}。`:''}充值按充值日期那一年的年级计价；某一科可以另填更高的学习年级。</small></label>
+ return `<label class="field year-level">今年年级<select name="grade" id="year-level" required><option value="">请选择年级</option>${extra}${yearLevels().map(level=>`<option value="${level}" ${current===level?'selected':''}>${level}</option>`).join('')}</select><small>填今年的年级。系统按 2027 年级存下来，每年 1 月 1 日自动升一级。${s.level_label?`今年是 ${escapeHTML(displayLevel(s.level_label))}。`:''}到了 Year 12 的下一年会提示已毕业。充值按充值日期那一年的年级计价。</small></label>
 <details class="profile-group" open><summary>学生</summary><label class="field">出生日期<input type="date" name="birthday" max="${state.today}" value="${escapeHTML(s.birthday||'')}" data-birthday><small id="age-note">${ageText(s.birthday)}</small></label><label class="field">学校<input name="school" maxlength="80" value="${escapeHTML(s.school||'')}"></label></details>
 <details class="profile-group"><summary>家长</summary>${s.id?'<p class="footnote">这里只保存联系邮箱。要让另一位家长看到这个孩子，请用「家长账号」按人关联，不要在这里改姓名或电话。</p>':`<label class="field">家长姓名<input name="parent_name" maxlength="40" value="${escapeHTML(s.parent_name||'')}"></label><label class="field">电话<input name="phone" type="tel" maxlength="24" value="${escapeHTML(phone)}"></label>`}<label class="field">邮箱<input name="parent_email" type="email" maxlength="80" value="${escapeHTML(s.parent_email||'')}"></label></details>
 <details class="profile-group"><summary>紧急联系人（不是家长）</summary><label class="field">姓名<input name="emergency_name" maxlength="40" value="${escapeHTML(s.emergency_name||'')}"></label><label class="field">关系<input name="emergency_relation" maxlength="40" value="${escapeHTML(s.emergency_relation||'')}"></label><label class="field">电话<input name="emergency_phone" type="tel" maxlength="24" value="${escapeHTML(s.emergency_phone||'')}"></label></details>

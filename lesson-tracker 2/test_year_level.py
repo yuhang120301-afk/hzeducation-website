@@ -84,6 +84,9 @@ class YearLevelTests(unittest.TestCase):
         self.assertEqual(advanced['level_code'], 'K')
         self.assertEqual(advanced['level_calendar'], 'Y1')
         self.assertEqual(pricing.remember_level({}, '幼儿园'), ('K', 2027))
+        self.assertEqual(pricing.remember_level({}, 'Y5', dt.date(2026, 6, 1)), ('Y6', 2027))
+        self.assertEqual(pricing.remember_level({}, 'Y5', dt.date(2027, 6, 1)), ('Y5', 2027))
+        self.assertEqual(pricing.remember_level({}, 'Prep', dt.date(2028, 1, 1)), ('Prep', 2027))
         self.assertEqual(pricing.clean_study_level('kindy'), 'K')
         self.assertEqual(pricing.level_label('K', past=True), 'Prep · 已毕业?')
 

@@ -817,13 +817,15 @@ def annotate(student, on=None):
 
 
 def remember_level(data, grade, today=None):
-    """The value in the form is the 2027 year. Later years are calculated, not stored."""
+    """The form asks for this year's level. Store the 2027 code, shifted back."""
+    today = today or now_local().date()
     code = str(data.get('level_code') or '').strip() or parse_level(grade)
     if code and code not in LEVELS:
         raise ValueError('请选择年级。')
-    if not code:
-        return '', 0
-    return code, ENROL_YEAR
+    if not code or code == 'K':
+        return code, ENROL_YEAR if code else 0
+    stored, _past = move_level(code, ENROL_YEAR - today.year)
+    return stored, ENROL_YEAR
 
 
 def clean_study_level(value):
