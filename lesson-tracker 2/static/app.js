@@ -438,7 +438,7 @@ function studentFold(group, admin){
   const priceNote=singapore?`${account.legacy?`<span class="legacy-badge">单独价格 · ${userHTML(subjectLabel)}</span> `:''}新加坡数学不使用其他科目的价目。新学员 $150.00 / 小时，老学员 $120.00 / 小时，当前默认 ${listText}。这里填这个报名自己的每小时价格，填 0 就是免费。留空并保存，改回默认。`:`${account.legacy?`<span class="legacy-badge">老学员 · ${userHTML(subjectLabel)}</span> `:''}2027 价目 ${listText}。留空并保存，这一科就改回价目。`;
   const price=state.user.role==='owner'&&account.course_type_name?`<form class="legacy-price" data-legacy-form="${account.id}" data-price-default="${singapore?'默认价格':'2027 价目'}"><p class="footnote">${priceNote}</p><label class="field">${userHTML(subjectLabel)} 每小时价格 AUD<input name="hourly" inputmode="decimal" value="${account.custom_hourly_cents==null?'':(account.custom_hourly_cents/100).toFixed(2)}" placeholder="${singapore?'用默认价格':'用 2027 价目'}"></label><button class="btn" type="submit">保存价格</button></form>`:'';
   const teacherView=state.user.role==='teacher';
-  return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>${teacherView?'':`剩余课时 ${fmt(regularHours(account))} ${unitFor(account)}<br>剩余赠送课时 ${fmt(account.gift_balance||0)} ${unitFor(account)}${account.owed_cents?'<br>挂账还欠 '+(typeof cashFmt==='function'?cashFmt(account.owed_cents):'$'+(account.owed_cents/100).toFixed(2)):''}`}</small></div><div class="num">${teacherView?'':accountStatus(account, group)}</div></article>${teacherView?'':price}<ul class="pack-list">${teacherView?'':packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-settle="${account.id}" type="button">退课/停课</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button>${state.user.role==='owner'?`<button class="btn refund-action" data-remove-course="${account.id}" type="button">删除</button>`:''}</p>`:''}`;
+  return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}${courseRateText(account)}<small>${teacherView?'':`剩余课时 ${fmt(regularHours(account))} ${unitFor(account)}<br>剩余赠送课时 ${fmt(account.gift_balance||0)} ${unitFor(account)}${account.owed_cents?'<br>挂账还欠 '+(typeof cashFmt==='function'?cashFmt(account.owed_cents):'$'+(account.owed_cents/100).toFixed(2)):''}`}</small></div><div class="num">${teacherView?'':accountStatus(account, group)}</div></article>${teacherView?'':price}<ul class="pack-list">${teacherView?'':packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-settle="${account.id}" type="button">退课/停课</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button>${state.user.role==='owner'?`<button class="btn refund-action" data-remove-course="${account.id}" type="button">删除</button>`:''}</p>`:''}`;
  }).join('');
  const lessonBody=lesson=>`<div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div>`;
  const lessonRow=lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}">${lessonBody(lesson)}</article>`;
@@ -509,6 +509,11 @@ function leaveModal(person){
   toast('已记为不再上课。');
  });
 }
+function courseRateText(account){
+ if(!state.user || state.user.role!=='owner' || !account || !account.rate_label) return '';
+ const missing=account.rate_label==='未定价';
+ return ` <span class="${missing?'rate-missing':'rate-chip'}">${escapeHTML(account.rate_label)}</span>${account.rate_hint?` <small class="muted">${escapeHTML(account.rate_hint)}</small>`:''}`;
+}
 function studentListCard(group, admin){
  const person=group[0];
  const withdrawn=group.some(account=>account.withdrawn);
@@ -525,7 +530,7 @@ function studentListCard(group, admin){
  const legacy=legacyMark(group);
  const pack=teacherView?null:group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
  const statusText=withdrawn?'退学':(active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课');
- return `<article class="pay-card ${paint.className}" data-open-student="${person.id}"${paint.style?` style="${paint.style}"`:''}><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2>${listed.length?`<ul class="person-courses">${listed.map(account=>`<li>${userHTML([shownLevel(account), account.subject_name||account.course].filter(Boolean).join(' '))} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}</li>`).join('')}</ul>`:`<p class="muted">${userHTML(subjects)}</p>`}<p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div class="card-hours"><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong>${active.length?`<div class="muted">剩余赠送课时</div><strong>${withdrawn?'—':giftBalance}</strong>`:''}</div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">开课</button>`):''}${withdrawn&&state.user.role==='owner'?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</article>`;
+ return `<article class="pay-card ${paint.className}" data-open-student="${person.id}"${paint.style?` style="${paint.style}"`:''}><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2>${listed.length?`<ul class="person-courses">${listed.map(account=>`<li>${userHTML([shownLevel(account), account.subject_name||account.course].filter(Boolean).join(' '))} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}${courseRateText(account)}</li>`).join('')}</ul>`:`<p class="muted">${userHTML(subjects)}</p>`}<p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div class="card-hours"><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong>${active.length?`<div class="muted">剩余赠送课时</div><strong>${withdrawn?'—':giftBalance}</strong>`:''}</div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">开课</button>`):''}${withdrawn&&state.user.role==='owner'?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</article>`;
 }
 const YEAR_LEVEL_ORDER=['Prep','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12'];
 function currentYearLabel(person){
@@ -982,4 +987,37 @@ function editEntryModal(e){
  modal('编辑历史单据',`<div class="form-context">${userHTML(e.student_name)} · ${userHTML(e.course)} · #${e.id}<br>修改会更新余额和相关记录，修改原因仅后台保留。${locked?'<br>已撤销单据可修改日期和备注；请在有效单据中更正数量。':''}</div><label class="field">业务日期<input name="date" type="date" value="${e.lesson_date}" max="${today()}" required></label>${e.kind!=='reversal'?`<label class="field">${e.kind==='credit'?'充值':e.kind==='refund'?'退款':'扣除'}${unit}<input name="amount" type="number" min="${e.kind==='credit'?0:0.01}" max="10000" step="0.01" value="${paid/100}" ${locked?'readonly':''} required></label>`:''}${e.kind==='credit'?`<label class="field">赠送${unit}<input name="gift_amount" type="number" min="0" max="10000" step="0.01" value="${(e.gift_delta||0)/100}" ${locked?'readonly':''} required></label>`:''}${['credit','refund'].includes(e.kind)?paymentFields(e.kind==='refund'):''}<label class="field">单据备注<textarea name="note" maxlength="300">${escapeHTML(e.note)}</textarea></label><label class="field">修改原因（仅后台）<textarea name="reason" required maxlength="250"></textarea></label>`,'保存修改',async data=>{await api('entries/edit',{...data,entry_id:e.id,version:e.version});toast('单据和余额已更新。');});
  const history=document.createElement('details');history.className='form-context';history.innerHTML='<summary>后台修改记录（仅老板）</summary><div class="edit-history-content"></div>';$('#modal-form').insertBefore(history,$('.modal-footer'));history.ontoggle=async()=>{if(!history.open||history.dataset.loaded)return;try{const result=await api('entries/history?id='+e.id);history.querySelector('.edit-history-content').innerHTML=result.edits.map(item=>{const before=JSON.parse(item.before_json),after=JSON.parse(item.after_json);return `<p>${escapeHTML(item.created_at)} · ${userHTML(item.actor_name)}<br>${userHTML(item.reason)}<br>数量：${fmt(Math.abs(before.entry.delta))} → ${fmt(Math.abs(after.entry.delta))} ${unit}<br>金额：${before.cash?cashFmt(before.cash.cash_delta):'未登记'} → ${after.cash?.cash_delta!=null?cashFmt(after.cash.cash_delta):'未登记'}</p>`;}).join('')||'<p>暂无修改记录。</p>';history.dataset.loaded='1';}catch(err){history.querySelector('.edit-history-content').textContent=err.message;}};
  if($('[name=cash_amount]')){$('[name=cash_amount]').required=false;$('[name=cash_amount]').value=e.cash_delta==null?'':Math.abs(e.cash_delta)/100;$('[name=cash_amount]').placeholder='未登记金额可留空';$('[name=payment_method]').value=e.payment_method||'bank';$('[name=reference]').value=e.reference||'';}
+}
+let ratesIncludeLeft=false, ratesSort={key:'student', dir:1}, ratesRows=[];
+function renderRates(){
+ if(!state.user || state.user.role!=='owner'){$('#surface').innerHTML='<div class="panel empty">只有老板可以看单价。</div>'; return;}
+ $('#surface').innerHTML='<div class="panel empty">正在读取单价…</div>';
+ api('unit-prices'+(ratesIncludeLeft?'?include_left=1':'')).then(data=>{
+  if(view!=='rates' || !state.user || state.user.role!=='owner') return;
+  ratesRows=data.rows||[];
+  drawRates();
+ }).catch(error=>{ if(view==='rates') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`; });
+}
+function drawRates(){
+ const keys={student:'student_name', course:'course', teacher:'teacher', minutes:'minutes', hourly:'hourly_cents', lesson:'per_lesson_cents', remaining:'remaining_units', money:'remaining_cents', source:'source'};
+ const rows=[...ratesRows].sort((a,b)=>{
+  const key=keys[ratesSort.key]||'student_name';
+  const left=a[key], right=b[key];
+  const empty=value=>value==null||value==='';
+  if(empty(left)&&empty(right)) return 0;
+  if(empty(left)) return 1;
+  if(empty(right)) return -1;
+  if(typeof left==='number' && typeof right==='number') return (left-right)*ratesSort.dir;
+  return String(left).localeCompare(String(right),'zh')*ratesSort.dir;
+ });
+ const head=(key,label)=>`<th data-rate-sort="${key}">${label}${ratesSort.key===key?(ratesSort.dir>0?' ↑':' ↓'):''}</th>`;
+ $('#surface').innerHTML=`<label class="field"><input id="rates-left" type="checkbox" ${ratesIncludeLeft?'checked':''}> 显示已离开和退学</label>
+ <div class="panel table-wrap"><table class="rate-table"><thead><tr>${head('student','学生')}${head('course','课程')}${head('teacher','老师')}${head('minutes','每节时长')}${head('hourly','单价')}${head('lesson','每节')}${head('remaining','剩余课时')}${head('money','剩余金额')}${head('source','来源')}</tr></thead><tbody>${rows.map(row=>`<tr><td>${userHTML(row.student_name)}</td><td>${userHTML(row.course)} ${typeof typeBadge==='function'?typeBadge(row.course_type):''}</td><td>${userHTML(row.teacher)}</td><td>${escapeHTML(row.minutes_label||'')}</td><td>${row.priced?`<span class="rate-chip">${escapeHTML(row.hourly_label)}</span>`:`<span class="rate-missing">未定价</span>`}${row.hint?`<div class="muted">${escapeHTML(row.hint)}</div>`:''}</td><td>${escapeHTML(row.per_lesson_label||'—')}</td><td>${escapeHTML(row.remaining_label||'')}</td><td>${escapeHTML(row.remaining_money||'—')}</td><td>${row.priced?escapeHTML(row.source):'<span class="rate-missing">未定价</span>'}</td></tr>`).join('')||'<tr><td colspan="9">没有课程。</td></tr>'}</tbody></table></div>`;
+ const box=$('#rates-left');
+ if(box) box.onchange=()=>{ratesIncludeLeft=box.checked; renderRates();};
+ document.querySelectorAll('[data-rate-sort]').forEach(th=>th.onclick=()=>{
+  const key=th.dataset.rateSort;
+  ratesSort=ratesSort.key===key?{key, dir:-ratesSort.dir}:{key, dir:1};
+  drawRates();
+ });
 }
