@@ -18,6 +18,13 @@ function gcalDays(){
  return days;
 }
 function monthStart(day){return (day||weekStart||state.today).slice(0,8)+'01';}
+function shiftMonth(day, direction){
+ const start=monthStart(day);
+ const parts=start.split('-').map(Number);
+ const date=new Date(Date.UTC(parts[0], parts[1]-1+direction, 1));
+ return date.toISOString().slice(0,10);
+}
+/* shiftMonth:end */
 function monthEnd(day){
  const start=monthStart(day);
  const next=start.slice(5,7)==='12'?`${Number(start.slice(0,4))+1}-01-01`:`${start.slice(0,4)}-${String(Number(start.slice(5,7))+1).padStart(2,'0')}-01`;
@@ -256,7 +263,7 @@ function bindWeekButton(id, action){
 function stepCalendar(direction){
  const anchor=gcalDay||weekStart||state.today;
  if(calendarSpan==='day') return focusCalendar(datePlus(anchor, direction));
- if(calendarSpan==='month') return focusCalendar(datePlus(monthStart(anchor), direction>0?32:-1).slice(0,8)+'01');
+ if(calendarSpan==='month') return focusCalendar(shiftMonth(anchor, direction));
  return focusCalendar(datePlus(weekStart, direction*7));
 }
 function focusCalendar(day){
@@ -285,7 +292,7 @@ function bindMiniPicker(){
  miniAnchor=miniAnchor||gcalDay||weekStart||state.today;
  panel.innerHTML=paintMini(miniAnchor);
  toggle.onclick=()=>{const open=panel.hidden; panel.hidden=!open; toggle.setAttribute('aria-expanded', String(open)); if(open){miniAnchor=gcalDay||weekStart||state.today; panel.innerHTML=paintMini(miniAnchor); bindMiniPicker();}};
- panel.querySelectorAll('[data-mini-move]').forEach(button=>button.onclick=event=>{event.stopPropagation(); miniAnchor=datePlus(monthStart(miniAnchor), button.dataset.miniMove==='1'?32:-1).slice(0,8)+'01'; panel.innerHTML=paintMini(miniAnchor); bindMiniPicker(); panel.hidden=false;});
+ panel.querySelectorAll('[data-mini-move]').forEach(button=>button.onclick=event=>{event.stopPropagation(); miniAnchor=shiftMonth(miniAnchor, button.dataset.miniMove==='1'?1:-1); panel.innerHTML=paintMini(miniAnchor); bindMiniPicker(); panel.hidden=false;});
  panel.querySelectorAll('[data-mini-day]').forEach(button=>button.onclick=()=>{panel.hidden=true; toggle.setAttribute('aria-expanded','false'); focusCalendar(button.dataset.miniDay);});
 }
 function renderMonth(){
@@ -438,7 +445,7 @@ async function renderToday(){
   const teachers=(state.teachers||[]).filter(teacher=>teacher.name.toLowerCase().includes(query));
   hits.hidden=false;
   hits.innerHTML=[...students.map(student=>`<button type="button" data-open-student="${student.id}">学生 · ${userHTML(student.name)}</button>`),...teachers.map(teacher=>`<button type="button" data-open-teacher="${teacher.id}">老师 · ${userHTML(teacher.name)}</button>`)].join('')||'<p>没有匹配的老师或学生。</p>';
-  hits.querySelectorAll('[data-open-student]').forEach(button=>button.onclick=()=>{profileId=button.dataset.openStudent;view='profile';render();});
+  hits.querySelectorAll('[data-open-student]').forEach(button=>button.onclick=()=>{if(typeof openDetail==='function') openDetail('/students/'+button.dataset.openStudent);});
   hits.querySelectorAll('[data-open-teacher]').forEach(button=>button.onclick=()=>{teacherFilter=button.dataset.openTeacher;view='schedule';render();});
  };
  document.querySelectorAll('[data-today-done]').forEach(button=>button.onclick=()=>quickCloseModal(lessonById(button.dataset.todayDone)));

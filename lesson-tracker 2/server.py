@@ -23,6 +23,7 @@ import deletion
 import payroll
 import pricing
 import auditlog
+import switches
 import finance
 from urllib.parse import urlsplit, parse_qs
 
@@ -170,6 +171,7 @@ def _create_base_tables(c):
         payroll.schema(c)
         pricing.schema(c)
         auditlog.schema(c)
+        switches.schema(c)
         if demo_seed_allowed():
             seed_portal_cast(c)
         import vouchers
@@ -534,6 +536,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         if path == '/robots.txt':
             return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
+        if re.fullmatch(r'/students/\d+/?', path) or re.fullmatch(r'/teachers/\d+/pay/?', path):
+            path = '/'
         files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/vouchers.js':'vouchers.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
         if path not in files:
             if path.startswith('/api/'):
@@ -588,6 +592,13 @@ class Handler(BaseHTTPRequestHandler):
                     else: result=vouchers.void(c,user,data.get('id'),units)
                     c.commit()
                     return self.response(200,result)
+                if self.path == '/api/students/course/switch/preview':
+                    return self.response(200, switches.quote_switch(c, user, data))
+                if self.path == '/api/students/course/switch':
+                    c.execute('BEGIN IMMEDIATE')
+                    result = switches.apply_switch(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
                 if self.path == '/api/students/course/stop':
                     c.execute('BEGIN IMMEDIATE')
                     result=deletion.stop_course(c,user,data)

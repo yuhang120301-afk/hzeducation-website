@@ -93,8 +93,57 @@ function reloadPlace(){
   return saved;
  }catch(error){return null;}
 }
+function applyRoute(){
+ const path=location.pathname;
+ const student=path.match(/^\/students\/(\d+)\/?$/);
+ const teacher=path.match(/^\/teachers\/(\d+)\/pay\/?$/);
+ if(student){view='profile'; profileId=student[1]; payTeacherId=''; return;}
+ if(teacher){view='pay'; payTeacherId=teacher[1]; return;}
+ payTeacherId='';
+ const requested=new URLSearchParams(location.search).get('view');
+ if(requested) view=requested;
+ else if(view==='profile') view='overview';
+}
+function openDetail(path){
+ sessionStorage.setItem('hz-internal-nav','1');
+ history.pushState({hz:1}, '', path);
+ applyRoute();
+ render();
+}
+let restoreStudentList=false;
+function goBack(parent){
+ if(String(parent).includes('overview')) restoreStudentList=true;
+ let same=false;
+ try{same=!!(document.referrer && new URL(document.referrer).origin===location.origin);}catch(error){}
+ if(same || sessionStorage.getItem('hz-internal-nav')==='1'){history.back(); return;}
+ history.pushState({hz:1}, '', parent);
+ applyRoute();
+ render();
+}
+function backBar(){
+ return `<p class="page-back"><button type="button" class="btn" id="page-back">返回</button></p>`;
+}
+function bindBack(parent){
+ const button=$('#page-back');
+ if(button) button.onclick=()=>goBack(parent);
+}
+function saveListPlace(){
+ try{sessionStorage.setItem('hz-student-list', JSON.stringify({search, studentStatus, studyFilter, y:window.scrollY}));}catch(error){}
+}
+function loadListPlace(){
+ try{
+  const saved=JSON.parse(sessionStorage.getItem('hz-student-list')||'null');
+  if(!saved) return;
+  search=saved.search||'';
+  studentStatus=saved.studentStatus||studentStatus;
+  studyFilter=saved.studyFilter||studyFilter;
+  requestAnimationFrame(()=>window.scrollTo(0, saved.y||0));
+ }catch(error){}
+}
+window.addEventListener('popstate', ()=>{if(state.user) render();});
 function render(){
  if(!state.user)return login();
+ applyRoute();
  const shell=document.querySelector('.shell');
  let place=shell?capturePlace():null;
  if(!place && !usedReloadPlace){
@@ -207,7 +256,7 @@ function studentFold(group, admin){
  const active=group.filter(account=>!account.no_course);
  const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加课程</button>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">删除并归档</button>`:''}</div>`:'';
  const enrolments=active.map(account=>{
-  const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money)).join('')||'<li>还没有课时包。</li>';
+  const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money, account)).join('')||'<li>还没有课时包。</li>';
   const subjectLabel=account.subject_name||account.course||'本科目';
   const price=state.user.role==='owner'&&account.course_type_name?`<form class="legacy-price" data-legacy-form="${account.id}"><p class="footnote">${account.legacy?`<span class="legacy-badge">老学员 · ${userHTML(subjectLabel)}</span> `:''}2027 价目 ${account.list_hourly_cents==null?'还没有':'$'+(account.list_hourly_cents/100).toFixed(2)+' / 小时'}。留空并保存，这一科就改回价目。</p><label class="field">${userHTML(subjectLabel)} 每小时价格 AUD<input name="hourly" inputmode="decimal" value="${account.custom_hourly_cents==null?'':(account.custom_hourly_cents/100).toFixed(2)}" placeholder="用 2027 价目"></label><button class="btn" type="submit">保存价格</button></form>`:'';
   return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}</small></div><div class="num">${accountStatus(account, group)}</div></article>${price}<ul class="pack-list">${packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button><button class="btn" data-relink-course="${account.id}" type="button">把已停课的以后课移过来</button>${state.user.role==='owner'?`<button class="btn refund-action" data-stop-course="${account.id}" type="button">停课/删除这门课</button>`:''}</p>`:''}`;
@@ -215,7 +264,7 @@ function studentFold(group, admin){
  const lessonRow=lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}"><div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div></article>`;
  const payRow=entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${entry.kind==='credit'?'收款':'退款'}<small>${userHTML(entry.note||entry.subject_name||entry.course||'')}</small></div><div class="num">${entryMoney(entry)}<small>${escapeHTML(methods[entry.payment_method]||'')}</small></div></article>`;
  const recentRow=entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${userHTML(entry.student_name)}<small>${userHTML(entry.subject_name||entry.course||'')}</small></div><div class="num">${entry.delta>0?'+':'−'}${fmt(Math.abs(entry.delta))} ${unitFor(entry)}</div></article>`;
- const stoppedRow=account=>`<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b><small>已停课${account.balance?` · 还剩 ${fmt(account.balance)} ${unitFor(account)}`:''}。上课记录和账目仍在。</small></div>${state.user.role==='owner'?`<button class="btn" data-restore-course="${account.id}" type="button">恢复这门课</button>`:''}</article>`;
+ const stoppedRow=account=>`<article class="trow"><div class="grow"><b>${userHTML(account.subject_name||account.course)}</b><small>已停课${account.balance?` · 还剩 ${fmt(account.balance)} ${unitFor(account)}`:''}。上课记录和账目仍在。</small></div></article>`;
  const links=`<p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button> ${state.user.role==='owner'?`<button class="action" data-vouchers="${person.id}" type="button">单据 →</button>`:''}</p>`;
  return `<p class="muted">${userHTML(person.parent_name||'未填家长')} · ${userHTML(person.contact_phone||person.phone||'')}${person.birthday?' · '+escapeHTML(person.birthday):''} ${studyTag(person)}</p>${actions}${profileSection('courses','报名与课时包',active.length?enrolments:'<p>未选课 / 请添加课程</p>',true)}${profileSection('recent','最近课时记录',previewList(recent, recentRow, '还没有这名学生的课时记录。'),true)}${profileSection('lessons','上课记录',lessonTimeline(lessons, lessonRow),true)}${profileSection('payments','收款',previewList(payments, payRow, '还没有收款或退款。'),true)}${profileSection('notes','备注',`<p>${person.notes?userHTML(person.notes):'没有备注。'}</p>${links}`,true)}${stopped.length?profileSection('stopped',`已停课程 (${stopped.length})`,previewList(stopped, stoppedRow, ''),false):''}`;
 }
@@ -232,9 +281,21 @@ function renderStudents(){
   const health=String(person.health_notes||'').trim();
   const legacy=legacyMark(group);
   const pack=group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
-  return `<article class="pay-card t-${tone}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div><div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课'}</strong></div>${admin?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}</article><details class="pay-fold"><summary>查看档案</summary>${studentFold(group, admin)}</details>`;
+  return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div><div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课'}</strong></div>${admin?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}</article>`;
  }).join(''):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
- document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=()=>{const fold=card.nextElementSibling; if(fold&&fold.tagName==='DETAILS') fold.open=!fold.open;});
+ document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; saveListPlace(); openDetail('/students/'+card.dataset.openStudent);});
+ document.querySelectorAll('#student-list [data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
+ document.querySelectorAll('#student-list [data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
+}
+function renderStudentProfile(){
+ const group=studentGroups().find(item=>item.some(student=>String(student.id)===String(profileId)||String(student.profile_id)===String(profileId)));
+ const admin=['owner','admin'].includes(state.user.role);
+ if(!group){$('#surface').innerHTML=`${backBar()}<div class="panel empty">找不到这位学生。</div>`; bindBack('/?view=overview'); return;}
+ $('#surface').innerHTML=`${backBar()}${studentFold(group, admin)}`;
+ bindBack('/?view=overview');
+ bindProfileActions();
+}
+function bindProfileActions(){
  bindProfileSections();
  document.querySelectorAll('[data-delete-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); deleteProfileModal('student',state.students.find(s=>s.id==b.dataset.deleteStudent));});
  document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=event=>{event.stopPropagation(); profileModal(b.dataset.profile);});
@@ -246,15 +307,15 @@ function renderStudents(){
  document.querySelectorAll('[data-refund]').forEach(b=>b.onclick=event=>{event.stopPropagation(); refundModal(b.dataset.refund);});
  document.querySelectorAll('[data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
  document.querySelectorAll('[data-stop-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); stopCourseModal(b.dataset.stopCourse);});
- document.querySelectorAll('[data-restore-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); const account=(state.archived_students||[]).find(s=>s.id==b.dataset.restoreCourse); modal('恢复这门课',`<div class="form-context">${userHTML(account.name)} · ${userHTML(account.subject_name||account.course)}<br>恢复后可以再排课和充值。已上的课和账目都还在。</div>`,'确认恢复',async()=>{await api('profiles/restore',{id:account.id});toast('这门课已恢复。');});});
+ document.querySelectorAll('[data-switch-pack]').forEach(b=>b.onclick=event=>{event.stopPropagation(); switchCourseModal(b.dataset.switchStudent, b.dataset.switchPack);});
  document.querySelectorAll('[data-legacy-form]').forEach(form=>form.onsubmit=async event=>{
   event.preventDefault();
   event.stopPropagation();
   const hourly=new FormData(form).get('hourly');
   try{await api('prices/legacy',{student_id:Number(form.dataset.legacyForm),hourly,clear:!String(hourly||'').trim()}); toast(String(hourly||'').trim()?'价格已保存。':'已改回 2027 价目。'); await refresh();}catch(error){toast(error.message);}
  });
- document.querySelectorAll('[data-history]').forEach(b=>b.onclick=event=>{event.stopPropagation(); selected=b.dataset.history;view='records';render();});
- document.querySelectorAll('[data-vouchers]').forEach(b=>b.onclick=event=>{event.stopPropagation(); voucherStudent=b.dataset.vouchers; view='vouchers'; render();});
+ document.querySelectorAll('[data-history]').forEach(b=>b.onclick=event=>{event.stopPropagation(); selected=b.dataset.history; history.pushState({hz:1},'','/?view=records'); render();});
+ document.querySelectorAll('[data-vouchers]').forEach(b=>b.onclick=event=>{event.stopPropagation(); voucherStudent=b.dataset.vouchers; history.pushState({hz:1},'','/?view=vouchers'); render();});
 }
 function stopCourseModal(id){
  const account=state.students.find(s=>s.id==id);
@@ -272,7 +333,7 @@ function addCourseModal(id){
 function renderRecords(){
  let rows=state.entries.filter(e=>!selected||String(e.student_id)===selected);if(view==='overview')rows=rows.slice(0,5);
  const admin=['owner','admin'].includes(state.user.role);
- $('#records-list').innerHTML=rows.length?`<div class="panel table-wrap"><table><thead><tr><th>日期 / 学生</th><th>类型</th><th>余额变动</th><th>备注</th><th>${admin?'登记人 / 操作':'登记人'}</th></tr></thead><tbody>${rows.map(e=>`<tr><td>${escapeHTML(e.lesson_date)}<div class="muted" style="font-size:12px;margin-top:6px">${userHTML(e.student_name)} · ${userHTML(e.course)}</div></td><td><span class="badge ${e.kind==='lesson'?'low':''}">${{lesson:'上课扣除',credit:'充值'+unitFor(e),refund:'退课退款',reversal:'撤销返还 / 扣回'}[e.kind]}</span>${e.reversed_by?'<div class="muted" style="font-size:12px;margin-top:6px">已撤销</div>':''}</td><td class="${e.delta>0?'positive':'negative'}">${e.delta>0?'+':'−'}${fmt(Math.abs(e.delta))} ${unitFor(e)}</td><td class="note-cell">${userHTML(e.note)||'—'}${creditBreakdown(e)}</td><td>${userHTML(e.actor_name)}${state.user.role==='owner'?`<button class="action" data-edit-entry="${e.id}">编辑单据</button>`:''}${admin&&e.kind!=='reversal'&&!e.reversed_by?`<button class="action" data-reverse="${e.id}">撤销</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="panel empty">暂无课时变动记录。</div>';
+ $('#records-list').innerHTML=rows.length?`<div class="panel table-wrap"><table><thead><tr><th>日期 / 学生</th><th>类型</th><th>余额变动</th><th>备注</th><th>${admin?'登记人 / 操作':'登记人'}</th></tr></thead><tbody>${rows.map(e=>`<tr><td>${escapeHTML(e.lesson_date)}<div class="muted" style="font-size:12px;margin-top:6px">${userHTML(e.student_name)} · ${userHTML(e.course)}</div></td><td><span class="badge ${e.kind==='lesson'?'low':''}">${{lesson:'上课扣除',credit:'充值'+unitFor(e),refund:'退课退款',reversal:'撤销返还 / 扣回',switch:'换课'}[e.kind]||e.kind}</span>${e.reversed_by?'<div class="muted" style="font-size:12px;margin-top:6px">已撤销</div>':''}</td><td class="${e.delta>0?'positive':'negative'}">${e.delta>0?'+':'−'}${fmt(Math.abs(e.delta))} ${unitFor(e)}</td><td class="note-cell">${userHTML(e.note)||'—'}${creditBreakdown(e)}</td><td>${userHTML(e.actor_name)}${state.user.role==='owner'&&e.kind!=='switch'?`<button class="action" data-edit-entry="${e.id}">编辑单据</button>`:''}${admin&&!['reversal','switch'].includes(e.kind)&&!e.reversed_by?`<button class="action" data-reverse="${e.id}">撤销</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="panel empty">暂无课时变动记录。</div>';
  document.querySelectorAll('[data-edit-entry]').forEach(b=>b.onclick=()=>editEntryModal(state.entries.find(e=>e.id==b.dataset.editEntry)));
  document.querySelectorAll('[data-reverse]').forEach(b=>b.onclick=()=>reverseModal(b.dataset.reverse));
 }
@@ -280,7 +341,7 @@ function modal(title, body, submit, onsubmit, danger=false){
  lastFocus=document.activeElement;$('#modal').classList.remove('wide');
  $('#modal-body').innerHTML=`<form id="modal-form" class="modal-inner"><div class="modal-head"><h2 id="modal-title">${title}</h2><button type="button" class="close" aria-label="关闭">×</button></div>${body}<div id="modal-error" class="error" role="alert"></div><div class="modal-footer"><button type="button" class="btn cancel">取消</button><button type="submit" class="btn ${danger?'danger':'primary'}">${submit}</button></div></form>`;
  const close=()=>$('#modal').close();$('.close').onclick=close;$('.cancel').onclick=close;
- $('#modal-form').onsubmit=async e=>{e.preventDefault();const button=e.currentTarget.querySelector('[type=submit]');e.currentTarget.querySelectorAll('button').forEach(b=>b.disabled=true);$('#modal-error').textContent='';try{await onsubmit(Object.fromEntries(new FormData(e.currentTarget)));$('#modal').close();await refresh();}catch(err){$('#modal-error').textContent=err.message;$('#modal-form').querySelectorAll('button').forEach(b=>b.disabled=false);}};
+ $('#modal-form').onsubmit=async e=>{e.preventDefault();const button=e.currentTarget.querySelector('[type=submit]');e.currentTarget.querySelectorAll('button').forEach(b=>b.disabled=true);$('#modal-error').textContent='';try{const outcome=await onsubmit(Object.fromEntries(new FormData(e.currentTarget)));if(outcome==='stay')return;$('#modal').close();await refresh();}catch(err){$('#modal-error').textContent=err.message;const form=$('#modal-form');if(form)form.querySelectorAll('button').forEach(b=>b.disabled=false);}};
  $('#modal').showModal();
 }
 $('#modal').addEventListener('close',()=>lastFocus?.isConnected&&lastFocus.focus({preventScroll:true}));
@@ -359,10 +420,27 @@ function bindProfileFields(){
  none.onchange=()=>{if(none.checked) document.querySelectorAll('[name=photo_homework],[name=photo_class],[name=photo_face]').forEach(box=>{box.checked=false;});};
  document.querySelectorAll('[name=photo_homework],[name=photo_class],[name=photo_face]').forEach(box=>box.onchange=()=>{if(box.checked) none.checked=false;});
 }
-function packLine(batch, money){
+function packLine(batch, money, account){
  const used=((batch.purchased||0)+(batch.gifted||0))-((batch.paid_left||0)+(batch.gift_left||0));
  const price=batch.total_cents!=null?` · 总额 ${money(batch.total_cents)}`:'';
- return `<li>${batch.pack_label?escapeHTML(batch.pack_label):(batch.legacy?'原有课时':escapeHTML(batch.credited_on||'课时包'))}${price} · 购买 ${fmt(batch.purchased||0)} · 赠送 ${fmt(batch.gifted||0)} · 已用 ${fmt(used)} · 还剩 ${fmt((batch.paid_left||0)+(batch.gift_left||0))}</li>`;
+ const left=(batch.paid_left||0)+(batch.gift_left||0);
+ const closed=batch.status==='switched';
+ const button=account && !closed && left>0 && state.user?.role==='owner'?`<button class="btn" type="button" data-switch-pack="${batch.id}" data-switch-student="${account.id}">换课</button>`:'';
+ const credit=batch.leftover_millis?` · 结余 ${money(Math.round(batch.leftover_millis/10))}`:'';
+ return `<li>${batch.pack_label?escapeHTML(batch.pack_label):(batch.legacy?'原有课时':escapeHTML(batch.credited_on||'课时包'))}${closed?' · 已换课':''}${price} · 购买 ${fmt(batch.purchased||0)} · 赠送 ${fmt(batch.gifted||0)} · 已用 ${fmt(used)} · 还剩 ${fmt(left)}${credit} ${button}</li>`;
+}
+function switchCourseModal(studentId, batchId){
+ const account=state.students.find(item=>String(item.id)===String(studentId));
+ const batch=(account?.credit_batches||[]).find(item=>String(item.id)===String(batchId));
+ if(!account||!batch) return;
+ const subjects=(state.subjects||[]).filter(item=>item.active&&['数学','英语'].includes(item.name));
+ const types=(state.course_types||[]).filter(item=>item.active);
+ const levels=yearLevels();
+ modal('换课',`<div class="form-context">${userHTML(account.name)} · ${escapeHTML(batch.pack_label||'课时包')}<br>剩余课时按原价换成新课程。不成整节的金额留作结余，不记成新的收款或退款。</div><label class="field">新科目<select name="subject" required><option value="">请选择</option>${subjects.map(item=>`<option value="${escapeHTML(item.name)}">${escapeHTML(item.name)}</option>`).join('')}</select></label><label class="field">课程类型<select name="course_type_id" required><option value="">请选择</option>${types.map(item=>`<option value="${item.id}">${escapeHTML(item.name)}</option>`).join('')}</select></label><label class="field">计价年级<select name="level" required><option value="">请选择</option>${levels.map(level=>`<option value="${level}" ${account.level_code===level?'selected':''}>${escapeHTML(level)}</option>`).join('')}</select></label><label class="field">任课老师<select name="teacher_id" required><option value="">请选择</option>${(state.teachers||[]).filter(item=>item.active).map(item=>`<option value="${item.id}">${escapeHTML(item.name)}</option>`).join('')}</select></label><label class="field">课时长度<select name="lesson_minutes" required><option value="60">1 小时</option><option value="90">1.5 小时</option><option value="120">2 小时</option><option value="150">2.5 小时</option></select></label><label class="field">手动每节价格 AUD（选填）<input name="manual_price" inputmode="decimal" placeholder="留空则用价目或老学员价"></label>`,'计算',async data=>{
+  const preview=await api('students/course/switch/preview',{...data,batch_id:Number(batchId),student_id:Number(studentId)});
+  modal('确认换课',`<div class="form-context"><p>原课时包：${escapeHTML(preview.old_label)}（${escapeHTML(preview.old_course)}）</p><p>剩余 ${preview.remaining_lessons} 节，剩余价值 ${escapeHTML(preview.remaining_value)}</p><p>新课程：${escapeHTML(preview.new_subject)} ${escapeHTML(preview.new_type)} · ${escapeHTML(preview.teacher_name)} · 每节 ${escapeHTML(preview.new_each)}</p><p>换成 ${preview.new_lessons} 节，结余 ${escapeHTML(preview.leftover)}</p><p>原包会标成已换课并留在记录里。这笔不记成新的收款，也不记成退款。</p></div>`,'确认换课',async()=>{const result=await api('students/course/switch',{...data,batch_id:Number(batchId)}); toast(`已换成 ${result.new_lessons} 节，结余 ${result.leftover}。`); if(result.target_student_id && String(result.target_student_id)!==String(profileId)){sessionStorage.setItem('hz-internal-nav','1'); history.pushState({hz:1},'','/students/'+result.target_student_id);} });
+  return 'stay';
+ });
 }
 function moneyAud(cents){return '$'+((cents||0)/100).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
 async function showOffer(query, host){
