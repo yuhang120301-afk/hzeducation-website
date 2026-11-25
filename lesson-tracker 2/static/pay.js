@@ -63,9 +63,11 @@ function paintPay(data){
 }
 let profileIdSafe=()=>typeof profileId!=='undefined'?profileId:'';
 function renderProfile(){
- const sid=profileIdSafe();
- const student=(state.students||[]).find(item=>String(item.id)===String(sid));
+ const routeId=profileIdSafe();
+ const group=typeof studentGroupById==='function'?studentGroupById(routeId):null;
+ const student=group?(group.find(item=>String(item.id)===String(routeId))||group[0]):(state.students||[]).find(item=>String(item.id)===String(routeId));
  if(!student){$('#surface').innerHTML='<div class="panel empty">请从学生列表点开一位学生。</div>';return;}
+ const sid=student.id;
  const ids=new Set((state.students||[]).concat(state.archived_students||[]).filter(item=>student.profile_id&&item.profile_id===student.profile_id).map(item=>String(item.id)));
  if(!ids.size) ids.add(String(sid));
  const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(item=>ids.has(String(item.id))) && !(typeof lessonIsCancelled==='function' && lessonIsCancelled(lesson)));
