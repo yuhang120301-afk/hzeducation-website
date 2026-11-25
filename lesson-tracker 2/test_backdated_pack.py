@@ -100,6 +100,8 @@ class BackdatedPackTests(unittest.TestCase):
         self.assertIn('还剩几节', source)
         self.assertIn('总节数', source)
         self.assertIn('还剩赠送几节', source)
+        self.assertIn("data.gift_remaining=typed?typed.value:'0'", source)
+        self.assertIn('giftLeft.value=gift.value', source)
         self.assertNotIn('赠送金额', source)
         self.assertIn('不算今天的新收款', source)
 
@@ -150,6 +152,32 @@ class BackdatedPackTests(unittest.TestCase):
             self.assertEqual(c.execute('''SELECT COALESCE(SUM(cash.cash_delta),0) FROM cash_entries cash
                 JOIN ledger l ON l.id=cash.ledger_id WHERE l.student_id=?''', (sid,)).fetchone()[0], 100000)
             self.assertEqual(finance.monthly(c, owner, '2026-11')['money_received_cents'], 0)
+
+    def test_a_gift_typed_before_the_new_field_existed_is_not_wiped(self):
+        with server.connect() as c:
+            uid = c.execute("INSERT INTO users(phone,name,password,role) VALUES('0499100201','Helen','x','admin')").lastrowid
+            c.execute('INSERT INTO organization_owners(user_id) VALUES(?)', (uid,))
+            owner = {'id': uid, 'role': 'owner'}
+            parent = c.execute("INSERT INTO users(phone,name,password,role) VALUES('0499100203','家长','x','parent')").lastrowid
+            profile = c.execute("INSERT INTO student_profiles(name) VALUES('Ann')").lastrowid
+            sid = c.execute("INSERT INTO students(name,course,parent_id,profile_id,balance) VALUES('Ann','数学',?,?,0)",
+                (parent, profile)).lastrowid
+            c.commit()
+        with server.connect() as c:
+            server.Handler.record(Entry(), c, owner, {
+                'student_id': sid, 'kind': 'credit', 'backdated': 'on', 'date': '2026-09-08',
+                'amount': '20', 'remaining': '12', 'gift_amount': '1', 'cash_amount': '2000',
+                'payment_method': 'bank', 'payment_status': 'paid', 'request_id': uuid.uuid4().hex,
+            })
+            batch = c.execute('SELECT gifted, gift_left, paid_left FROM credit_batches WHERE student_id=?', (sid,)).fetchone()
+            self.assertEqual((batch['gifted'], batch['gift_left'], batch['paid_left']), (100, 100, 1200))
+            note = c.execute("SELECT note FROM ledger WHERE student_id=? AND kind='credit'", (sid,)).fetchone()['note']
+            self.assertIn('还剩赠送 1 节', note)
+            audit = c.execute("SELECT summary FROM audit_log WHERE summary LIKE '%还剩赠送%'").fetchone()
+            self.assertIn('还剩赠送 1', audit['summary'])
+            cash = c.execute('''SELECT COALESCE(SUM(cash.cash_delta),0) FROM cash_entries cash
+                JOIN ledger l ON l.id=cash.ledger_id WHERE l.student_id=?''', (sid,)).fetchone()[0]
+            self.assertEqual(cash, 200000)
 
 
 if __name__ == '__main__':
