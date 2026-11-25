@@ -250,6 +250,8 @@ def apply_switch(c, user, data):
         credit_batches.move(c, inn_id, new_id, units, 0)
     credit_batches.finish(c, inn_id)
     c.execute('UPDATE credit_batches SET switched_to=? WHERE id=?', (new_id, batch['id']))
+    import timeline
+    timeline.record(c, user, source['id'], 'switch', f"换课 {source['course']} → {choice['subject']}")
     auditlog.hint(c, f"换课：{source['name']} {preview['old_label']} → {label}，{preview['new_lessons']} 节，结余 {preview['leftover']}")
     audit_id = auditlog.finish(c, user)
     return {**preview, 'new_batch_id': new_id, 'target_student_id': target['id'], 'audit_id': audit_id}

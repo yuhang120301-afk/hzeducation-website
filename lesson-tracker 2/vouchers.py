@@ -300,6 +300,9 @@ def void(c, user, voucher_id, units):
             c.execute('UPDATE students SET archived=0 WHERE id=?', (student['id'],))
         c.execute("UPDATE vouchers SET status='void' WHERE id=?", (row['id'],))
         _event(c, row['id'], user, '作废', '停课单据作废' + ('，课程已恢复' if student and student['archived'] else ''))
+        import timeline
+        if row['student_id']:
+            timeline.record(c, user, row['student_id'], 'void', f"作废单据 {row['number']}")
         return {'ok': True}
     original = c.execute('SELECT * FROM ledger WHERE id=?', (row['ledger_id'],)).fetchone()
     if not original:
@@ -323,6 +326,8 @@ def void(c, user, voucher_id, units):
         accounting.record_cash(c, lid, -cash['cash_delta'], cash['payment_method'], note, user['id'])
     c.execute("UPDATE vouchers SET status='void', reversal_ledger_id=? WHERE id=?", (lid, row['id']))
     _event(c, row['id'], user, '作废', note)
+    import timeline
+    timeline.record(c, user, original['student_id'], 'void', f"作废单据 {row['number']}")
     return {'ok': True, 'reversal_id': lid}
 
 
@@ -333,6 +338,9 @@ def attach_reversal(c, user, ledger_id, reversal_id):
         return
     c.execute("UPDATE vouchers SET status='void', reversal_ledger_id=? WHERE id=?", (reversal_id, row['id']))
     _event(c, row['id'], user, '作废', '从账本撤销')
+    import timeline
+    if row['student_id']:
+        timeline.record(c, user, row['student_id'], 'void', f"作废单据 {row['number']}")
 
 
 def _public(row, actor):
@@ -346,7 +354,7 @@ def _public(row, actor):
 def search(c, user, student_id=None, kind=None, status=None, start=None, end=None, query=None):
     _owner(user)
     sql = '''SELECT v.*, u.name actor_name FROM vouchers v
-        LEFT JOIN users u ON u.id=v.created_by WHERE NOT (v.kind='stop' AND v.status='void')'''
+        LEFT JOIN users u ON u.id=v.created_by WHERE 1=1'''
     args = []
     if student_id:
         sql += ' AND v.student_id=?'

@@ -48,8 +48,13 @@ def counts(c, sid):
         AND NOT EXISTS (SELECT 1 FROM ledger r WHERE r.reversal_of=ledger.id)''', (sid,)).fetchone()['n'] if sid else 0
     paid = refunded = 0
     if sid and has(c, 'cash_entries'):
+        void_sql = ''
+        if has(c, 'vouchers'):
+            void_sql = " AND NOT EXISTS (SELECT 1 FROM vouchers v WHERE v.status='void' AND (v.ledger_id=l.id OR v.reversal_ledger_id=l.id))"
         for row in c.execute('''SELECT cash.cash_delta FROM cash_entries cash
-            JOIN ledger l ON l.id=cash.ledger_id WHERE l.student_id=?''', (sid,)):
+            JOIN ledger l ON l.id=cash.ledger_id
+            WHERE l.student_id=?
+              AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=l.id)''' + void_sql, (sid,)):
             if row['cash_delta'] > 0:
                 paid += row['cash_delta']
             elif row['cash_delta'] < 0:

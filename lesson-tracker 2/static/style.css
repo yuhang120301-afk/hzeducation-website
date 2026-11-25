@@ -133,6 +133,7 @@
 .pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer}
 .pay-card h2{margin:0;font-size:22px}
 .legacy-badge{display:inline-block;margin-left:8px;background:#F8F3E4;color:#8A6D1F;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600;vertical-align:middle}
+.course-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}.course-tabs button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;min-height:40px;font-weight:650;color:var(--ink)}.course-tabs button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
 .profile-section{margin-top:18px}
 .profile-section summary{cursor:pointer;font-weight:700;font-size:18px}
 .profile-section:not([open]) .profile-section-body{display:none}

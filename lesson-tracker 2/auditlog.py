@@ -31,6 +31,7 @@ RANK = {
     'credit_movements': 95,
     'cash_entries': 95,
     'voucher_events': 96,
+    'profile_events': 97,
 }
 PRIMARY = {
     'students': ('id',),
@@ -41,6 +42,7 @@ PRIMARY = {
     'credit_movements': ('ledger_id', 'batch_id'),
     'cash_entries': ('ledger_id',),
     'voucher_events': ('id',),
+    'profile_events': ('id',),
     'lessons': ('id',),
     'lesson_students': ('lesson_id', 'student_id'),
     'lesson_reports': ('lesson_id', 'student_id'),

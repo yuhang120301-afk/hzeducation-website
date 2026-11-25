@@ -177,6 +177,8 @@ def _create_base_tables(c):
             seed_portal_cast(c)
         import vouchers
         vouchers.schema(c)
+        import timeline
+        timeline.schema(c)
 
 def seed_portal_cast(c):
     """Demo teachers and students from the approved mockups. Additive and skipped once recorded."""
@@ -534,29 +536,49 @@ class Handler(BaseHTTPRequestHandler):
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
                 shells=profiles.course_shells(c, students)
+                staff=user['role'] in ('owner','admin')
                 archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
+                voided_students=[s for s in students if s['archived'] and s.get('voided')] if staff else []
+                withdrawn_ids=set()
+                if staff and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
+                    withdrawn_ids={row['profile_id'] for row in c.execute('''SELECT DISTINCT s.profile_id FROM profile_audit a
+                        JOIN students s ON s.id=a.student_id
+                        WHERE a.action='archived' AND s.profile_id IS NOT NULL''')}
+                withdrawn_students=[]
+                for person in students:
+                    if person.get('profile_id') in withdrawn_ids:
+                        card=dict(person)
+                        card['withdrawn']=True
+                        withdrawn_students.append(card)
+                if not staff:
+                    withdrawn_students=[]
                 students=[s for s in students if not s['archived']]+shells
+                if user['role']=='owner':
+                    deletion.annotate_blockers(c, [person for person in students if not person.get('no_course')])
                 if user['role']!='owner':
-                    for person in students+archived_students:
+                    for person in students+archived_students+voided_students+withdrawn_students:
                         person.pop('helen_original', None)
                         person.pop('origin_override', None)
                         person.pop('created_on', None)
                 entry_condition=condition
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
-                entries = [dict(x) for x in c.execute('SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,pack.total_cents pack_cents,r.id reversed_by FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN subjects sb ON sb.id=s.subject_id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id LEFT JOIN credit_batches pack ON pack.ledger_id=l.id'+entry_condition+' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC',params)]
+                entries = [dict(x) for x in c.execute('''SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,pack.total_cents pack_cents,r.id reversed_by,
+                    CASE WHEN EXISTS (SELECT 1 FROM vouchers v WHERE v.status='void' AND (v.ledger_id=l.id OR v.reversal_ledger_id=l.id)) THEN 1 ELSE 0 END voided_payment
+                    FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN subjects sb ON sb.id=s.subject_id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id LEFT JOIN credit_batches pack ON pack.ledger_id=l.id'''+entry_condition+' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC',params)]
                 if user['role']=='teacher':
                     entries=[e for e in entries if e['kind']=='lesson']
                     for e in entries:
                         for key in ('cash_delta','payment_method','reference','pack_cents','request_id','reversal_of'):
                             e.pop(key, None)
                 if user['role']=='parent':
-                    entries=[e for e in entries if e['kind'] in ('credit','refund') and not e['reversed_by']]
+                    entries=[e for e in entries if e['kind'] in ('credit','refund') and not e['reversed_by'] and not e.get('voided_payment')]
                     for e in entries:
                         for key in ('request_id','reversal_of','version'):e.pop(key,None)
-                for person in students+archived_students:
+                for person in students+archived_students+voided_students+withdrawn_students:
                     person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
-                return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
+                import timeline
+                return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'profile_events':timeline.for_staff(c) if staff else [],'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         if path == '/robots.txt':
             return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
         student_page = re.fullmatch(r'/students/\d+(?:/lessons/\d+)?/?', path)
@@ -854,6 +876,8 @@ class Handler(BaseHTTPRequestHandler):
         c.execute('INSERT OR IGNORE INTO profile_parents(profile_id, user_id) VALUES(?,?)', (profile_id, pid))
         type_id, subject_id = teaching.resolve_catalog(c, data, None, course)
         c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=?,course_type_id=?,subject_id=?,course_note=?,level_code=?,level_year=? WHERE id=?',(birthday,grade,notes,billing_unit,type_id,subject_id,course,level_code,level_year,sid))
+        import timeline
+        timeline.record(c, user, sid, 'course_added', f'添加课程 {course}')
         c.commit()
         return self.response(201,{'ok':True,'student_id':sid})
 
@@ -915,6 +939,9 @@ class Handler(BaseHTTPRequestHandler):
             vouchers.attach_reversal(c,user,reversal_of,lid)
         elif kind in ('credit','refund'):
             vouchers.issue_ledger(c,user,lid)
+        if kind=='credit' and not reversal_of:
+            import timeline
+            timeline.record(c, user, sid, 'top_up', f"充值 {student['course']}")
         c.commit()
         return self.response(201,{'ok':True,**breakdown})
 
