@@ -98,6 +98,7 @@ DEFAULT_COURSE_TYPES = ('一对一', '一对二', '小班课')
 DEFAULT_SUBJECTS = ('数学', '英语', '科学', '物理', '化学', '中文', '写作', '高数', '中数')
 VCE_SUBJECTS = ('VCE 中数', 'VCE 低数', 'VCE 高数')
 SINGAPORE_SUBJECT = '新加坡数学'
+SINGAPORE_TEACHER = '这位老师还不能教新加坡数学。请先在老师资料里勾选新加坡数学。'
 COMBO_SUBJECT = '数学 + 英语'
 OFFERED_SUBJECTS = ('数学', '英语', *VCE_SUBJECTS, SINGAPORE_SUBJECT, COMBO_SUBJECT)
 OFFERED_TYPES = ('一对一', '一对二', '小班课')
@@ -749,9 +750,8 @@ def save_lesson(c,user,data,units,text_value):
     if subject_name and subject_name['name'] == SINGAPORE_SUBJECT:
         if not type_name or type_name['name'] not in ('一对一', '小班课'):
             raise ValueError('新加坡数学只有一对一和小班课。')
-        boss = c.execute('''SELECT 1 FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id WHERE t.id=?''', (teacher_id,)).fetchone()
-        if not boss:
-            raise ValueError('新加坡数学只由 Helen 授课。')
+        if not may_teach_singapore(c, teacher_id):
+            raise ValueError(SINGAPORE_TEACHER)
     start=datetime_value(data.get('starts_at'))
     end=datetime_value(data.get('ends_at'))
     if end<=start or end-start>dt.timedelta(hours=12):
@@ -802,9 +802,8 @@ def save_lesson(c,user,data,units,text_value):
     if subject_name and subject_name['name'] == SINGAPORE_SUBJECT:
         if not type_name or type_name['name'] not in ('一对一', '小班课'):
             raise ValueError('新加坡数学只有一对一和小班课。')
-        boss = c.execute('''SELECT 1 FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id WHERE t.id=?''', (teacher_id,)).fetchone()
-        if not boss:
-            raise ValueError('新加坡数学只由 Helen 授课。')
+        if not may_teach_singapore(c, teacher_id):
+            raise ValueError(SINGAPORE_TEACHER)
     if lesson_id:
         if old['status']!='scheduled':
             c.execute('INSERT INTO report_edits(lesson_id,actor_id,payload) VALUES(?,?,?)',(lesson_id,user['id'],json.dumps({'action':'owner_schedule_correction','before':dict(old),'after':data},ensure_ascii=False)))
@@ -1099,6 +1098,31 @@ def duty_value(data):
     if len(text)>60:
         raise ValueError('职责最多 60 个字。')
     return text or None
+
+def teacher_subject_names(c, teacher_id):
+    row = c.execute('SELECT subject, subjects FROM teachers WHERE id=?', (teacher_id,)).fetchone()
+    if not row:
+        return []
+    names = []
+    if row['subject']:
+        names.extend(part.strip() for part in str(row['subject']).replace('，', '、').split('、') if part.strip())
+    raw = row['subjects'] if 'subjects' in row.keys() else '[]'
+    try:
+        stored = json.loads(raw or '[]')
+    except (TypeError, json.JSONDecodeError):
+        stored = []
+    if isinstance(stored, list):
+        names.extend(str(item).strip() for item in stored if str(item).strip())
+    return [canonical_subject(name) for name in names]
+
+
+def may_teach_singapore(c, teacher_id):
+    """The boss can always teach it. Any other teacher needs the subject ticked."""
+    if c.execute('''SELECT 1 FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id
+            WHERE t.id=?''', (teacher_id,)).fetchone():
+        return True
+    return SINGAPORE_SUBJECT in teacher_subject_names(c, teacher_id)
+
 
 def subject_values(data,text_value):
     raw=data.get('subjects')
