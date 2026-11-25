@@ -13,6 +13,7 @@ import calendar
 import csv
 import datetime as dt
 import io
+import logging
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import accounting
@@ -188,12 +189,21 @@ def rule_on(rules, day):
 
 
 def minutes_between(starts, ends):
-    start = dt.datetime.fromisoformat(starts)
-    end = dt.datetime.fromisoformat(ends)
+    try:
+        start = dt.datetime.fromisoformat(str(starts))
+        end = dt.datetime.fromisoformat(str(ends))
+    except (TypeError, ValueError):
+        return 0
     return max(0, int((end - start).total_seconds() // 60))
 
 
 def mul_div(value, numerator, denominator):
+    try:
+        value = int(value or 0)
+        numerator = int(numerator or 0)
+        denominator = int(denominator or 0)
+    except (TypeError, ValueError):
+        return 0
     if denominator <= 0:
         return 0
     return (value * numerator + denominator // 2) // denominator
@@ -215,19 +225,31 @@ def indexed_fee_millis(c, ledger_id):
             fees = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if not fees:
+        if not isinstance(fees, list) or not fees:
             continue
         before = c.execute('''SELECT COALESCE(SUM(-paid - gift),0) FROM credit_movements
             WHERE batch_id=? AND ledger_id<? AND (paid<0 OR gift<0)''', (move['batch_id'], ledger_id)).fetchone()[0]
-        index = int(before) // 100
-        taken = ((-move['paid'] if move['paid'] < 0 else 0) + (-move['gift'] if move['gift'] < 0 else 0)) // 100
+        try:
+            index = int(before or 0) // 100
+            paid = int(move['paid'] or 0)
+            gift = int(move['gift'] or 0)
+        except (TypeError, ValueError):
+            return None
+        taken = ((-paid if paid < 0 else 0) + (-gift if gift < 0 else 0)) // 100
         if taken <= 0:
             continue
-        used = True
+        piece = 0
         for step in range(taken):
             slot = index + step
-            if 0 <= slot < len(fees):
-                total += int(fees[slot])
+            if slot < 0 or slot >= len(fees) or fees[slot] is None:
+                # A missing slot means this schedule cannot price the lesson. The caller uses 金额 ÷（付费 + 赠送）.
+                return None
+            try:
+                piece += int(fees[slot])
+            except (TypeError, ValueError):
+                return None
+        used = True
+        total += piece
     return total if used else None
 
 
@@ -244,14 +266,22 @@ def fee_for_ledger(c, ledger_id, amount):
     known = True
     paid_units = gift_units = 0
     for move in moves:
-        paid = -move['paid'] if move['paid'] < 0 else 0
-        gift = -move['gift'] if move['gift'] < 0 else 0
+        try:
+            paid_raw = int(move['paid'] or 0)
+            gift_raw = int(move['gift'] or 0)
+            purchased = int(move['purchased'] or 0)
+            gifted = int(move['gifted'] or 0)
+        except (TypeError, ValueError):
+            known = False
+            continue
+        paid = -paid_raw if paid_raw < 0 else 0
+        gift = -gift_raw if gift_raw < 0 else 0
         paid_units += paid
         gift_units += gift
         taken = paid + gift
         if taken <= 0:
             continue
-        pool = (move['purchased'] or 0) + (move['gifted'] or 0)
+        pool = purchased + gifted
         cash = move['cash_delta']
         # A paid package splits its cash across paid and gift lessons. A pure gift, with no cash, stays 0.
         if cash is None or pool <= 0:

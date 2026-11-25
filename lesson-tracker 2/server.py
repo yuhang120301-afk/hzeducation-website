@@ -583,6 +583,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+                except Exception:
+                    logging.exception('GET /api/pay failed')
+                    return self.response(500,{'error':'工资暂时算不出来，请稍后重试。'})
         if path == '/api/today':
             with connect() as c:
                 user=self.current(c)
