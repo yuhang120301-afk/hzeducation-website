@@ -31,6 +31,7 @@ class MonthlyTests(unittest.TestCase):
             self.assertEqual(report['month'], '2026-11')
             self.assertEqual(report['money_received_cents'], 0)
             self.assertEqual(report['teacher_pay_cents'], 0)
+            self.assertEqual(report['cost_cents'], 0)
             self.assertEqual(report['forfeit_units'], 0)
             self.assertTrue(any('不一致' in item for item in report['exceptions']))
 

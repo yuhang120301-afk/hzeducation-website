@@ -13,7 +13,7 @@ os.environ['LESSON_SECURE_COOKIE'] = '0'
 
 PORT = '8786'
 SIDEBAR = (
-    'today', 'schedule', 'overview', 'pay', 'finance', 'vouchers',
+    'today', 'schedule', 'overview', 'pay', 'finance', 'expenses', 'vouchers',
     'share', 'feedback', 'accounting', 'prices', 'audit', 'setup',
 )
 SETTINGS = (

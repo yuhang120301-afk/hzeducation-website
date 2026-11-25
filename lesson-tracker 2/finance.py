@@ -140,6 +140,7 @@ def monthly(c, user, month):
         'outstanding_units': outstanding,
         'outstanding_value_cents': value,
         'teacher_pay_cents': report['teacher_pay_cents'],
+        'cost_cents': report['operating_cost_cents'],
         'forfeit_units': report['forfeit_units'],
         'receivable_cents': __import__('receivables').total_owed(c),
         'exceptions': exceptions,

@@ -94,6 +94,8 @@ def schema(c):
             c.execute(f'ALTER TABLE {table} ADD COLUMN shared INTEGER NOT NULL DEFAULT 0')
     seed_if_needed(c)
     apply_helen_percent(c)
+    import expenses
+    expenses.schema(c)
 
 
 def seed_if_needed(c):
@@ -431,6 +433,8 @@ def schedule_cost(amount, cadence, eff_from, eff_to, start, end):
 
 
 def costs_for(c, start, end, shared_only=False):
+    import expenses
+    expenses.materialize(c)
     details = []
     total = 0
     shared_sql = ' AND shared=1' if shared_only else ''
