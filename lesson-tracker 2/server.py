@@ -65,6 +65,30 @@ def phone_value(raw):
         raise ValueError('请输入完整手机号，可包含国家区号。')
     return phone
 
+def _units_or_zero(raw, label):
+    text = str(raw if raw is not None else '').strip()
+    if text in ('',):
+        raise ValueError(f'请填写{label}。')
+    if text in ('0', '0.0', '0.00'):
+        return 0
+    try:
+        return units(raw)
+    except ValueError:
+        raise ValueError(f'{label}必须是 0 到 10000 之间的数。')
+
+
+def _consume_prior_hours(c, user, student_id, credit_ledger_id, day, used, request_id):
+    """Hours already taught before this system. No lesson row and no teacher pay."""
+    batch = c.execute('SELECT id FROM credit_batches WHERE ledger_id=?', (credit_ledger_id,)).fetchone()
+    if not batch:
+        raise ValueError('没有找到这次补录的课时包。')
+    use_id = c.execute('''INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id)
+        VALUES(?,0,'lesson',?,?,?,?)''', (
+        student_id, day, '补录已用课时，没有对应课程', user['id'], request_id + '-used')).lastrowid
+    credit_batches.move(c, use_id, batch['id'], -used, 0)
+    credit_batches.finish(c, use_id)
+
+
 def units(raw):
     try:
         n = Decimal(str(raw))
@@ -978,6 +1002,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.response(200,{'ok':True,'duplicate':True})
         reversal_of = None
         cash=None
+        backdated = False
+        unpaid = False
         if self.path == '/api/reverse':
             original = c.execute('SELECT * FROM ledger WHERE id=?',(int(data['entry_id']),)).fetchone()
             if not original or original['kind']=='reversal':
@@ -998,11 +1024,25 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('记录类型无效。')
             if kind=='credit' and data.get('product'):
                 data=pricing.normalize_purchase(c,user,data)
-            delta = (credit_batches.zero_units(data.get('amount'),units)+credit_batches.zero_units(data.get('gift_amount',0),units)) if kind=='credit' else -units(data.get('amount'))
+            backdated = kind=='credit' and data.get('backdated') in (True, 1, '1', 'true', 'on', 'yes')
             day = dt.date.fromisoformat(str(data.get('date',''))).isoformat()
             if day > teaching.now_local().date().isoformat():
                 raise ValueError('不能登记尚未发生的上课或充值记录。')
+            if backdated and day >= teaching.now_local().date().isoformat():
+                raise ValueError('收钱日期要早于今天，钱记在原来的那个月。')
+            if backdated and str(data.get('payment_status') or 'paid') in ('unpaid', '挂账'):
+                raise ValueError('补录以前的包是已经收过的钱，不能再挂账。')
+            if backdated:
+                total_units = units(data.get('amount'))
+                prior_used = total_units - _units_or_zero(data.get('remaining'), '还剩几节')
+                if prior_used < 0:
+                    raise ValueError('还剩几节不能多于总节数。')
+                data['gift_amount'] = 0
+                data['backdated_used'] = prior_used
+            delta = (credit_batches.zero_units(data.get('amount'),units)+credit_batches.zero_units(data.get('gift_amount',0),units)) if kind=='credit' else -units(data.get('amount'))
             note = str(data.get('note','')).strip()
+            if backdated:
+                note = (note + ' · ' if note else '') + '补录以前的包'
             if len(note)>300:
                 raise ValueError('备注不能超过 300 个字。')
             unpaid = kind=='credit' and str(data.get('payment_status') or 'paid') in ('unpaid', '挂账')
@@ -1035,9 +1075,11 @@ class Handler(BaseHTTPRequestHandler):
             vouchers.attach_reversal(c,user,reversal_of,lid)
         elif kind in ('credit','refund'):
             vouchers.issue_ledger(c,user,lid)
+        if backdated and int(data.get('backdated_used') or 0):
+            _consume_prior_hours(c, user, sid, lid, day, int(data['backdated_used']), request_id)
         if kind=='credit' and not reversal_of:
             import timeline
-            timeline.record(c, user, sid, 'top_up', '挂账充值，钱还没到' if unpaid else f"充值 {student['course']}")
+            timeline.record(c, user, sid, 'top_up', '补录以前的包' if backdated else ('挂账充值，钱还没到' if unpaid else f"充值 {student['course']}"))
         c.commit()
         return self.response(201,{'ok':True,**breakdown})
 
