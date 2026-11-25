@@ -588,9 +588,12 @@ def price_for(c, student, day=None):
     if subject == COMBO_SUBJECT:
         if override is not None:
             return override
+        level = stored_level(dict(student)) or COMBO_LEVEL
+        if level not in PRIMARY_CLASS_LEVELS:
+            return None
         table = table_on(c, on.isoformat())
         rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
-        band = matching_row(rows, COMBO_PRODUCT, COMBO_LEVEL)
+        band = matching_row(rows, 'term', level)
         return band['hourly_cents'] if band else None
     info = legacy_price(c, student, on)
     if info.get('custom_hourly_cents') is not None:
