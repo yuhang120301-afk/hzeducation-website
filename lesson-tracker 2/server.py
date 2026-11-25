@@ -830,8 +830,10 @@ class Handler(BaseHTTPRequestHandler):
         if parent:
             pid = parent['id']
         else:
-            password = str(data.get('password') or '')
-            if phone_raw and not 10 <= len(password) <=128:
+            password = str(data.get('password') or '').strip()
+            if phone_raw and not password:
+                password = phone
+            elif phone_raw and not 10 <= len(password) <=128:
                 raise ValueError('新家长的初始密码需为 10–128 位。')
             if not phone_raw:
                 password = secrets.token_urlsafe(18)
