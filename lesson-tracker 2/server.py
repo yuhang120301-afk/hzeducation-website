@@ -540,10 +540,16 @@ class Handler(BaseHTTPRequestHandler):
                 archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
                 voided_students=[s for s in students if s['archived'] and s.get('voided')] if staff else []
                 withdrawn_ids=set()
-                if staff and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
-                    withdrawn_ids={row['profile_id'] for row in c.execute('''SELECT DISTINCT s.profile_id FROM profile_audit a
-                        JOIN students s ON s.id=a.student_id
-                        WHERE a.action='archived' AND s.profile_id IS NOT NULL''')}
+                if staff:
+                    profiles.ensure_enrolment_columns(c)
+                    withdrawn_ids={row['id'] for row in c.execute("SELECT id FROM student_profiles WHERE status='withdrawn'")}
+                    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
+                        for row in c.execute('''SELECT profile_id, action FROM (
+                            SELECT s.profile_id, a.action, ROW_NUMBER() OVER (PARTITION BY s.profile_id ORDER BY a.id DESC) n
+                            FROM profile_audit a JOIN students s ON s.id=a.student_id
+                            WHERE s.profile_id IS NOT NULL AND a.action IN ('archived','reinstated')
+                        ) WHERE n=1 AND action='archived' '''):
+                            withdrawn_ids.add(row['profile_id'])
                 withdrawn_students=[]
                 for person in students:
                     if person.get('profile_id') in withdrawn_ids:
@@ -663,9 +669,14 @@ class Handler(BaseHTTPRequestHandler):
                     result=deletion.stop_course(c,user,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/profiles/delete','/api/profiles/restore'):
+                if self.path in ('/api/profiles/delete','/api/profiles/restore','/api/profiles/reinstate'):
                     c.execute('BEGIN IMMEDIATE')
-                    result=deletion.restore(c,user,data) if self.path.endswith('/restore') else deletion.remove(c,user,data)
+                    if self.path.endswith('/reinstate'):
+                        result=deletion.reinstate_student(c,user,data)
+                    elif self.path.endswith('/restore'):
+                        result=deletion.restore(c,user,data)
+                    else:
+                        result=deletion.remove(c,user,data)
                     c.commit()
                     return self.response(200,result)
                 if self.path == '/api/backup':

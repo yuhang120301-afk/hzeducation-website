@@ -49,6 +49,10 @@ def ensure_enrolment_columns(c):
             c.execute(f'ALTER TABLE student_profiles ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0')
     if 'study_status' not in cols:
         c.execute("ALTER TABLE student_profiles ADD COLUMN study_status TEXT NOT NULL DEFAULT 'studying'")
+    if 'status' not in cols:
+        c.execute("ALTER TABLE student_profiles ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+    if 'withdrawn_on' not in cols:
+        c.execute("ALTER TABLE student_profiles ADD COLUMN withdrawn_on TEXT NOT NULL DEFAULT ''")
 
 def fields(data):
     birthday=str(data.get('birthday','')).strip()
@@ -108,14 +112,20 @@ def require_admin(user):
         raise AccessError('只有老板或管理员可以编辑学生档案。')
 
 def profile_withdrawn(c, profile_id):
-    """A whole student was archived from the profile action, not by stopping each course."""
+    """A whole student was archived, and has not since been reinstated."""
     if not profile_id:
         return False
+    ensure_enrolment_columns(c)
+    status = c.execute('SELECT status FROM student_profiles WHERE id=?', (profile_id,)).fetchone()
+    if status and status['status'] == 'withdrawn':
+        return True
     if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
         return False
-    return bool(c.execute('''SELECT 1 FROM profile_audit a
+    latest = c.execute('''SELECT a.action FROM profile_audit a
         JOIN students s ON s.id=a.student_id
-        WHERE s.profile_id=? AND a.action='archived' LIMIT 1''', (profile_id,)).fetchone())
+        WHERE s.profile_id=? AND a.action IN ('archived','reinstated')
+        ORDER BY a.id DESC LIMIT 1''', (profile_id,)).fetchone()
+    return bool(latest and latest['action'] == 'archived')
 
 
 def student(c,data):

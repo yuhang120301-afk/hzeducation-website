@@ -380,7 +380,7 @@ function studentFold(group, admin){
  const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
  const methods=typeof paymentNames==='object'?paymentNames:{};
  const active=group.filter(account=>!account.no_course&&!account.archived&&!account.voided);
- const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加课程</button>${state.user.role==='owner'&&!withdrawn?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">删除并归档</button>`:''}</div>`:'';
+ const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加课程</button>${state.user.role==='owner'&&!withdrawn?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">退学</button>`:''}${state.user.role==='owner'&&withdrawn?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</div>`:'';
  const enrolments=active.map(account=>{
   const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money, account)).join('')||'<li>还没有课时包。</li>';
   const subjectLabel=account.subject_name||account.course||'本科目';
@@ -435,7 +435,7 @@ function studentListCard(group, admin){
  const legacy=legacyMark(group);
  const pack=teacherView?null:group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
  const statusText=withdrawn?'退学':(active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课');
- return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong></div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}</article>`;
+ return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong></div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}${withdrawn&&state.user.role==='owner'?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</article>`;
 }
 const YEAR_LEVEL_ORDER=['Prep','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12'];
 function currentYearLabel(person){
@@ -501,7 +501,8 @@ function renderLessonRecord(){
 function bindProfileActions(){
  bindProfileSections();
  document.querySelectorAll('[data-open-lesson]').forEach(button=>button.onclick=event=>{event.preventDefault(); event.stopPropagation(); openDetail('/students/'+profileId+'/lessons/'+button.dataset.openLesson);});
- document.querySelectorAll('[data-delete-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); deleteProfileModal('student',state.students.find(s=>s.id==b.dataset.deleteStudent));});
+ document.querySelectorAll('[data-delete-student]').forEach(b=>b.onclick=event=>{event.stopPropagation(); const person=(state.students||[]).concat(state.withdrawn_students||[]).find(s=>s.id==b.dataset.deleteStudent); deleteProfileModal('student', person);});
+ document.querySelectorAll('[data-reinstate]').forEach(b=>b.onclick=async event=>{event.stopPropagation(); try{await api('profiles/reinstate',{id:Number(b.dataset.reinstate)}); toast('已复学。保留的余额和记录都还在。'); studyFilter='studying'; await refresh();}catch(error){toast(error.message);}});
  document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=event=>{event.stopPropagation(); profileModal(b.dataset.profile);});
  document.querySelectorAll('[data-guardian]').forEach(b=>b.onclick=event=>{event.stopPropagation(); guardianModal(b.dataset.guardian);});
  document.querySelectorAll('[data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
@@ -777,9 +778,35 @@ function needsRenewal(s){return regularHours(s)<300;}
 function balanceSplit(s){return `<span class="credit-split">${unitFor(s)} ${fmt(regularHours(s))} · 赠送${unitFor(s)} ${fmt(s.gift_balance||0)}</span>`;}
 function creditBreakdown(e){if(!e.split_known)return '';return `<small class="credit-split">${unitFor(e)} ${signedUnits(e.paid_delta)} · 赠送${unitFor(e)} ${signedUnits(e.gift_delta)}${e.gift_void?` · ${e.gift_void>0?'作废赠课':'恢复赠课'} ${fmt(Math.abs(e.gift_void))}`:''}</small>`;}
 
+function withdrawCourses(person){
+ const id=person&&person.profile_id;
+ const rows=(state.students||[]).concat(state.archived_students||[], state.voided_students||[]).filter(account=>account.profile_id===id && !account.no_course);
+ const seen=new Set();
+ return rows.filter(account=>{if(seen.has(account.id)||account.voided) return false; seen.add(account.id); return true;});
+}
 function deleteProfileModal(kind,item){
  if(state.user.role!=='owner')return;
- if(kind==='student'){modal('删除并归档学生',`<div class="form-context"><strong>${userHTML(item.name)}</strong><br>归档后从日常学生列表和新排课选项中移除。所有科目的课时、赠送课时和历史记录保留，已有排课不会自动取消。<br>老板可在已归档学生中恢复。</div>`,'确认归档',async()=>{await api('profiles/delete',{kind,id:item.id});toast('学生已归档，可在已归档学生中恢复。');},true);return;}
+ if(kind==='student'){
+  const courses=withdrawCourses(item);
+  const lines=courses.length?courses.map(account=>{
+   const hours=Number(account.balance||0);
+   if(hours<=0) return `<p>${userHTML(account.subject_name||account.course)} · 没有余额</p>`;
+   return `<fieldset class="form-context"><legend>${userHTML(account.subject_name||account.course)} · 余额 ${fmt(hours)} ${unitFor(account)}</legend><label class="field">余额怎么处理<select name="reason_${account.id}" required><option value="">请选择</option><option value="refund">退款</option><option value="keep">保留余额</option><option value="void">作废</option></select></label><label class="field">退款金额 AUD（选退款时填写）<input name="refund_${account.id}" inputmode="decimal" placeholder="0.00"></label></fieldset>`;
+  }).join(''):'<p>没有还在读的课程。退学仍会取消以后的课。</p>';
+  modal('退学',`<div class="form-context"><strong>${userHTML(item.name)}</strong><br>退学后出现在「退学」名单里。以后的课和重复排课会取消。有余额的课必须选择退款、保留余额或作废。作废的余额不是收入。复学时保留的余额还在。</div>${lines}`,'确认退学',async data=>{
+   const payload=courses.filter(account=>Number(account.balance||0)>0).map(account=>{
+    const reason=data['reason_'+account.id];
+    const raw=String(data['refund_'+account.id]||'').trim();
+    const refund_cents=reason==='refund'&&raw?Math.round(Number(raw)*100):0;
+    if(reason==='refund'&&raw&&!Number.isFinite(Number(raw))) throw new Error('请填写退款金额。');
+    return {student_id:account.id, reason, refund_cents};
+   });
+   await api('profiles/delete',{kind,id:item.id,courses:payload});
+   toast('已退学。可以在退学名单里找到，也能复学。');
+   studyFilter='withdrawn';
+  },true);
+  return;
+ }
  const type={student:'学生',teacher:'老师',admin:'管理员'}[kind];
  modal('删除'+type+'档案',`<div class="form-context"><strong>${userHTML(item.name)}</strong><br>仅可删除没有课时余额、课程或业务记录的档案。${kind==='student'?'会删除这位学生名下所有空白科目，家长账号保留。':'删除后该账号无法登录。'}<br>删除后无法恢复，请确认不是仍需使用的档案。</div>`,'确认删除',async()=>{await api('profiles/delete',{kind,id:item.id});toast('档案已删除。');},true);
 }
