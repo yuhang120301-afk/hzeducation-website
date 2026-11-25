@@ -197,9 +197,22 @@ async function renderMonth(){
   ['还剩的课时', ((data.outstanding_units||0)/100).toFixed(2)+' · '+money(data.outstanding_value_cents)],
   ['老师工资', money(data.teacher_pay_cents)],
   ['作废余额', ((data.forfeit_units||0)/100).toFixed(2)+' 课时'],
+  ['挂账应收', money(data.receivable_cents)],
  ];
  const problems=(data.exceptions||[]).map(item=>`<li>${escapeHTML(item)}</li>`).join('');
  $('#surface').innerHTML=`${backBar()}<div class="mock-top"><div><h1 class="mock-title">月度对账</h1><p class="mock-sub">${escapeHTML(data.month||month)}</p></div></div><div class="sums">${lines.map(([name,value])=>`<div class="card"><div class="k">${name}</div><div class="n">${value}</div></div>`).join('')}</div><section class="panel" style="margin-top:18px;padding:18px"><h2>对不上的</h2>${problems?`<ul>${problems}</ul>`:'<p class="muted">这个月对得上。</p>'}</section>`;
+ bindBack('/?view=finance');
+}
+async function renderReceivable(){
+ $('#surface').innerHTML='<div class="panel empty">正在读取挂账…</div>';
+ let data;
+ try{ data=await api('receivables'); }
+ catch(error){ if(view==='receivable') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`; return; }
+ if(view!=='receivable') return;
+ const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
+ const rows=data.rows||[];
+ $('#surface').innerHTML=`${backBar()}<div class="mock-top"><div><h1 class="mock-title">挂账 / 欠款</h1><p class="mock-sub">还欠 ${money(data.owed_cents)}。课时已经可以用，这里的钱不是收入。</p></div></div>${rows.length?rows.map(row=>`<article class="trow"><div class="grow"><b>${userHTML(row.student_name)}</b> ${userHTML(row.course)}<small>${escapeHTML(row.pack_label)} · 从 ${escapeHTML(row.since||'')} 挂账</small></div><div class="num">还欠 ${money(row.owed_cents)}<small>总额 ${money(row.total_cents)} · 已收 ${money(row.paid_cents)}</small></div><button class="btn" type="button" data-collect-pack="${row.batch_id}" data-collect-student="${row.student_id}">收款</button></article>`).join(''):'<div class="panel empty">现在没有挂账。</div>'}`;
+ document.querySelectorAll('[data-collect-pack]').forEach(button=>button.onclick=()=>{ if(typeof collectPackModal==='function') collectPackModal(button.dataset.collectStudent, button.dataset.collectPack); });
  bindBack('/?view=finance');
 }
 async function renderFinance(){

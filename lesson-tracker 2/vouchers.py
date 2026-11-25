@@ -7,7 +7,7 @@ import datetime as dt
 
 from teaching import AccessError, now_local
 
-PREFIX = {'credit': 'CZ', 'refund': 'TF', 'stop': 'TK', 'adjust': 'TZ'}
+PREFIX = {'credit': 'CZ', 'refund': 'TF', 'stop': 'TK', 'adjust': 'TZ', 'receipt': 'SK'}
 STATUS = {'pending': '待审核', 'approved': '已审核', 'void': '已作废'}
 BACKFILL_KEY = 'voucher_backfill_v1'
 
@@ -109,7 +109,7 @@ def issue_ledger(c, user, ledger_id, approved=False):
     if c.execute('SELECT 1 FROM vouchers WHERE ledger_id=?', (ledger_id,)).fetchone():
         return None
     entry = c.execute('SELECT * FROM ledger WHERE id=?', (ledger_id,)).fetchone()
-    if not entry or entry['kind'] not in ('credit', 'refund') or entry['reversal_of']:
+    if not entry or entry['kind'] not in ('credit', 'refund', 'receipt') or entry['reversal_of']:
         return None
     student = c.execute('SELECT name, course FROM students WHERE id=?', (entry['student_id'],)).fetchone()
     cash = c.execute('SELECT cash_delta, payment_method FROM cash_entries WHERE ledger_id=?', (ledger_id,)).fetchone()
@@ -346,7 +346,7 @@ def attach_reversal(c, user, ledger_id, reversal_id):
 def _public(row, actor):
     item = dict(row)
     item['status_label'] = STATUS.get(row['status'], row['status'])
-    item['kind_label'] = {'credit': '充值', 'refund': '退费', 'stop': '退课', 'adjust': '调整'}.get(row['kind'], row['kind'])
+    item['kind_label'] = {'credit': '充值', 'refund': '退费', 'stop': '退课', 'adjust': '调整', 'receipt': '挂账收款'}.get(row['kind'], row['kind'])
     item['actor_name'] = actor or ''
     return item
 

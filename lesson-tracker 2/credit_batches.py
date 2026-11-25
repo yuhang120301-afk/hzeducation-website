@@ -36,6 +36,8 @@ def schema(c):
         for s in c.execute('SELECT id,balance FROM students').fetchall():
             c.execute("INSERT INTO credit_batches(student_id,purchased,gifted,paid_left,gift_left,credited_on,legacy) VALUES(?,?,0,?,0,'',1)",(s['id'],s['balance'],s['balance']))
         c.execute("INSERT INTO app_meta VALUES('credit_batches_v1','1')")
+    import receivables
+    receivables.schema(c)
 
 def enrich(c,students):
     for s in students:
@@ -44,6 +46,7 @@ def enrich(c,students):
         s['paid_balance']=sum(b['paid_left'] for b in batches)
         s['gift_balance']=sum(b['gift_left'] for b in batches)
         s['legacy_balance']=sum(b['paid_left'] for b in batches if b['legacy'])
+        s['owed_cents']=sum(max(0, int(b.get('receivable_cents') or 0) - int(b.get('paid_cents') or 0)) for b in batches if b.get('payment_status')=='unpaid')
 
 def move(c,lid,bid,paid,gift,voided=0):
     b=c.execute('SELECT * FROM credit_batches WHERE id=?',(bid,)).fetchone()
@@ -93,6 +96,10 @@ def apply(c,lid,kind,data,units,original=None):
         amount=units(data.get('amount'))
         if not b or amount>b['paid_left']:raise ValueError('退款课时不能超过该批次剩余付费课时，赠送课时不可退款。')
         move(c,lid,bid,-amount,-b['gift_left'],b['gift_left'])
+    elif kind=='reversal' and original and original['kind']=='receipt':
+        import receivables
+        receivables.reverse_receipt(c, original['id'])
+        return finish(c, lid)
     elif kind=='reversal':
         movements=c.execute('SELECT * FROM credit_movements WHERE ledger_id=?',(original['id'],)).fetchall()
         if movements:
