@@ -124,12 +124,15 @@ class RolePortalTests(unittest.TestCase):
         child = state['students'][0]['id']
         self.assertEqual(parent.page('/students/%s' % child)[0], 403)
         self.assertEqual(parent.page('/students/1')[0], 403)
+        self.assertEqual(parent.page('/students/%s/lessons/1' % child)[0], 403)
         owner = Client()
         owner.login('0400000000', 'TeacherDemo2026!')
         self.assertEqual(owner.page('/students/%s' % child)[0], 200)
+        self.assertEqual(owner.page('/students/%s/lessons/1' % child)[0], 200)
         teacher = Client()
         teacher.login('0400000011', 'TutorDemo2026!')
         self.assertEqual(teacher.page('/students/%s' % child)[0], 200)
+        self.assertEqual(teacher.page('/students/%s/lessons/1' % child)[0], 200)
 
     def test_teacher_and_parent_pages_match_the_boss_layout(self):
         try:
