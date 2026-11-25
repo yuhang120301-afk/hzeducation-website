@@ -174,11 +174,34 @@ function renderTeachers(){
  document.querySelectorAll('[data-teacher-edit]').forEach(b=>b.onclick=()=>teacherModal(state.teachers.find(t=>t.id==b.dataset.teacherEdit)));
  document.querySelectorAll('[data-teacher-status]').forEach(b=>b.onclick=()=>{const t=state.teachers.find(t=>t.id==b.dataset.teacherStatus);modal(t.active?'离职 / 停用':'恢复在职',`<div class="form-context">${userHTML(t.name)}<br>${t.active?'停用后无法登录或接受新排课。已有课程保留，请另行调整未完成课程。':'恢复后可使用原账号登录并接受排课。'}</div>`,'确认',async()=>{await api('teachers/status',{teacher_id:t.id,active:!t.active});toast('老师状态已更新。');},!!t.active);});
 }
+function canonicalTeacherSubject(name){
+ const text=String(name||'').trim();
+ if(!text) return '';
+ const key=text.toLocaleLowerCase();
+ const aliases={数学:'数学',maths:'数学',math:'数学',mathematics:'数学',英语:'英语',english:'英语',科学:'科学',science:'科学',物理:'物理',化学:'化学',中文:'中文',写作:'写作',writing:'写作',高数:'高数',中数:'中数'};
+ return aliases[key]||aliases[text]||text;
+}
+function teacherSubjectChoices(teacher){
+ const current=(teacher?.subjects||[]).map(canonicalTeacherSubject).filter(Boolean);
+ const choices=[];
+ ['数学','英语','物理','科学','学业跟踪辅导',...current].forEach(name=>{if(name && !choices.includes(name)) choices.push(name);});
+ return choices;
+}
 function teacherModal(existing=null){
- const t=existing&&existing.id?existing:null,managed=t&&t.account_role!=='teacher',selected=t?.subjects||[];
- const choices=['数学','英语'];
+ const t=existing&&existing.id?existing:null,managed=t&&t.account_role!=='teacher',selected=(t?.subjects||[]).map(canonicalTeacherSubject);
+ const choices=teacherSubjectChoices(t);
  const dutyField=`<label class="field">职责（选填）<input name="duty" maxlength="60" value="${escapeHTML(t?.duty||'')}" placeholder="如：联合校长"></label>`;
- modal(t?'编辑老师':'添加任课老师',`${managed?'<div class="form-context">此账号兼任管理职务，这里修改教学科目和职责。</div>':`<label class="field">老师姓名<input name="name" required maxlength="40" value="${escapeHTML(t?.name||'')}"></label><label class="field">登录手机号<input name="phone" type="tel" required maxlength="24" value="${escapeHTML(t?.phone||'')}"></label><label class="field">${t?'重置密码（选填）':'初始密码'}<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" ${t?'':'required'}><small>${t?'留空保留原密码；修改手机号或密码后需重新登录。':'至少 10 位，请单独告知老师。'}</small></label>`}${dutyField}<fieldset class="student-picker"><legend>教学科目 · 可多选</legend>${choices.map(name=>`<label><input type="checkbox" name="subjects" value="${escapeHTML(name)}" ${selected.includes(name)?'checked':''}>${userHTML(name)}</label>`).join('')}</fieldset><p class="footnote">更多科目可在课程与地点设置中添加。</p>`,'保存老师',async data=>{data.subjects=[...document.querySelectorAll('[name=subjects]:checked')].map(e=>e.value);delete data.subject;await api(t?'teachers/edit':'teachers',{...data,teacher_id:t?.id});toast('老师资料已保存。');});
+ modal(t?'编辑老师':'添加任课老师',`${managed?'<div class="form-context">此账号兼任管理职务，这里修改教学科目和职责。</div>':`<label class="field">老师姓名<input name="name" required maxlength="40" value="${escapeHTML(t?.name||'')}"></label><label class="field">登录手机号<input name="phone" type="tel" required maxlength="24" value="${escapeHTML(t?.phone||'')}"></label><label class="field">${t?'重置密码（选填）':'初始密码'}<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" ${t?'':'required'}><small>${t?'留空保留原密码；修改手机号或密码后需重新登录。':'至少 10 位，请单独告知老师。'}</small></label>`}${dutyField}<fieldset class="student-picker"><legend>教学科目 · 可多选</legend>${choices.map(name=>`<label><input type="checkbox" name="subjects" value="${escapeHTML(name)}" ${selected.includes(name)?'checked':''}>${userHTML(name)}</label>`).join('')}</fieldset><label class="field">其他科目<input name="extra_subjects" maxlength="80" placeholder="用逗号或顿号分隔，如：化学、高数"></label><p class="footnote">已有科目默认勾选。只有取消勾选才会去掉。新科目写在「其他科目」。</p>`,'保存老师',async data=>{
+  const extra=String(data.extra_subjects||'').split(/[,、，]/).map(canonicalTeacherSubject).filter(Boolean);
+  const checked=[...document.querySelectorAll('#modal [name=subjects]:checked')].map(box=>canonicalTeacherSubject(box.value)).filter(Boolean);
+  const subjects=[];
+  [...checked,...extra].forEach(name=>{if(!subjects.includes(name)) subjects.push(name);});
+  data.subjects=subjects;
+  delete data.subject;
+  delete data.extra_subjects;
+  await api(t?'teachers/edit':'teachers',{...data,teacher_id:t?.id});
+  toast('老师资料已保存。');
+ });
 }
 function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
  if(!bookableStudents().length){toast('请先添加学生，再安排课程。');if(['owner','admin'].includes(state.user.role)&&!state.students.length)return studentModal();return;}
