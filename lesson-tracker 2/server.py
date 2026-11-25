@@ -570,14 +570,9 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     params=parse_qs(urlsplit(self.path).query)
                     result=payroll.report(c,user,params.get('period',['week'])[0],params.get('date',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])
-                    if user['role']=='teacher':
-                        asked=params.get('teacher_id',[''])[0]
-                        own_ids={teacher['teacher_id'] for teacher in result['teachers']}
-                        if asked and int(asked) not in own_ids:
-                            raise teaching.AccessError('只能查看自己的工资。')
                     if path.endswith('.csv'):
                         raw=params.get('teacher_id',[''])[0]
-                        blob=payroll.csv_bytes(result,int(raw) if raw else None)
+                        blob=payroll.csv_bytes(result, payroll.export_id_for(user, result, raw))
                         filename=f'teacher-pay-{result["start"]}-to-{result["end"]}.csv'
                         return self.response(200,blob,content_type='text/csv; charset=utf-8',extra=[('Content-Disposition',f'attachment; filename="{filename}"')])
                     return self.response(200,result)

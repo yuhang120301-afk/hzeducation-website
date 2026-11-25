@@ -532,9 +532,17 @@ def report(c, user, period, day, start, end):
     by_teacher = {}
     for rule in rules:
         by_teacher.setdefault(rule['teacher_id'], []).append(rule)
-    lessons = build_lessons(c, confirmed_rows(c, start, end), by_teacher)
+    rows = confirmed_rows(c, start, end)
+    if own_teacher:
+        rows = [row for row in rows if row['teacher_id'] == own_teacher['id']]
+    lessons = build_lessons(c, rows, by_teacher)
     teachers = []
-    for teacher in c.execute('''SELECT t.id, u.name, u.active FROM teachers t JOIN users u ON u.id=t.user_id ORDER BY u.name, t.id'''):
+    teacher_sql = '''SELECT t.id, u.name, u.active FROM teachers t JOIN users u ON u.id=t.user_id'''
+    teacher_params = ()
+    if own_teacher:
+        teacher_sql += ' WHERE t.id=?'
+        teacher_params = (own_teacher['id'],)
+    for teacher in c.execute(teacher_sql + ' ORDER BY u.name, t.id', teacher_params):
         own = [lesson for lesson in lessons if lesson['teacher_id'] == teacher['id']]
         applicable = [rule_on(by_teacher.get(teacher['id'], []), lesson['date']) for lesson in own]
         teachers.append({'teacher_id': teacher['id'], 'name': teacher['name'], 'active': teacher['active'],
@@ -733,6 +741,15 @@ def aud(cents):
 
 def hours(minutes):
     return f'{minutes / 60:.2f}'
+
+
+def export_id_for(user, result, asked):
+    """Teachers cannot choose another teacher's export. The query is ignored."""
+    if user['role'] == 'teacher':
+        return result['teachers'][0]['teacher_id'] if result.get('teachers') else None
+    if asked in (None, ''):
+        return None
+    return int(asked)
 
 
 def csv_bytes(data, teacher_id=None):

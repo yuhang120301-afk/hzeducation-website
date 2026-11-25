@@ -81,6 +81,75 @@ class TeacherPayPackTests(unittest.TestCase):
         self.assertEqual(null_line['fee_cents'], payroll.mul_div(100, 100000, 1000))
         self.assertIsNone(result['partner'])
 
+    def test_a_teacher_cannot_see_another_teachers_pay(self):
+        with server.connect() as c:
+            owner = c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'admin')",
+                (('044' + uuid.uuid4().hex)[:15], 'Boss', 'x')).lastrowid
+            c.execute('INSERT INTO organization_owners(user_id) VALUES(?)', (owner,))
+            parent = c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'parent')",
+                (('044' + uuid.uuid4().hex)[:15], '家长', 'x')).lastrowid
+            profile = c.execute("INSERT INTO student_profiles(name) VALUES('Child')").lastrowid
+            sid = c.execute("INSERT INTO students(name,course,parent_id,profile_id,balance) VALUES('Child','数学',?,?,0)",
+                (parent, profile)).lastrowid
+
+            def teacher(name):
+                user_id = c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'admin')",
+                    (('044' + uuid.uuid4().hex)[:15], name, 'x')).lastrowid
+                teacher_id = c.execute("INSERT INTO teachers(user_id,subject) VALUES(?,?)", (user_id, '数学')).lastrowid
+                c.execute('''INSERT INTO pay_rules(teacher_id,rule_type,percent_bp,hourly_floor_cents,hourly_rate_cents,effective_from,created_by)
+                    VALUES(?,?,?,?,?,?,?)''', (teacher_id, 'percent', 4000, None, None, '2020-01-01', owner))
+                return user_id, teacher_id
+
+            helen_user, helen_id = teacher('Helen')
+            vincent_user, vincent_id = teacher('Vincent')
+            credit = c.execute('''INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id)
+                VALUES(?,1000,'credit','2026-09-01','补录以前的包',?,?)''', (sid, owner, uuid.uuid4().hex)).lastrowid
+            batch = c.execute('''INSERT INTO credit_batches(student_id,ledger_id,purchased,gifted,paid_left,gift_left,credited_on,total_cents,unit_fees)
+                VALUES(?,?,1000,100,800,100,'2026-09-01',110000,'')''', (sid, credit)).lastrowid
+            c.execute('INSERT INTO credit_movements(ledger_id,batch_id,paid,gift,voided) VALUES(?,?,?,?,0)', (credit, batch, 1000, 100))
+            c.execute("INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by) VALUES(?,110000,'bank','',?)", (credit, owner))
+
+            def taught(teacher_id, hour, pay):
+                day = '2026-11-24'
+                lesson = c.execute('''INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,status,created_by,request_id)
+                    VALUES(?,?,?,?,100,'教室','completed',?,?)''',
+                    (teacher_id, '数学', f'{day}T{hour}:00', f'{day}T{hour+1}:00', owner, uuid.uuid4().hex)).lastrowid
+                ledger = c.execute('''INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id)
+                    VALUES(?,?,'lesson',?,'上课',?,?)''', (sid, -100, day, owner, uuid.uuid4().hex)).lastrowid
+                c.execute('INSERT INTO credit_movements(ledger_id,batch_id,paid,gift,voided) VALUES(?,?,?,0,0)', (ledger, batch, -100))
+                c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,ledger_id,updated_by)
+                    VALUES(?,?,100,'上过','','',?,?)''', (lesson, sid, ledger, owner))
+                return lesson
+
+            helen_lesson = taught(helen_id, 16, 0)
+            vincent_lesson = taught(vincent_id, 18, 0)
+            c.commit()
+            helen = c.execute("SELECT id, name, phone, 'teacher' AS role, ? AS teacher_id FROM users WHERE id=?", (helen_id, helen_user)).fetchone()
+            boss = c.execute("SELECT id, name, phone, 'owner' AS role, NULL AS teacher_id FROM users WHERE id=?", (owner,)).fetchone()
+            own = payroll.report(c, helen, 'week', '2026-11-25', None, None)
+            everyone = payroll.report(c, boss, 'week', '2026-11-25', None, None)
+            import teaching
+            schedule = teaching.state_for(c, {'id': helen_user, 'role': 'teacher', 'name': 'Helen', 'phone': 'x', 'teacher_id': helen_id})
+        self.assertEqual([row['teacher_id'] for row in own['teachers']], [helen_id])
+        self.assertEqual([lesson['lesson_id'] for lesson in own['teachers'][0]['lessons']], [helen_lesson])
+        self.assertNotIn('Vincent', str(own))
+        self.assertEqual(own['partner'], None)
+        self.assertEqual(own['rules'], [])
+        self.assertEqual(own['students'], [])
+        boss_ids = {lesson['lesson_id'] for teacher in everyone['teachers'] for lesson in teacher['lessons']}
+        self.assertEqual(boss_ids, {helen_lesson, vincent_lesson})
+        export_id = payroll.export_id_for(helen, own, str(vincent_id))
+        self.assertEqual(export_id, helen_id)
+        blob = payroll.csv_bytes(own, export_id).decode('utf-8')
+        self.assertIn('Helen', blob)
+        self.assertNotIn('Vincent', blob)
+        self.assertEqual({lesson['teacher_id'] for lesson in schedule['lessons']}, {helen_id})
+        source = Path(__file__).resolve().parent.joinpath('static', 'pay.js').read_text()
+        self.assertIn("if(!form) return", source)
+        self.assertIn("if(state.user.role!=='teacher') bindPaySettings();", source)
+        page = Path(__file__).resolve().parent.joinpath('static', 'index.html').read_text()
+        self.assertIn('/pay.js?v=20261125pay', page)
+
 
 if __name__ == '__main__':
     unittest.main()
