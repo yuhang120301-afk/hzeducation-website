@@ -229,7 +229,7 @@ dialog.dock-right{margin:0 0 0 auto;height:100%;max-height:100%;max-width:min(48
 .voucher-sheet dd{margin:0}
 .voucher-actions{display:flex;flex-wrap:wrap;gap:8px}
 tr[data-voucher]{cursor:pointer}
-@media print{.sidebar,.topbar,.demo-banner,.voucher-tools,.voucher-actions,.nav-toggle,.nav-backdrop{display:none !important}.shell{display:block}.main{margin-left:0 !important}.voucher-sheet{box-shadow:none;border:0}}
+@media print{.sidebar,.topbar,.demo-banner,.page-head,.page-back,.voucher-tools,.voucher-actions,.nav-toggle,.nav-backdrop{display:none !important}.shell{display:block}.main{margin-left:0 !important}.voucher-sheet{box-shadow:none;border:0}}
 @media(min-width:761px){
  .shell{display:grid;grid-template-columns:228px minmax(0,1fr)}
  .sidebar{position:sticky;top:0;left:auto;width:auto;height:100vh;height:100dvh;max-height:100dvh;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;z-index:1}

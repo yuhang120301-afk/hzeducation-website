@@ -97,12 +97,15 @@ function applyRoute(){
  const path=location.pathname;
  const student=path.match(/^\/students\/(\d+)\/?$/);
  const teacher=path.match(/^\/teachers\/(\d+)\/pay\/?$/);
- if(student){view='profile'; profileId=student[1]; payTeacherId=''; return;}
- if(teacher){view='pay'; payTeacherId=teacher[1]; return;}
+ const receipt=path.match(/^\/receipts\/(\d+)\/?$/);
+ if(student){view='profile'; profileId=student[1]; payTeacherId=''; receiptId=''; return;}
+ if(teacher){view='pay'; payTeacherId=teacher[1]; receiptId=''; return;}
+ if(receipt){view='receipt'; receiptId=receipt[1]; payTeacherId=''; return;}
  payTeacherId='';
+ receiptId='';
  const requested=new URLSearchParams(location.search).get('view');
  if(requested) view=requested;
- else if(view==='profile') view='overview';
+ else if(view==='profile'||view==='receipt') view='overview';
 }
 function showView(name){
  const next='/?view='+encodeURIComponent(name);
