@@ -45,9 +45,38 @@ console.log('ok');
 '''
 
 
+SCHEDULE = r'''
+const fs = require('fs');
+const src = fs.readFileSync('static/teaching.js', 'utf8');
+if (src.includes('lessonColorPicker')) { console.error('picker still offered'); process.exit(1); }
+if (!src.includes('lessonColorLive()')) { console.error('live swatch missing'); process.exit(1); }
+if (!src.includes('name="color"')) { console.error('saved colour missing'); process.exit(1); }
+if (!src.includes("addEventListener('change', syncTeacherColor)")) { console.error('teacher change does not recolour'); process.exit(1); }
+const start = src.indexOf('function teacherToneName');
+const end = src.indexOf('function lessonCard');
+if (start < 0 || end < start) process.exit(2);
+const api = eval(src.slice(start, end) + '\n;({teacherToneName, teacherLessonColor});');
+const pairs = [['Helen','helen','green'],['Vincent','vincent','blue'],['Angela','angela','pink'],['Kelsey','kelsey','purple'],['Ethan','ethan','gray'],['Christina','christina','yellow'],['New Teacher','other','gray']];
+for (const [name, tone, color] of pairs) {
+  if (api.teacherToneName(name) !== tone) { console.error(name); process.exit(1); }
+  if (api.teacherLessonColor[tone] !== color) { console.error(color); process.exit(1); }
+}
+const cardStart = src.indexOf('function lessonCard');
+const cardEnd = src.indexOf('function lessonColorLive');
+const card = src.slice(cardStart, cardEnd);
+if (!card.includes("tone-'+tone")) { console.error('week card ignores the teacher'); process.exit(1); }
+console.log('ok');
+'''
+
+
 class CardColourTests(unittest.TestCase):
     def test_two_teachers_split_the_card(self):
         checked = subprocess.run(['node', '-e', CHECK], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr or checked.stdout)
+        self.assertIn('ok', checked.stdout)
+
+    def test_new_lesson_takes_the_teacher_colour(self):
+        checked = subprocess.run(['node', '-e', SCHEDULE], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(checked.returncode, 0, checked.stderr or checked.stdout)
         self.assertIn('ok', checked.stdout)
 
