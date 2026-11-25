@@ -1,6 +1,7 @@
 """Scheduling and teaching reports. All mutation callers hold a DB transaction."""
 import datetime as dt
 import json
+import logging
 import hashlib
 import secrets
 import credit_batches
@@ -637,7 +638,14 @@ def state_for(c,user):
         teachers=[dict(x) for x in c.execute("SELECT t.id,t.subject,t.subjects,t.duty,u.name,u.phone,u.active,u.id user_id,CASE WHEN EXISTS(SELECT 1 FROM organization_owners o WHERE o.user_id=u.id) THEN 'owner' WHEN u.role='admin' THEN 'admin' ELSE 'teacher' END account_role FROM teachers t JOIN users u ON t.user_id=u.id"+tw+' ORDER BY t.id',tp)]
     for t in teachers:
         t['name']=display_person(t.get('name'))
-        t['subjects']=[canonical_subject(name) for name in (json.loads(t['subjects']) or [t['subject']])]
+        try:
+            stored = json.loads(t['subjects'] or '[]')
+        except (TypeError, json.JSONDecodeError):
+            logging.exception('teacher %s subjects are not a list', t.get('id'))
+            stored = []
+        if not isinstance(stored, list):
+            stored = []
+        t['subjects']=[canonical_subject(name) for name in (stored or [t['subject']])]
         t['subject']=canonical_subject(t.get('subject') or '')
         if role!='owner' and role!='admin':
             t.pop('duty', None)
