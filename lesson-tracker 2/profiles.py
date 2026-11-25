@@ -187,19 +187,34 @@ def update(c,user,data,text_value):
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'profile_updated'))
     return {'ok':True}
 
+def _login_phone(raw, phone_value, label):
+    try:
+        return phone_value(raw)
+    except ValueError:
+        raise ValueError(label)
+
+
 def guardian(c,user,data,text_value,phone_value,password_hash):
+    """Edit one linked parent login. Does not rename students or move parent links."""
     require_admin(user)
+    schema(c)
     s=student(c,data)
-    parent=c.execute("SELECT * FROM users WHERE id=? AND role='parent'",(s['parent_id'],)).fetchone()
-    if not parent or c.execute('SELECT 1 FROM teachers WHERE user_id=?',(s['parent_id'],)).fetchone():
+    target=data.get('parent_user_id') or s['parent_id']
+    parent=c.execute("SELECT * FROM users WHERE id=? AND role='parent'",(int(target),)).fetchone()
+    if not parent or c.execute('SELECT 1 FROM teachers WHERE user_id=?',(parent['id'],)).fetchone():
         raise ValueError('此账号不是家长账号。')
+    linked=parent['id']==s['parent_id'] or c.execute(
+        'SELECT 1 FROM profile_parents WHERE profile_id=? AND user_id=?',(s['profile_id'],parent['id'])).fetchone()
+    if not linked:
+        raise ValueError('这位家长没有关联这个学生。')
     name=text_value(data.get('parent_name'),'家长姓名',40)
-    login=phone_value(data.get('phone'))
-    contact=str(data.get('contact_phone','')).strip()
-    if contact: contact=phone_value(contact)
+    login=_login_phone(data.get('phone'), phone_value, '请输入有效的登录手机号。')
+    contact=str(data.get('contact_phone') or '').strip()
+    if contact:
+        contact=_login_phone(contact, phone_value, '请输入有效的联系手机号。')
     if c.execute('SELECT 1 FROM users WHERE phone=? AND id!=?',(login,parent['id'])).fetchone():
         raise ValueError('此登录手机号已被其他账号使用。')
-    password=str(data.get('password',''))
+    password=str(data.get('password') or '').strip()
     if password and not 10<=len(password)<=128:
         raise ValueError('新密码需为 10–128 位。')
     c.execute('UPDATE users SET name=?,phone=?,contact_phone=? WHERE id=?',(name,login,contact,parent['id']))
@@ -225,15 +240,15 @@ def parents_for(c, profile_id, primary_id):
     rows = []
     seen = set()
     if primary_id:
-        row = c.execute("SELECT id, name, phone FROM users WHERE id=? AND role='parent'", (primary_id,)).fetchone()
+        row = c.execute("SELECT id, name, phone, contact_phone FROM users WHERE id=? AND role='parent'", (primary_id,)).fetchone()
         if row:
-            rows.append({'id': row['id'], 'name': row['name'], 'phone': row['phone'], 'primary': True})
+            rows.append({'id': row['id'], 'name': row['name'], 'phone': row['phone'], 'contact_phone': row['contact_phone'] or '', 'primary': True})
             seen.add(row['id'])
-    for row in c.execute('''SELECT u.id, u.name, u.phone FROM profile_parents pp
+    for row in c.execute('''SELECT u.id, u.name, u.phone, u.contact_phone FROM profile_parents pp
             JOIN users u ON u.id=pp.user_id WHERE pp.profile_id=? AND u.role='parent' ORDER BY u.name''', (profile_id,)):
         if row['id'] in seen:
             continue
-        rows.append({'id': row['id'], 'name': row['name'], 'phone': row['phone'], 'primary': False})
+        rows.append({'id': row['id'], 'name': row['name'], 'phone': row['phone'], 'contact_phone': row['contact_phone'] or '', 'primary': False})
         seen.add(row['id'])
     return rows
 
@@ -275,8 +290,10 @@ def link_parent(c, user, data, phone_value, password_hash, text_value):
     else:
         name = text_value(data.get('parent_name'), '家长姓名', 40)
         phone = phone_value(data.get('phone'))
-        password = str(data.get('password') or '')
-        if not 10 <= len(password) <= 128:
+        password = str(data.get('password') or '').strip()
+        if not password:
+            password = phone
+        elif not 10 <= len(password) <= 128:
             raise ValueError('新家长的初始密码需为 10–128 位。')
         existing = c.execute('SELECT id, role FROM users WHERE phone=?', (phone,)).fetchone()
         if existing:
