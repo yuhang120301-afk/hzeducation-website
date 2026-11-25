@@ -88,6 +88,30 @@ def schema(c):
         c.execute("ALTER TABLE price_tables ADD COLUMN validity_note TEXT NOT NULL DEFAULT ''")
     publish_seed(c)
     ensure_subject_prices(c)
+    ensure_combo_price(c)
+
+
+def product_for(c, type_name):
+    """The price product stored on the course type. A blank type has no price yet."""
+    if c is not None and type_name:
+        row = c.execute('SELECT product FROM course_types WHERE name=?', (type_name,)).fetchone()
+        if row is not None:
+            return row['product'] or ''
+    return TYPE_PRODUCT.get(type_name or '', '')
+
+
+def ensure_combo_price(c):
+    """数学加英语 has one combined hourly price, used at Prep, separate from 数学 and 英语."""
+    if c.execute("SELECT 1 FROM app_meta WHERE key='combo_price_v1'").fetchone():
+        return
+    table = c.execute("SELECT id FROM price_tables WHERE effective_from='2027-01-01'").fetchone()
+    if not table:
+        return
+    c.execute('''INSERT OR IGNORE INTO price_rows(table_id,product,level_from,level_to,hourly_cents,lesson_minutes)
+        VALUES(?,?,?,?,?,?)''', (table['id'], COMBO_PRODUCT, COMBO_LEVEL, COMBO_LEVEL, COMBO_HOURLY_CENTS, 60))
+    if c.execute("SELECT 1 FROM pragma_table_info('price_rows') WHERE name='placeholder'").fetchone():
+        c.execute('UPDATE price_rows SET placeholder=0 WHERE product=?', (COMBO_PRODUCT,))
+    c.execute("INSERT INTO app_meta(key,value) VALUES('combo_price_v1','1')")
 
 
 def seed_2027(c):
@@ -122,6 +146,10 @@ def publish_seed(c):
 
 
 TYPE_PRODUCT = {'一对一': 'one_to_one', '一对二': 'one_to_two', '小班课': 'term'}
+COMBO_SUBJECT = '数学加英语'
+COMBO_PRODUCT = 'maths_english'
+COMBO_LEVEL = 'Prep'
+COMBO_HOURLY_CENTS = 8500
 LEGACY_SUBJECTS = ('数学', '英语')
 SUBJECT_PRICE_KEY = 'legacy_subject_prices_v1'
 SINGAPORE_LEVELS = ('Y7', 'Y8', 'Y9', 'Y10')
@@ -333,6 +361,35 @@ def singapore_offer(student, level, name, validity):
         'validity': validity, 'source': 'custom' if override is not None else 'catalog', 'reason': ''}
 
 
+def combo_offer(c, student, level, name, product, validity, on):
+    """One combined hourly price for 数学加英语, used at Prep. It does not follow 数学 or 英语."""
+    stored = stored_level(dict(student)) if student else str(level or '')
+    if not name:
+        return _empty_offer(stored, name, product, validity, '请先选择年级和课程类型。')
+    if not product:
+        return _empty_offer(stored, name, '', validity, '还没有价格')
+    if stored != COMBO_LEVEL:
+        return _empty_offer(stored, name, COMBO_PRODUCT, validity, '数学加英语的价格用在 Prep。')
+    table = table_on(c, on.isoformat())
+    rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+    band = matching_row(rows, COMBO_PRODUCT, COMBO_LEVEL)
+    if not band:
+        return _empty_offer(stored, name, COMBO_PRODUCT, validity, '还没有价格')
+    hourly = int(band['hourly_cents'])
+    each = per_lesson_cents(hourly, 60)
+    total = each * 10
+    prices = [value * 10 for value in lesson_prices_cents(total, 10)]
+    package = {
+        'label': f'数学加英语 10 节 · {money_millis(total * 10)} · 每节 {money_millis(prices[0] if prices else 0)}',
+        'paid_lessons': 10, 'gift_lessons': 0, 'lesson_minutes': 60, 'total_cents': total,
+        'each_millis': prices[0] if prices else 0, 'unit_fees': prices, 'terms': [],
+        'product': COMBO_PRODUCT, 'discount_percent': 0, 'validity': validity or '永久有效',
+    }
+    return {'level': stored, 'course_type': name, 'product': COMBO_PRODUCT, 'product_label': name,
+        'hourly_cents': hourly, 'lesson_minutes': 60, 'packages': [package],
+        'validity': validity, 'source': 'catalog', 'reason': ''}
+
+
 def presets(c, user, student_id=None, level=None, course_type_id=None, day=None, subject_id=None):
     """Packages that match one year level and one course type. Helen's own rate is never included.
 
@@ -353,7 +410,7 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
     if course_type_id:
         kind = c.execute('SELECT name FROM course_types WHERE id=?', (int(course_type_id),)).fetchone()
         name = kind['name'] if kind else ''
-    product = TYPE_PRODUCT.get(name)
+    product = product_for(c, name)
     subject_name = subject_of(c, student) if student else ''
     if not subject_name and subject_id:
         found = c.execute('SELECT name FROM subjects WHERE id=?', (int(subject_id),)).fetchone()
@@ -364,6 +421,10 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
         validity = table['validity_note'] or ''
     if teaching.singapore_subject(subject_name):
         return singapore_offer(student, stored_level(dict(student)) if student else level, name, validity)
+    if subject_name == COMBO_SUBJECT:
+        return combo_offer(c, student, level, name, product, validity, on)
+    if name and not product:
+        return _empty_offer(level, name, '', validity, '还没有价格')
     if not level or not product:
         return {'level': level or '', 'course_type': name, 'product': product, 'hourly_cents': None,
             'packages': [], 'validity': validity, 'source': '', 'reason': '请先选择年级和课程类型。'}

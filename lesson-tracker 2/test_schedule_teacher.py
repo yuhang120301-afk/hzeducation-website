@@ -151,6 +151,7 @@ class TeacherChangeTests(unittest.TestCase):
 
     def test_singapore_maths_rejects_anyone_but_helen_in_chinese(self):
         sid = self.student('七年级')
+        self.c.execute("UPDATE students SET subject_id=?, course='新加坡数学' WHERE id=?", (self.singapore, sid))
         base = self.payload(self.angela, [sid], day='2027-07-06')
         base['subject_id'] = self.singapore
         base['title'] = '新加坡数学 · 一对一'
