@@ -10,6 +10,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from teaching import AccessError, now_local
 
 LEVELS = ('K', 'Prep', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'Y7', 'Y8', 'Y9', 'Y10', 'Y11', 'Y12')
+# Kindergarten stays in LEVELS so old codes and price bands still parse. It is not offered.
+SELECTABLE_LEVELS = tuple(code for code in LEVELS if code != 'K')
 ENROL_YEAR = 2027
 PRODUCTS = ('one_to_one', 'one_to_two', 'helen', 'term')
 PRODUCT_LABELS = {'one_to_one': '1:1', 'one_to_two': '1:2', 'helen': 'Helen 本人 1:1', 'term': '学期班'}
@@ -495,12 +497,13 @@ def parse_level(text):
 
 
 def move_level(code, years):
-    """Shift a level by whole years. Below K stays K. Above Year 12 stays Year 12 and is marked past."""
+    """Shift a level by whole years. Below Prep stays Prep. Above Year 12 stays Year 12 and is marked past."""
     if code not in LEVELS:
         return '', False
     index = LEVELS.index(code) + int(years)
     past = index > LEVELS.index('Y12')
-    index = max(0, min(LEVELS.index('Y12'), index))
+    floor = LEVELS.index('Prep')
+    index = max(floor, min(LEVELS.index('Y12'), index))
     return LEVELS[index], past
 
 
@@ -534,9 +537,7 @@ def price_level(code, on, study_level=''):
 
 
 def level_label(code, past=False):
-    if code == 'K':
-        text = 'K'
-    elif code == 'Prep':
+    if code in ('K', 'Prep'):
         text = 'Prep'
     elif code and code.startswith('Y') and code[1:].isdigit():
         text = 'Year ' + code[1:]
@@ -834,7 +835,7 @@ def list_prices(c, user):
     custom = [dict(r) for r in c.execute('''SELECT p.*, s.name student_name FROM student_subject_prices p
         JOIN students s ON s.profile_id=p.profile_id
         GROUP BY p.id ORDER BY s.name, p.subject, p.product, p.lesson_minutes''')]
-    return {'tables': tables, 'custom': custom, 'levels': list(LEVELS), 'terms': TERM_COUNTS, 'products': PRODUCT_LABELS, 'by_type': prices_by_type(c)}
+    return {'tables': tables, 'custom': custom, 'levels': list(SELECTABLE_LEVELS), 'terms': TERM_COUNTS, 'products': PRODUCT_LABELS, 'by_type': prices_by_type(c)}
 
 
 def save_table(c, user, data):
