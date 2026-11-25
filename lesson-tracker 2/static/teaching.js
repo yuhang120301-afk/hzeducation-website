@@ -23,6 +23,7 @@ function flatNavigation(){
   if(view==='settings') items.push(['settings','课程与地点','grid']);
   if(view==='administrators') items.push(['administrators','管理员','users']);
   if(view==='profile') items.push(['profile','学生档案','users']);
+  if(view==='records') items.push(['records','余额明细','book']);
  }
  return items;
 }
@@ -97,6 +98,11 @@ function dashboard(){
  if(view==='records'){
   $('#surface').innerHTML=`<div class="section-head"><h2>余额变动记录</h2>${studentFilter()}</div><div id="records-list"></div><p class="footnote">${state.user.role==='parent'?'仅显示当前有效的记录。':'已排课不会提前扣除余额；撤销和修改历史仅后台保留。'}</p>`;
   $('#student-filter').onchange=event=>{selected=event.target.value;renderRecords();};renderRecords();
+ }
+ if(state.user.role==='owner' && ['teachers','settings','administrators','records'].includes(view)){
+  $('#surface').insertAdjacentHTML('afterbegin', typeof backBar==='function'?backBar():'<p class="page-back"><button type="button" class="btn" id="page-back">返回</button></p>');
+  const backTo=view==='records'?'overview':'setup';
+  $('#page-back').onclick=()=>showView(backTo);
  }
 }
 function studentFilter(){return `<select id="student-filter" class="select-filter" aria-label="按学生筛选"><option value="">全部学生</option>${state.students.map(s=>`<option data-user-content value="${s.id}" ${selected==s.id?'selected':''}>${escapeHTML(s.name)}${s.no_course?'':` · ${escapeHTML(s.course)}`}</option>`).join('')}</select>`;}
