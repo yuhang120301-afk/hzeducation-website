@@ -362,7 +362,7 @@ def add_course(c,user,data,text_value):
         if not subject:
             raise ValueError('请选择已启用的科目。')
         subject_id = subject['id']
-    if c.execute('SELECT 1 FROM students WHERE profile_id=? AND course=?',(s['profile_id'],course)).fetchone():
+    if c.execute('SELECT 1 FROM students WHERE profile_id=? AND course=? AND archived=0 AND IFNULL(voided,0)=0',(s['profile_id'],course)).fetchone():
         raise ValueError('这位学生已有关联课程，无需重复添加。')
     created=s['helen_original'] if 'helen_original' in s.keys() else 0
     type_id = int(data.get('course_type_id') or 0) or s['course_type_id']
@@ -372,10 +372,17 @@ def add_course(c,user,data,text_value):
     course, subject_id, type_id = pricing.apply_primary_class(c, course, subject_id, type_id, kind['name'] if kind else '', level)
     kind = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone() if type_id else kind
     pricing.assert_singapore_enrolment(course, kind['name'] if kind else '', level)
-    sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
     pricing.schema(c)
     study = pricing.clean_study_level(data.get('study_level'))
-    c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=?,level_code=?,level_year=?,study_level=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,s['level_code'] if 'level_code' in s.keys() else '', s['level_year'] if 'level_year' in s.keys() else 0, study, sid))
+    stopped = c.execute('''SELECT id FROM students WHERE profile_id=? AND course=? AND (archived=1 OR IFNULL(voided,0)=1)
+        ORDER BY id DESC LIMIT 1''', (s['profile_id'], course)).fetchone()
+    if stopped:
+        sid = stopped['id']
+        c.execute('''UPDATE students SET archived=0, voided=0, settle_reason='', billing_unit=?, helen_original=?, subject_id=?, course_type_id=?, level_code=?, level_year=?, study_level=?
+            WHERE id=?''', (s['billing_unit'], created, subject_id, type_id, s['level_code'] if 'level_code' in s.keys() else '', s['level_year'] if 'level_year' in s.keys() else 0, study, sid))
+    else:
+        sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
+        c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=?,level_code=?,level_year=?,study_level=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,s['level_code'] if 'level_code' in s.keys() else '', s['level_year'] if 'level_year' in s.keys() else 0, study, sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
     import timeline
     timeline.record(c, user, sid, 'course_added', f'添加课程 {course}')
@@ -421,22 +428,57 @@ def relink_future_lessons(c, student_id):
     for old in olds:
         if not same_subject(current['course'], current['subject_name'], old['course'], old['subject_name']):
             continue
-        lessons=c.execute('''SELECT l.id FROM lessons l
-            JOIN lesson_students ls ON ls.lesson_id=l.id
-            WHERE ls.student_id=? AND l.status='scheduled' AND l.starts_at>=?''', (old['id'], now)).fetchall()
-        for lesson in lessons:
-            already=c.execute('SELECT 1 FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], current['id'])).fetchone()
-            if already:
-                c.execute('DELETE FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], old['id']))
-            else:
-                c.execute('UPDATE lesson_students SET student_id=? WHERE lesson_id=? AND student_id=?', (current['id'], lesson['id'], old['id']))
-            report=c.execute('SELECT 1 FROM lesson_reports WHERE lesson_id=? AND student_id=?', (lesson['id'], current['id'])).fetchone()
-            if report:
-                c.execute('DELETE FROM lesson_reports WHERE lesson_id=? AND student_id=?', (lesson['id'], old['id']))
-            else:
-                c.execute('UPDATE lesson_reports SET student_id=? WHERE lesson_id=? AND student_id=?', (current['id'], lesson['id'], old['id']))
-            moved+=1
+        moved += move_future_lessons(c, old['id'], current['id'])
     return moved
+
+
+def move_future_lessons(c, from_id, to_id):
+    """Point future lessons and repeat templates from one enrolment at another."""
+    from_id, to_id = int(from_id), int(to_id)
+    if from_id == to_id:
+        return 0
+    now = now_local().strftime('%Y-%m-%dT%H:%M')
+    moved = 0
+    lessons = c.execute('''SELECT l.id FROM lessons l
+        JOIN lesson_students ls ON ls.lesson_id=l.id
+        WHERE ls.student_id=? AND l.status='scheduled' AND l.starts_at>=?''', (from_id, now)).fetchall()
+    for lesson in lessons:
+        already = c.execute('SELECT 1 FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], to_id)).fetchone()
+        if already:
+            c.execute('DELETE FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], from_id))
+        else:
+            c.execute('UPDATE lesson_students SET student_id=? WHERE lesson_id=? AND student_id=?', (to_id, lesson['id'], from_id))
+        report = c.execute('SELECT 1 FROM lesson_reports WHERE lesson_id=? AND student_id=?', (lesson['id'], to_id)).fetchone()
+        if report:
+            c.execute('DELETE FROM lesson_reports WHERE lesson_id=? AND student_id=?', (lesson['id'], from_id))
+        else:
+            c.execute('UPDATE lesson_reports SET student_id=? WHERE lesson_id=? AND student_id=?', (to_id, lesson['id'], from_id))
+        moved += 1
+    _retarget_series(c, from_id, to_id)
+    return moved
+
+
+def _retarget_series(c, from_id, to_id):
+    import json
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lesson_series'").fetchone():
+        return
+    for rule in c.execute('SELECT id, template FROM lesson_series'):
+        try:
+            template = json.loads(rule['template'] or '{}')
+        except json.JSONDecodeError:
+            continue
+        raw = template.get('student_ids') or []
+        if not any(str(item) == str(from_id) for item in raw):
+            continue
+        new = []
+        for item in raw:
+            if str(item) == str(from_id):
+                if not any(str(kept) == str(to_id) for kept in new):
+                    new.append(to_id)
+            else:
+                new.append(item)
+        template['student_ids'] = new
+        c.execute('UPDATE lesson_series SET template=? WHERE id=?', (json.dumps(template), rule['id']))
 
 
 def set_study_level(c, user, data):

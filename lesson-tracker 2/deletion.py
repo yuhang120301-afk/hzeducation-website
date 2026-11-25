@@ -188,6 +188,9 @@ def schema(c):
         c.execute("ALTER TABLE students ADD COLUMN void_reason TEXT NOT NULL DEFAULT ''")
     if 'settle_reason' not in cols:
         c.execute("ALTER TABLE students ADD COLUMN settle_reason TEXT NOT NULL DEFAULT ''")
+    c.execute('DROP INDEX IF EXISTS profile_course_unique')
+    c.execute('''CREATE UNIQUE INDEX IF NOT EXISTS profile_course_active
+        ON students(profile_id, course) WHERE archived=0 AND voided=0''')
 
 
 def _drop_future(c, sid, cancel_reason='停课', user=None):
