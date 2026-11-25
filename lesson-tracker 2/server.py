@@ -553,7 +553,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         if path == '/robots.txt':
             return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
-        if re.fullmatch(r'/students/\d+/?', path) or re.fullmatch(r'/teachers/\d+/pay/?', path):
+        if re.fullmatch(r'/students/\d+/?', path) or re.fullmatch(r'/teachers/\d+/pay/?', path) or re.fullmatch(r'/receipts/\d+/?', path):
             path = '/'
         files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/vouchers.js':'vouchers.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
         if path not in files:

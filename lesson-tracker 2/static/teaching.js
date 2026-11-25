@@ -24,6 +24,7 @@ function flatNavigation(){
   if(view==='administrators') items.push(['administrators','管理员','users']);
   if(view==='profile') items.push(['profile','学生档案','users']);
   if(view==='records') items.push(['records','余额明细','book']);
+  if(view==='receipt') items.push(['receipt','单据','book']);
  }
  return items;
 }
@@ -63,7 +64,7 @@ function dashboard(){
  const nav=navigationItems(), flat=flatNavigation(), current=flat.find(item=>item[0]===view)||flat[0];
  view=current[0];
  const center=role==='owner'?'Helen校长端':admin?'机构管理':staff?'老师中心':'家长中心';
- const shown={teachers:'setup',settings:'setup',administrators:'setup',profile:'overview'}[view]||view;
+ const shown={teachers:'setup',settings:'setup',administrators:'setup',profile:'overview',receipt:'vouchers'}[view]||view;
  const todayLine=`${typeof weekdayName==='function'?weekdayName(state.today):''} ${Number(state.today.slice(5,7))}月${Number(state.today.slice(8))}日 · 墨尔本时间`;
  const subtitles={today:todayLine,schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'每张卡是一位学生。左边的颜色是任课老师。':staff?'查看学生余额，按各自计费方式管理。':'剩余余额与学习记录，随时查看。',records:'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'核对每天收到的家长付款，以及还没上交的代收。',pay:'按已经上完、扣过课时的课计算。数字供核对，不会自动打款。',finance:'营业额、成本、机构利润和 Helen 净利润。',share:'新学生利润的分红。上课工资只在工资页，不记在这里。',audit:'可以查看并撤销还没有被别人改过的操作。',profile:'课程和课后记录按日期排列。',setup:'老师、课程名称、管理员和每日备份。',prices:'每种课程各自的价和课时包。暂定的数字可以改。'};
  const navHtml=nav.map(([label,items])=>`${label==='更多'?'<p class="nav-more">更多</p>':label?`<p class="nav-label">${label}</p>`:''}${items.map(item=>`<button class="nav-item ${shown===item[0]?'active':''}" data-view="${item[0]}">${icon(item[2])}${item[1]}</button>`).join('')}`).join('');
@@ -84,6 +85,7 @@ function dashboard(){
  if(view==='pay')renderPay();
  if(view==='finance')renderFinance();
  if(view==='vouchers')renderVouchers();
+ if(view==='receipt')renderReceipt();
  if(view==='share')renderShare();
  if(view==='prices')renderPrices();
  if(view==='audit')renderAudit();
