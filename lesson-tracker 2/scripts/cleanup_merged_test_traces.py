@@ -6,6 +6,13 @@ Do not point this at production until there is a backup.
 
   LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py
   LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py --apply
+  LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py --delete-course-ids 26,69
+  LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py --delete-course-ids 26,69 --apply
+
+--delete-course-ids removes only those course rows, and only when each one
+has no ledger, no class report, no lesson that is still on the calendar,
+no pack with any value, no pack payment, no arrears and no balance.
+The person's profile stays. Do not set LESSON_DB yourself on production.
 
 The profile row is kept when a course row is removed. Atticus's taught
 history on #46 and #66 is not touched. Claire #69 is only reported.
@@ -122,7 +129,21 @@ def course_block(c, row):
         return '有单据'
     if count_where(c, 'arrears', 'student_id', student_id):
         return '有欠费'
+    if pack_payment_count(c, student_id):
+        return '有课时包收款'
     return ''
+
+
+def pack_payment_count(c, student_id):
+    """Payments hang off the pack, not the lesson. The column is batch_id."""
+    if not has_table(c, 'pack_payments') or not has_table(c, 'credit_batches'):
+        return 0
+    if 'batch_id' not in columns(c, 'pack_payments'):
+        return 0
+    row = c.execute('''SELECT COUNT(*) n FROM pack_payments p
+        JOIN credit_batches b ON b.id=p.batch_id
+        WHERE b.student_id=?''', (student_id,)).fetchone()
+    return int(row['n'] if row else 0)
 
 
 def identity_ok(row, name, course_bit):
@@ -257,10 +278,35 @@ def plan_duplicates(c, today, dropping):
     return same_course, different
 
 
-def build_plan(c, today):
+def plan_listed_courses(c, course_ids):
+    """Delete only these course rows, and only when each one is empty."""
+    actions = []
+    for student_id in course_ids:
+        row = student_row(c, student_id)
+        if not row:
+            actions.append({'id': student_id, 'action': 'skip', 'detail': '没有这一行'})
+            continue
+        reason = course_block(c, row)
+        item = {'id': student_id, 'name': row['name'], 'course': row['course']}
+        if reason:
+            item['action'] = 'skip'
+            item['detail'] = reason
+        else:
+            item['action'] = 'delete'
+            item['detail'] = '空课，删除课程行，人还在'
+        actions.append(item)
+    return actions
+
+
+def build_plan(c, today, course_ids=None):
+    if course_ids:
+        courses = plan_listed_courses(c, course_ids)
+        return {'courses': courses, 'only_ids': course_ids,
+            'amelia': {'action': 'skip', 'detail': '这次只删指定的课程行'},
+            'confirm': [], 'same_course': [], 'different_course': []}
     courses = plan_empty_courses(c)
     dropping = {item['id'] for item in courses if item['action'] == 'delete'}
-    return {'courses': courses, 'amelia': plan_amelia(c),
+    return {'courses': courses, 'only_ids': None, 'amelia': plan_amelia(c),
         'confirm': [describe_person(c, student_id, today) for student_id, _name in CONFIRM_IDS],
         'same_course': plan_duplicates(c, today, dropping)[0],
         'different_course': plan_duplicates(c, today, dropping)[1]}
@@ -360,6 +406,8 @@ def apply_plan(c, plan):
 def render(db_path, apply, plan, before, after):
     lines = [f"{'APPLY' if apply else 'DRY-RUN'}  database={os.path.realpath(db_path)}",
         f'payments_before={before[0]} balances_before={before[1]}']
+    if plan.get('only_ids'):
+        lines.append('delete_course_ids=' + ','.join(str(item) for item in plan['only_ids']))
     deleted = [item for item in plan['courses'] if item['action'] == 'delete']
     skipped = [item for item in plan['courses'] if item['action'] != 'delete']
     lines.append(f"courses_delete={len(deleted)} courses_skip={len(skipped)}")
@@ -406,9 +454,21 @@ def main():
     parser.add_argument('--db', default=os.environ.get('LESSON_DB', ''))
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--today', default='')
+    parser.add_argument('--delete-course-ids', default='',
+        help='Comma-separated course row ids to remove when each row is empty.')
     args = parser.parse_args()
     if not args.db or not os.path.exists(args.db):
         raise SystemExit('请设置 LESSON_DB，或传入 --db。')
+    course_ids = None
+    if args.delete_course_ids.strip():
+        course_ids = []
+        for part in args.delete_course_ids.split(','):
+            part = part.strip()
+            if not part.isdigit():
+                raise SystemExit('课程编号必须是数字，用逗号分开。')
+            course_ids.append(int(part))
+        if not course_ids:
+            raise SystemExit('请传入要删除的课程编号。')
     from teaching import now_local
     today = args.today or now_local().date().isoformat()
     c = connect(args.db, args.apply)
@@ -416,7 +476,7 @@ def main():
         if args.apply:
             c.execute('BEGIN IMMEDIATE')
         before = money_totals(c)
-        plan = build_plan(c, today)
+        plan = build_plan(c, today, course_ids)
         after = before
         if args.apply:
             apply_plan(c, plan)
