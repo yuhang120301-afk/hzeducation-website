@@ -100,6 +100,51 @@ def low_balance(c):
     return rows
 
 
+def monthly(c, user, month):
+    """One month: money in, lesson value, hours left, teacher pay, forfeits, and what does not add up."""
+    import calendar as cal
+    text = str(month or '')
+    try:
+        year, mon = int(text[:4]), int(text[5:7])
+        start = dt.date(year, mon, 1)
+    except (ValueError, IndexError):
+        raise ValueError('请选择月份。')
+    end = dt.date(year, mon, cal.monthrange(year, mon)[1])
+    report = statement(c, user, 'custom', None, start.isoformat(), end.isoformat())
+    outstanding = c.execute('''SELECT COALESCE(SUM(b.paid_left+b.gift_left),0) FROM credit_batches b
+        JOIN students s ON s.id=b.student_id WHERE s.archived=0 AND s.voided=0''').fetchone()[0]
+    value = 0
+    unpriced = []
+    for row in c.execute('''SELECT s.*, b.paid_left FROM credit_batches b
+        JOIN students s ON s.id=b.student_id
+        WHERE s.archived=0 AND s.voided=0 AND b.paid_left>0'''):
+        hourly = __import__('pricing').price_for(c, row, end.isoformat())
+        if hourly is None:
+            unpriced.append(f"{row['name']} {row['course']} 的剩余课时没有价格")
+            continue
+        value += int(hourly) * int(row['paid_left']) // 100
+    mismatches = c.execute('''SELECT s.name, s.course, s.balance,
+        COALESCE((SELECT SUM(paid_left+gift_left) FROM credit_batches b WHERE b.student_id=s.id),0) packs
+        FROM students s WHERE s.voided=0
+        AND s.balance != COALESCE((SELECT SUM(paid_left+gift_left) FROM credit_batches b WHERE b.student_id=s.id),0)''').fetchall()
+    exceptions = list(unpriced)
+    if report['unknown_fee_count']:
+        exceptions.append(f"有 {report['unknown_fee_count']} 节课算不出上课费用")
+    for row in mismatches:
+        exceptions.append(f"{row['name']} {row['course']} 的余额和课时包不一致")
+    return {
+        'month': f'{year:04d}-{mon:02d}',
+        'money_received_cents': report['cash_received_cents'],
+        'money_refunded_cents': report['cash_refunded_cents'],
+        'lessons_value_cents': report['turnover_cents'],
+        'outstanding_units': outstanding,
+        'outstanding_value_cents': value,
+        'teacher_pay_cents': report['teacher_pay_cents'],
+        'forfeit_units': report['forfeit_units'],
+        'exceptions': exceptions,
+    }
+
+
 def statement(c, user, period, day, start, end):
     payroll.require_owner(user)
     if period == 'custom':

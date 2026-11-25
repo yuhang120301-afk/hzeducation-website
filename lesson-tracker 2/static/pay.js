@@ -182,6 +182,26 @@ async function renderPrices(){
   document.querySelectorAll('[data-price-row]').forEach(button=>button.onclick=()=>modal('修改这一档的时薪',`<p class="footnote">只改这一年级、这一课型。不含 GST。学生充值会按改后的价自动带出课时包。</p><label class="field">每小时 AUD<input name="hourly" type="number" min="0" step="0.01" value="${escapeHTML(button.dataset.hourly)}" required></label>`,'保存',async form=>{await api('prices/row',{id:Number(button.dataset.priceRow),hourly:form.hourly}); toast('这一档已保存。'); renderPrices();}));
  }catch(error){if(view==='prices') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`;}
 }
+async function renderMonth(){
+ const month=(state.today||'').slice(0,7);
+ $('#surface').innerHTML='<div class="panel empty">正在读取月度对账…</div>';
+ let data;
+ try{ data=await api('reports/monthly?month='+encodeURIComponent(month)); }
+ catch(error){ if(view==='month') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`; return; }
+ if(view!=='month') return;
+ const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
+ const lines=[
+  ['收到的钱', money(data.money_received_cents)],
+  ['退款', money(data.money_refunded_cents)],
+  ['上过的课', money(data.lessons_value_cents)],
+  ['还剩的课时', ((data.outstanding_units||0)/100).toFixed(2)+' · '+money(data.outstanding_value_cents)],
+  ['老师工资', money(data.teacher_pay_cents)],
+  ['作废余额', ((data.forfeit_units||0)/100).toFixed(2)+' 课时'],
+ ];
+ const problems=(data.exceptions||[]).map(item=>`<li>${escapeHTML(item)}</li>`).join('');
+ $('#surface').innerHTML=`${backBar()}<div class="mock-top"><div><h1 class="mock-title">月度对账</h1><p class="mock-sub">${escapeHTML(data.month||month)}</p></div></div><div class="sums">${lines.map(([name,value])=>`<div class="card"><div class="k">${name}</div><div class="n">${value}</div></div>`).join('')}</div><section class="panel" style="margin-top:18px;padding:18px"><h2>对不上的</h2>${problems?`<ul>${problems}</ul>`:'<p class="muted">这个月对得上。</p>'}</section>`;
+ bindBack('/?view=finance');
+}
 async function renderFinance(){
  loadFinanceChoice();
  if(!financeDate) financeDate=state.today;

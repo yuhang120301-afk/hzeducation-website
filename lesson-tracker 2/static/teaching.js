@@ -10,7 +10,7 @@ const lessonStatus=l=>lessonIsAbsent(l)?'请假':l.status==='cancelled'?statusNa
 function navigationItems(){
  const role=state.user.role;
  if(role==='owner') return [
-  ['',[['today','今天','clock'],['schedule','课表','grid'],['overview','学生','users'],['pay','工资','book'],['finance','财务','book'],['vouchers','单据','book'],['share','分红','book']]],
+  ['',[['today','今天','clock'],['schedule','课表','grid'],['overview','学生','users'],['pay','工资','book'],['finance','财务','book'],['month','月度对账','book'],['vouchers','单据','book'],['share','分红','book']]],
   ['更多',[['feedback','课后记录','check'],['accounting','收款与欠费','grid'],['prices','价格表','book'],['audit','操作日志','book'],['setup','设置','users']]]
  ];
  if(role==='teacher') return [['',[['schedule','我的课程','clock'],['feedback','课后记录','book'],['overview','我的学生','users'],['pay','我的工资','book']]]];
@@ -70,7 +70,7 @@ function dashboard(){
  const center=role==='owner'?'Helen校长端':admin?'机构管理':staff?'老师中心':'家长中心';
  const shown={teachers:'setup',settings:'setup',administrators:'setup',profile:'overview','lesson-record':'overview',receipt:'vouchers'}[view]||view;
  const todayLine=`${typeof weekdayName==='function'?weekdayName(state.today):''} ${Number(state.today.slice(5,7))}月${Number(state.today.slice(8))}日 · 墨尔本时间`;
- const subtitles={today:todayLine,schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':role==='teacher'?'只显示自己的课，不能改时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'每张卡是一位学生。左边的颜色是任课老师。':role==='teacher'?'只显示自己课上的学生。点开可以看上课记录并写课后反馈。':role==='parent'?'只显示自己的孩子。点开可以看课时、课时包和付款。':'剩余余额与学习记录，随时查看。',records:role==='parent'?'只显示自己付给机构的款和退款。':'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'核对每天收到的家长付款，以及还没上交的代收。',pay:role==='teacher'?'只显示自己的上课工资。可以按天、周、双周或月查看。':'按已经上完、扣过课时的课计算。数字供核对，不会自动打款。',finance:'营业额、成本、机构利润和 Helen 净利润。',share:'新学生利润的分红。上课工资只在工资页，不记在这里。',audit:'可以查看并撤销还没有被别人改过的操作。',profile:role==='teacher'?'上课记录和课后反馈。':'课程和课后记录按日期排列。','lesson-record':'这节课的课时和课后记录。',setup:'老师、课程名称、管理员和每日备份。',prices:'每种课程各自的价和课时包。暂定的数字可以改。'};
+ const subtitles={today:todayLine,schedule:role==='owner'?'点击或拖选时间即可排课。点到的位置就是上课时间。':role==='teacher'?'只显示自己的课，不能改时间。':`按机构时间显示 · ${state.timezone}`,feedback:role==='owner'?'课程结束后确认。也可以只点「这节课已上」，作业以后再补。':staff?'记录学习内容、今日作业和课后反馈。':'查看孩子每节课的学习内容、作业与老师反馈。',overview:role==='owner'?'每张卡是一位学生。左边的颜色是任课老师。':role==='teacher'?'只显示自己课上的学生。点开可以看上课记录并写课后反馈。':role==='parent'?'只显示自己的孩子。点开可以看课时、课时包和付款。':'剩余余额与学习记录，随时查看。',records:role==='parent'?'只显示自己付给机构的款和退款。':'查看充值、上课扣除和退款记录。',teachers:'为任课老师开通独立账号，并安排课程。',settings:'管理排课时可选择的课程名称和上课地点。',administrators:'由老板开通管理员账号，分工管理机构日常事务。',accounting:'核对每天收到的家长付款，以及还没上交的代收。',pay:role==='teacher'?'只显示自己的上课工资。可以按天、周、双周或月查看。':'按已经上完、扣过课时的课计算。数字供核对，不会自动打款。',finance:'营业额、成本、机构利润和 Helen 净利润。',month:'这个月收到的钱、上过的课、还剩的课时、老师工资和作废余额。对不上的列在下面。',share:'新学生利润的分红。上课工资只在工资页，不记在这里。',audit:'可以查看并撤销还没有被别人改过的操作。',profile:role==='teacher'?'上课记录和课后反馈。':'课程和课后记录按日期排列。','lesson-record':'这节课的课时和课后记录。',setup:'老师、课程名称、管理员和每日备份。',prices:'每种课程各自的价和课时包。暂定的数字可以改。'};
  const navHtml=nav.map(([label,items])=>`${label==='更多'?'<p class="nav-more">更多</p>':label?`<p class="nav-label">${label}</p>`:''}${items.map(item=>`<button class="nav-item ${shown===item[0]?'active':''}" data-view="${item[0]}">${icon(item[2])}${item[1]}</button>`).join('')}`).join('');
  $('#app').innerHTML=`<div class="shell"><aside class="sidebar ${role==='owner'?'a2':''}">${brand()}<nav>${navHtml}</nav><div class="side-foot"><strong>HZ Education Melbourne</strong>把每一次进步，认真记下来。</div></aside><button type="button" class="nav-backdrop" id="nav-backdrop" aria-label="关闭菜单"></button><main class="main">${state.demo?'<div class="demo-banner">本机演示版 · 虚构数据 · 可分别体验Helen校长端、管理员、任课老师和家长账号</div>':''}<header class="topbar"><button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开菜单"><span></span><span></span><span></span></button><div class="breadcrumb">${center}<span>/　${current[1]}</span></div><div class="account"><span class="avatar">${userHTML(state.user.name.slice(0,1))}</span><span>${userHTML(state.user.name)}</span><span class="role-label">${role==='owner'?'Helen校长端':admin?'管理员':staff?'任课老师':'家长'}</span>${role==='owner'?'<button class="text-btn" id="undo-last" type="button">撤销上一步</button>':''}<button class="text-btn" id="password">修改密码</button><button class="text-btn logout" id="logout">退出</button></div></header><div class="content"><div class="page-head ${role==='owner'?'a2-head':''}"><div><h1>${current[1]}</h1><p>${escapeHTML(subtitles[view]||'')}</p></div>${headerActions()}</div><div id="surface"></div></div></main></div>`;
  const closeNav=()=>document.querySelector('.shell')?.classList.remove('nav-open');
@@ -88,6 +88,7 @@ function dashboard(){
  if(view==='accounting')renderAccounting();
  if(view==='pay')renderPay();
  if(view==='finance')renderFinance();
+ if(view==='month')renderMonth();
  if(view==='vouchers')renderVouchers();
  if(view==='receipt')renderReceipt();
  if(view==='share')renderShare();

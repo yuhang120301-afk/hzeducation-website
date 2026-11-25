@@ -422,6 +422,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200, pricing.list_prices(c, user))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/reports/monthly':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    return self.response(200, finance.monthly(c, user, params.get('month', [''])[0]))
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path in ('/api/finance', '/api/finance.xlsx', '/api/finance.pdf'):
             with connect() as c:
                 user=self.current(c)
