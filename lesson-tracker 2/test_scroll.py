@@ -52,6 +52,8 @@ class ScrollPlaceTests(unittest.TestCase):
             page.click('[data-demo=owner]')
             page.wait_for_selector('.sidebar [data-view=overview]')
             page.click('.sidebar [data-view=overview]')
+            page.wait_for_selector('#student-list .year-fold > summary')
+            page.locator('#student-list .year-fold > summary').first.click()
             page.wait_for_selector('#student-list .pay-card')
             page.locator('#student-list .pay-card').first.click()
             page.wait_for_selector('[data-profile-section="lessons"]')

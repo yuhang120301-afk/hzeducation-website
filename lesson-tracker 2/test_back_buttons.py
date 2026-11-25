@@ -78,6 +78,8 @@ class BackButtonTests(unittest.TestCase):
             page.click('#page-back')
             page.wait_for_function('() => document.querySelector("h1")?.textContent === "设置"')
             page.click('.sidebar [data-view=overview]')
+            page.wait_for_selector('#student-list .year-fold > summary')
+            page.locator('#student-list .year-fold > summary').first.click()
             page.wait_for_selector('[data-open-student]')
             page.locator('[data-open-student]').first.click()
             page.wait_for_function('() => location.pathname.startsWith("/students/")')
