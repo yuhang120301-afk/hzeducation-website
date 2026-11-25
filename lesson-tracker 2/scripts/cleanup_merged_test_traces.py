@@ -280,6 +280,8 @@ def _delete_lesson(c, lesson_id):
 
 
 def delete_course_row(c, student_id):
+    import profiles
+    profiles.remember_person(c, student_id)
     for lesson in list(lesson_rows(c, student_id)):
         others = c.execute('SELECT 1 FROM lesson_students WHERE lesson_id=? AND student_id!=?',
             (lesson['id'], student_id)).fetchone()

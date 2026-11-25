@@ -297,6 +297,8 @@ def stop_course(c, user, data):
     import timeline
     if not _history(c, sid):
         timeline.record(c, user, sid, 'stop', f"停课 {student['course']}")
+        import profiles
+        profiles.remember_person(c, sid)
         c.execute('DELETE FROM credit_batches WHERE student_id=?', (sid,))
         if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='arrears'").fetchone():
             c.execute('DELETE FROM arrears WHERE student_id=?', (sid,))

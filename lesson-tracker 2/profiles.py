@@ -53,6 +53,46 @@ def ensure_enrolment_columns(c):
         c.execute("ALTER TABLE student_profiles ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
     if 'withdrawn_on' not in cols:
         c.execute("ALTER TABLE student_profiles ADD COLUMN withdrawn_on TEXT NOT NULL DEFAULT ''")
+    ensure_identity(c)
+
+
+def ensure_identity(c):
+    """The person lives on the profile. Course rows copy the name, they do not own it."""
+    cols = {r['name'] for r in c.execute('PRAGMA table_info(student_profiles)')}
+    for name in ('name', 'birthday', 'grade', 'notes'):
+        if name not in cols:
+            c.execute(f"ALTER TABLE student_profiles ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='students'").fetchone():
+        return
+    if int(c.execute('PRAGMA query_only').fetchone()[0]):
+        return
+    for field in ('name', 'birthday', 'grade', 'notes'):
+        c.execute(f'''UPDATE student_profiles SET {field}=COALESCE((
+            SELECT s.{field} FROM students s
+            WHERE s.profile_id=student_profiles.id AND TRIM(COALESCE(s.{field},''))!=''
+            ORDER BY s.archived, s.id LIMIT 1), {field})
+            WHERE TRIM(COALESCE({field},''))='' ''')
+
+
+def remember_person(c, student_id):
+    """Copy this course row's identity onto the profile before the row can disappear."""
+    ensure_identity(c)
+    row = c.execute('SELECT * FROM students WHERE id=?', (int(student_id),)).fetchone()
+    if not row or not row['profile_id']:
+        return
+    current = c.execute('SELECT name, birthday, grade, notes FROM student_profiles WHERE id=?', (row['profile_id'],)).fetchone()
+    if not current:
+        return
+    c.execute('UPDATE student_profiles SET name=?, birthday=?, grade=?, notes=? WHERE id=?', (
+        (current['name'] or row['name'] or '').strip(),
+        current['birthday'] or row['birthday'] or '',
+        current['grade'] or row['grade'] or '',
+        current['notes'] or row['notes'] or '',
+        row['profile_id']))
+
+
+def normalize_person_name(value):
+    return ' '.join(str(value or '').strip().casefold().split())
 
 def fields(data):
     birthday=str(data.get('birthday','')).strip()
@@ -182,6 +222,23 @@ def update(c,user,data,text_value):
     import payroll
     payroll.reject_original_flag(user, data)
     require_admin(user)
+    if not data.get('student_id') and data.get('profile_id'):
+        ensure_identity(c)
+        profile_id=int(data.get('profile_id') or 0)
+        profile=c.execute('SELECT * FROM student_profiles WHERE id=?',(profile_id,)).fetchone()
+        if not profile:
+            raise ValueError('学生不存在，请刷新页面。')
+        name=text_value(data.get('name'),'学生姓名',40)
+        birthday,grade,notes=fields(data)
+        if 'grade' in data and not str(data.get('grade') or '').strip():
+            raise ValueError('请选择年级。')
+        c.execute('UPDATE student_profiles SET name=?,birthday=?,grade=?,notes=? WHERE id=?',(name,birthday,grade,notes,profile_id))
+        if c.execute('SELECT 1 FROM students WHERE profile_id=?',(profile_id,)).fetchone():
+            import pricing
+            level_code, level_year = pricing.remember_level(data, grade)
+            c.execute('UPDATE students SET name=?,birthday=?,grade=?,notes=?,level_code=?,level_year=? WHERE profile_id=?',(name,birthday,grade,notes,level_code,level_year,profile_id))
+        save_enrolment(c, profile_id, data)
+        return {'ok':True}
     s=student(c,data)
     name=text_value(data.get('name'),'学生姓名',40)
     birthday,grade,notes=fields(data)
@@ -192,6 +249,8 @@ def update(c,user,data,text_value):
     if 'grade' in data and not str(data.get('grade') or '').strip():
         raise ValueError('请选择年级。')
     c.execute('UPDATE students SET name=?,birthday=?,grade=?,notes=?,level_code=?,level_year=? WHERE profile_id=?',(name,birthday,grade,notes,level_code,level_year,s['profile_id']))
+    ensure_identity(c)
+    c.execute('UPDATE student_profiles SET name=?,birthday=?,grade=?,notes=? WHERE id=?',(name,birthday,grade,notes,s['profile_id']))
     save_enrolment(c, s['profile_id'], data)
     if str(data.get('study_status') or ''):
         set_study_status(c, user, {'student_id': s['id'], 'study_status': data.get('study_status')})
@@ -345,11 +404,29 @@ def unlink_parent(c, user, data):
     return {'ok': True}
 
 
+def _course_person(c, data):
+    """A course is opened for a person. The person can exist with no course row yet."""
+    if data.get('student_id'):
+        return student(c, data)
+    ensure_identity(c)
+    profile_id = int(data.get('profile_id') or 0)
+    profile = c.execute('SELECT * FROM student_profiles WHERE id=?', (profile_id,)).fetchone()
+    if not profile or not str(profile['name'] or '').strip():
+        raise ValueError('学生不存在，请刷新页面。')
+    parent = c.execute('SELECT user_id FROM profile_parents WHERE profile_id=? ORDER BY user_id LIMIT 1', (profile_id,)).fetchone()
+    if not parent:
+        raise ValueError('请先关联家长，再开课。')
+    return {'id': None, 'name': profile['name'], 'profile_id': profile_id, 'parent_id': parent['user_id'],
+        'birthday': profile['birthday'] or '', 'grade': profile['grade'] or '', 'notes': profile['notes'] or '',
+        'billing_unit': 'lesson', 'helen_original': 0, 'course_type_id': None, 'level_code': '', 'level_year': 0,
+        'archived': 0}
+
+
 def add_course(c,user,data,text_value):
     import payroll
     payroll.reject_original_flag(user, data)
     require_admin(user)
-    s=student(c,data)
+    s=_course_person(c, data)
     subject_id = int(data.get('subject_id') or 0)
     if subject_id:
         subject = c.execute('SELECT name FROM subjects WHERE id=? AND active=1', (subject_id,)).fetchone()
@@ -383,7 +460,7 @@ def add_course(c,user,data,text_value):
     else:
         sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
         c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=?,level_code=?,level_year=?,study_level=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,s['level_code'] if 'level_code' in s.keys() else '', s['level_year'] if 'level_year' in s.keys() else 0, study, sid))
-    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'] or sid,user['id'],'course_added'))
     import timeline
     timeline.record(c, user, sid, 'course_added', f'添加课程 {course}')
     moved=relink_future_lessons(c, sid)
@@ -504,3 +581,115 @@ def relink_future(c, user, data):
 def billing_unit(value):
     if value not in ('lesson','hour'):raise ValueError('请选择按课时或按小时计费。')
     return value
+
+
+def profiles_without_courses(c, covered_ids, user):
+    """People who still have an account after every course row is gone."""
+    if not user or user['role'] == 'teacher':
+        return []
+    ensure_enrolment_columns(c)
+    shells = []
+    for profile in c.execute('SELECT * FROM student_profiles ORDER BY id'):
+        if profile['id'] in covered_ids or (profile['status'] or '') == 'withdrawn':
+            continue
+        if not str(profile['name'] or '').strip():
+            continue
+        if user['role'] == 'parent' and not c.execute(
+                'SELECT 1 FROM profile_parents WHERE profile_id=? AND user_id=?', (profile['id'], user['id'])).fetchone():
+            continue
+        parent = c.execute('''SELECT u.id, u.name, u.phone, u.contact_phone FROM profile_parents pp
+            JOIN users u ON u.id=pp.user_id WHERE pp.profile_id=? AND u.role='parent'
+            ORDER BY pp.user_id LIMIT 1''', (profile['id'],)).fetchone()
+        shell = {'id': 'p%s' % profile['id'], 'profile_id': profile['id'], 'name': profile['name'],
+            'course': '', 'subject_name': '', 'course_type_name': '', 'balance': 0, 'paid_balance': 0,
+            'gift_balance': 0, 'credit_batches': [], 'archived': 0, 'voided': 0, 'no_course': True,
+            'birthday': profile['birthday'] or '', 'grade': profile['grade'] or '', 'notes': profile['notes'] or '',
+            'study_status': profile['study_status'] or 'studying', 'billing_unit': 'lesson', 'level_code': '',
+            'parent_id': parent['id'] if parent else None, 'parent_name': parent['name'] if parent else '',
+            'phone': parent['phone'] if parent else '', 'contact_phone': (parent['contact_phone'] if parent else '') or '',
+            'legacy': False, 'legacy_subjects': []}
+        if user['role'] in ('owner', 'admin'):
+            shell['parents'] = parents_for(c, profile['id'], shell['parent_id'])
+        import pricing
+        pricing.annotate(shell)
+        shells.append(shell)
+    return shells
+
+
+def _parent_ids(c, profile_id, primary_id):
+    found = set()
+    if primary_id:
+        found.add(int(primary_id))
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_parents'").fetchone():
+        for row in c.execute('SELECT user_id FROM profile_parents WHERE profile_id=?', (profile_id,)):
+            found.add(int(row['user_id']))
+    found.discard(0)
+    return found
+
+
+def merge_plan(c):
+    """Course rows for one person and one parent belong on one profile."""
+    ensure_identity(c)
+    rows = [dict(row) for row in c.execute('SELECT id, name, course, parent_id, profile_id, archived FROM students ORDER BY id')]
+    if not rows:
+        return []
+    parent = {row['id']: row['id'] for row in rows}
+
+    def find(item):
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(left, right):
+        ra, rb = find(left), find(right)
+        if ra != rb:
+            parent[rb] = ra
+
+    by_profile = {}
+    for row in rows:
+        by_profile.setdefault(row['profile_id'], []).append(row['id'])
+    for ids in by_profile.values():
+        for other in ids[1:]:
+            union(ids[0], other)
+    by_name = {}
+    for row in rows:
+        name = normalize_person_name(row['name'])
+        if not name:
+            continue
+        for user_id in _parent_ids(c, row['profile_id'], row['parent_id']):
+            by_name.setdefault((name, user_id), []).append(row['id'])
+    for ids in by_name.values():
+        for other in ids[1:]:
+            union(ids[0], other)
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(find(row['id']), []).append(row)
+    plan = []
+    for group in grouped.values():
+        profiles = sorted({row['profile_id'] for row in group if row['profile_id']})
+        if len(profiles) < 2:
+            continue
+        keeper = profiles[0]
+        plan.append({'name': group[0]['name'], 'keeper': keeper, 'profiles': profiles, 'rows': group})
+    plan.sort(key=lambda item: item['keeper'])
+    return plan
+
+
+def apply_merge(c, plan):
+    ensure_identity(c)
+    for group in plan:
+        keeper = group['keeper']
+        for row in group['rows']:
+            if row['profile_id'] != keeper:
+                c.execute('UPDATE students SET profile_id=? WHERE id=?', (keeper, row['id']))
+        for donor in group['profiles']:
+            if donor == keeper:
+                continue
+            c.execute('''INSERT OR IGNORE INTO profile_parents(profile_id, user_id)
+                SELECT ?, user_id FROM profile_parents WHERE profile_id=?''', (keeper, donor))
+            c.execute('DELETE FROM profile_parents WHERE profile_id=?', (donor,))
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_events'").fetchone():
+                c.execute('UPDATE profile_events SET profile_id=? WHERE profile_id=?', (keeper, donor))
+            c.execute('DELETE FROM student_profiles WHERE id=? AND NOT EXISTS (SELECT 1 FROM students WHERE profile_id=?)', (donor, donor))
+        ensure_identity(c)
