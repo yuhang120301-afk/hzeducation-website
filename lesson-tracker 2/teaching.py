@@ -778,7 +778,7 @@ def cancel_lesson(c,user,data,text_value):
         c.execute("UPDATE lesson_series SET stop_index=MIN(COALESCE(stop_index,?),?),error='',version=version+1 WHERE id=?",(lesson['occurrence_index'],lesson['occurrence_index'],lesson['series_id']))
     elif lesson['series_id']:
         c.execute('UPDATE lesson_series SET version=version+1 WHERE id=?',(lesson['series_id'],))
-    if not data.get('waive_leave'):
+    if data.get('charge') is True:
         apply_late_leave(c, lesson)
     return {'ok':True}
 

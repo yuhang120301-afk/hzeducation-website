@@ -278,10 +278,22 @@ function lessonDetail(id){
  if($('#write-report'))$('#write-report').onclick=()=>{close();reportModal(l);};
  $('#modal').showModal();
 }
+function within48Hours(lesson){
+ const start=Date.parse(String(lesson.starts_at||''));
+ const now=Date.parse(String(state.now||''));
+ if(!Number.isFinite(start)||!Number.isFinite(now)) return false;
+ const gap=start-now;
+ return gap>0 && gap<=48*3600*1000;
+}
 async function cancelModal(l){
  const scope=await askSeriesScope(l);
  if(!scope) return;
- modal('取消这节课',`<div class="form-context">${userHTML(l.title)}<br>${escapeHTML(l.starts_at.replace('T',' '))} · ${userHTML(l.teacher_name)}<br>${scope==='future'?'将取消本次及以后所有未上的课。':'只取消这一次。'} 不扣课时。</div><label class="field">取消原因（选填）<span class="quick"><button type="button" data-cancel-reason="学生请假">学生请假</button><button type="button" data-cancel-reason="老师请假">老师请假</button><button type="button" data-cancel-reason="改期">改期</button><button type="button" data-cancel-reason="临时停课">临时停课</button></span><textarea name="reason" maxlength="250" placeholder="可以留空"></textarea></label>`,'确认取消课程',async data=>{await api('lessons/cancel',{...data,scope,lesson_id:l.id,version:l.version,series_version:l.series_version});toast(scope==='future'?'本次及以后的课已取消，没有扣课时。':'课程已取消，没有扣课时。');},true);
+ let charge=false;
+ if(scope==='single' && within48Hours(l)){
+  charge=await askAbsenceCharge();
+  if(charge==null) return;
+ }
+ modal('取消这节课',`<div class="form-context">${userHTML(l.title)}<br>${escapeHTML(l.starts_at.replace('T',' '))} · ${userHTML(l.teacher_name)}<br>${scope==='future'?'将取消本次及以后所有未上的课。':'只取消这一次。'} ${charge?'这一次会扣课时，老师没有课酬。':'不扣课时。'}</div><label class="field">取消原因（选填）<span class="quick"><button type="button" data-cancel-reason="学生请假">学生请假</button><button type="button" data-cancel-reason="老师请假">老师请假</button><button type="button" data-cancel-reason="改期">改期</button><button type="button" data-cancel-reason="临时停课">临时停课</button></span><textarea name="reason" maxlength="250" placeholder="可以留空"></textarea></label>`,'确认取消课程',async data=>{await api('lessons/cancel',{...data,charge,scope,lesson_id:l.id,version:l.version,series_version:l.series_version});toast(charge?'课程已取消，并扣除课时。老师没有这节课的工资。':'课程已取消，没有扣课时。');},true);
  document.querySelectorAll('[data-cancel-reason]').forEach(button=>button.onclick=()=>{$('[name=reason]').value=button.dataset.cancelReason;});
 }
 function expectedUnits(l,s){return unitFor(s)==='小时'?Math.round((Date.parse(l.ends_at+'Z')-Date.parse(l.starts_at+'Z'))/36000):l.planned_units;}
