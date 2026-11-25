@@ -578,6 +578,26 @@ def legacy_price(c, student, on=None):
         'product': product, 'subject': subject, 'level': level, 'course_type': name}
 
 
+def price_for(c, student, day=None):
+    """Hourly cents for one course on one day. A saved rate wins, then that course's catalog price."""
+    on = day or now_local().date()
+    if isinstance(on, str):
+        on = dt.date.fromisoformat(str(on)[:10])
+    subject = subject_of(c, student)
+    override = enrolment_hourly(student)
+    if subject == COMBO_SUBJECT:
+        if override is not None:
+            return override
+        table = table_on(c, on.isoformat())
+        rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+        band = matching_row(rows, COMBO_PRODUCT, COMBO_LEVEL)
+        return band['hourly_cents'] if band else None
+    info = legacy_price(c, student, on)
+    if info.get('custom_hourly_cents') is not None:
+        return info['custom_hourly_cents']
+    return info.get('list_hourly_cents')
+
+
 def save_legacy_price(c, user, data):
     require_owner(user)
     import accounting
@@ -634,8 +654,7 @@ def charged_fee_cents(c, student_id, lesson, amount_units):
         LEFT JOIN subjects sb ON sb.id=s.subject_id WHERE s.id=?''', (student_id,)).fetchone()
     if not student:
         return None
-    info = legacy_price(c, student)
-    hourly = info['custom_hourly_cents'] if info['custom_hourly_cents'] is not None else info['list_hourly_cents']
+    hourly = price_for(c, student, (lesson.get('starts_at') or '')[:10] or None)
     if hourly is None:
         return None
     start = dt.datetime.fromisoformat(lesson['starts_at'])
