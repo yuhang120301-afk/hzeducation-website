@@ -612,10 +612,11 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
                     c.commit()
                     return self.response(200,{'ok':True})
-                if self.path in ('/api/vouchers/approve','/api/vouchers/unapprove','/api/vouchers/edit','/api/vouchers/void'):
+                if self.path in ('/api/vouchers/approve','/api/vouchers/approve-bulk','/api/vouchers/unapprove','/api/vouchers/edit','/api/vouchers/void'):
                     c.execute('BEGIN IMMEDIATE')
                     import vouchers
-                    if self.path.endswith('/approve'): result=vouchers.approve(c,user,data.get('id'))
+                    if self.path == '/api/vouchers/approve-bulk': result=vouchers.approve_many(c,user,data.get('ids'))
+                    elif self.path.endswith('/approve'): result=vouchers.approve(c,user,data.get('id'))
                     elif self.path.endswith('/unapprove'): result=vouchers.unapprove(c,user,data.get('id'))
                     elif self.path.endswith('/edit'): result=vouchers.edit(c,user,data,units,text_value)
                     else: result=vouchers.void(c,user,data.get('id'),units)

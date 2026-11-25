@@ -21,7 +21,7 @@ async function renderVouchers(){
  if(view!=='vouchers') return;
  const totals=data.totals||{};
  const students=state.students.concat(state.archived_students||[]);
- $('#surface').innerHTML=`<div class="mock-top voucher-tools"><div><h1 class="mock-title">单据</h1><p class="mock-sub">新单据先是待审核，课时和金额已经入账。审核不再动余额。</p></div></div>
+ $('#surface').innerHTML=`<div class="mock-top voucher-tools"><div><h1 class="mock-title">单据</h1><p class="mock-sub">新单据先是待审核，课时和金额已经入账。审核不再动余额。</p></div><button class="btn primary" id="voucher-bulk" type="button" disabled>批量审核</button></div>
  <div class="pay-sums voucher-tools"><div class="card"><div class="k">张数</div><div class="n">${totals.open_count||0}</div><div class="s">不含已作废</div></div><div class="card"><div class="k">充值</div><div class="n">${voucherMoney(totals.credit_cents||0)}</div></div><div class="card"><div class="k">退费</div><div class="n">${voucherMoney(totals.refund_cents||0)}</div></div><div class="card"><div class="k">净额</div><div class="n">${voucherMoney(totals.net_cents||0)}</div></div></div>
  <div class="pay-tools voucher-tools"><label class="field">学生<select id="voucher-student"><option value="">全部学生</option>${students.map(s=>`<option value="${s.id}" ${String(voucherStudent)===String(s.id)?'selected':''}>${escapeHTML(s.name)} · ${escapeHTML(s.subject_name||s.course)}</option>`).join('')}</select></label>
  <label class="field">类型<select id="voucher-kind"><option value="">全部</option>${Object.entries(voucherKindName).map(([k,v])=>`<option value="${k}" ${voucherKind===k?'selected':''}>${v}</option>`).join('')}</select></label>
@@ -29,12 +29,35 @@ async function renderVouchers(){
  <label class="field">从<input id="voucher-start" type="date" value="${escapeHTML(voucherStart)}"></label>
  <label class="field">到<input id="voucher-end" type="date" value="${escapeHTML(voucherEnd)}"></label>
  <label class="search">搜索<input id="voucher-q" value="${escapeHTML(voucherQuery)}" placeholder="单号、学生、备注"></label></div>
- <div class="panel table-wrap voucher-tools"><table><thead><tr><th>单号</th><th>日期</th><th>学生 / 科目</th><th>类型</th><th>课时</th><th>金额</th><th>状态</th></tr></thead><tbody>${(data.vouchers||[]).map(row=>`<tr class="${row.status==='void'?'voucher-void':''}" data-voucher="${row.id}"><td>${escapeHTML(row.number)}</td><td>${escapeHTML(row.lesson_date)}</td><td>${userHTML(row.student_name)}<div class="muted">${userHTML(row.course)}</div></td><td>${escapeHTML(row.kind_label)}</td><td>${escapeHTML(voucherUnits(row))}</td><td>${voucherMoney(row.amount_cents)}</td><td>${escapeHTML(row.status_label)}</td></tr>`).join('')||'<tr><td colspan="7">没有单据。</td></tr>'}</tbody></table></div>`;
+ <div class="panel table-wrap voucher-tools"><table><thead><tr><th class="voucher-check"><label><input id="voucher-all" type="checkbox" aria-label="全选"> 全选</label></th><th>单号</th><th>日期</th><th>学生 / 科目</th><th>类型</th><th>课时</th><th>金额</th><th>状态</th></tr></thead><tbody>${(data.vouchers||[]).map(row=>`<tr class="${row.status==='void'?'voucher-void':''}" data-voucher="${row.id}"><td class="voucher-check">${row.status==='pending'?`<input class="voucher-pick" type="checkbox" value="${row.id}" aria-label="选择 ${escapeHTML(row.number)}">`:''}</td><td>${escapeHTML(row.number)}</td><td>${escapeHTML(row.lesson_date)}</td><td>${userHTML(row.student_name)}<div class="muted">${userHTML(row.course)}</div></td><td>${escapeHTML(row.kind_label)}</td><td>${escapeHTML(voucherUnits(row))}</td><td>${voucherMoney(row.amount_cents)}</td><td>${escapeHTML(row.status_label)}</td></tr>`).join('')||'<tr><td colspan="8">没有单据。</td></tr>'}</tbody></table></div>`;
  const reload=()=>{voucherStudent=$('#voucher-student').value; voucherKind=$('#voucher-kind').value; voucherStatus=$('#voucher-status').value; voucherStart=$('#voucher-start').value; voucherEnd=$('#voucher-end').value; voucherQuery=$('#voucher-q').value; renderVouchers();};
  $('#voucher-student').onchange=reload; $('#voucher-kind').onchange=reload; $('#voucher-status').onchange=reload;
  $('#voucher-start').onchange=reload; $('#voucher-end').onchange=reload;
  $('#voucher-q').onchange=reload;
- document.querySelectorAll('[data-voucher]').forEach(row=>row.onclick=()=>{if(typeof openDetail==='function') openDetail('/receipts/'+row.dataset.voucher);});
+ document.querySelectorAll('[data-voucher]').forEach(row=>row.onclick=event=>{if(event.target.closest('.voucher-check')) return; if(typeof openDetail==='function') openDetail('/receipts/'+row.dataset.voucher);});
+ bindVoucherBulk();
+}
+function bindVoucherBulk(){
+ const picks=()=>[...document.querySelectorAll('.voucher-pick')];
+ const sync=()=>{
+  const boxes=picks(), chosen=boxes.filter(box=>box.checked).length, all=$('#voucher-all'), button=$('#voucher-bulk');
+  if(all){all.disabled=!boxes.length; all.checked=!!boxes.length&&chosen===boxes.length; all.indeterminate=chosen>0&&chosen<boxes.length;}
+  if(button) button.disabled=!chosen;
+ };
+ const all=$('#voucher-all');
+ if(all) all.onclick=()=>{picks().forEach(box=>{box.checked=all.checked;}); sync();};
+ picks().forEach(box=>box.onchange=sync);
+ const button=$('#voucher-bulk');
+ if(button) button.onclick=()=>{
+  const ids=picks().filter(box=>box.checked).map(box=>Number(box.value));
+  if(!ids.length) return;
+  modal(`确定审核选中的 ${ids.length} 张单据？`,`<div class="form-context">余额不会再变动。已经不是待审核的会跳过。</div>`,'确认审核',async()=>{
+   const result=await api('vouchers/approve-bulk',{ids});
+   const skipped=(result.skipped||[]).length;
+   toast(skipped?`已审核 ${result.approved} 张单据。${skipped} 张已跳过。`:`已审核 ${result.approved} 张单据。`);
+  });
+ };
+ sync();
 }
 async function renderReceipt(){
  const id=receiptId;

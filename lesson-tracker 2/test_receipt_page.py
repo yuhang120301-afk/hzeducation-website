@@ -58,7 +58,7 @@ class ReceiptPageTests(unittest.TestCase):
             page.click('.sidebar [data-view=vouchers]')
             page.wait_for_selector('[data-voucher]')
             self.assertEqual(page.locator('.voucher-sheet').count(), 0)
-            number = page.locator('[data-voucher] td').first.inner_text()
+            number = page.locator('[data-voucher] td').nth(1).inner_text()
             page.locator('[data-voucher]').first.click()
             page.wait_for_function('() => /\\/receipts\\/\\d+/.test(location.pathname)')
             page.wait_for_selector('.voucher-sheet')
