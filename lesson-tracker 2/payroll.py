@@ -12,7 +12,7 @@ import io
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import accounting
-from teaching import AccessError, now_local
+from teaching import SINGAPORE_SUBJECT, AccessError, now_local
 
 SEED_KEY = 'pay_seed_v1'
 # Name fragment, rule type, percent in basis points, hourly floor cents or None.
@@ -285,6 +285,8 @@ def resolved_fee(c, row):
 def build_lessons(c, rows, rules_by_teacher):
     grouped = []
     index = {}
+    owner_teachers = {row['id'] for row in c.execute(
+        'SELECT t.id FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id')}
     for row in rows:
         key = row['lesson_id']
         if key not in index:
@@ -310,7 +312,8 @@ def build_lessons(c, rows, rules_by_teacher):
         item['unknown_fee_count'] = sum(1 for line in item['lines'] if not line['fee_known'])
         item['rule'] = public_rule(rule)
         floor_cents = mul_div(rule['hourly_floor_cents'], item['minutes'], 60) if rule and rule['hourly_floor_cents'] else 0
-        if item['course_type_name'] == '小班课' and item['fee_known']:
+        boss_singapore = item.get('subject_name') == SINGAPORE_SUBJECT and item['teacher_id'] in owner_teachers
+        if item['course_type_name'] == '小班课' and item['fee_known'] and not boss_singapore:
             percent_cents = 0
             for line in item['lines']:
                 millis = line['fee_millis'] if line['fee_millis'] is not None else (line['fee_cents'] or 0) * 10
