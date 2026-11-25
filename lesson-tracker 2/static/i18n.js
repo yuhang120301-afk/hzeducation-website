@@ -260,6 +260,8 @@
   [/^· 原记录 #(\d+)$/,(_,id)=>`· Original #${id}`],
   [/^更新于 (.+)$/,(_,when)=>`Updated ${when}`],
   [/^已上过的课 \((\d+)\)$/,(_,n)=>`Past lessons (${n})`],
+  [/^(K|Prep|Year \d+) · 已毕业\?$/,(_,label)=>`${label} · graduated?`],
+  [/^(\d+) 位$/,(_,n)=>Number(n)===1?'1 student':`${n} students`],
   [/^(.+)在该时段已有课程。$/,(_,name)=>`${name} already has a lesson at that time.`],
   [/^(.+)的剩余课时不足。本次尚未扣除任何学生的课时，可先保存草稿。$/,(_,name)=>`${name} has insufficient credits. No student has been charged. You can save a draft.`],
   [/^(.+)不能为空，且不能超过 (\d+) 个字。$/,(_,field,max)=>`${messages[field]||'This field'} is required and must be ${max} characters or fewer.`],

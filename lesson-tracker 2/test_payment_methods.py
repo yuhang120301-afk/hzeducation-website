@@ -113,6 +113,8 @@ class PaymentMethodTests(unittest.TestCase):
             page.click('#login-form button[type=submit]')
             page.wait_for_selector('.sidebar [data-view=overview]')
             page.click('.sidebar [data-view=overview]')
+            page.wait_for_selector('#student-list .year-fold > summary')
+            page.locator('#student-list .year-fold > summary').first.click()
             page.wait_for_selector('#student-list [data-credit]')
             for method in NON_CASH:
                 page.locator('#student-list [data-credit]').first.click()

@@ -99,6 +99,8 @@ class ParentLinkBrowserTests(unittest.TestCase):
             page.goto('http://127.0.0.1:8791/')
             page.click('[data-demo=owner]')
             page.click('.sidebar [data-view=overview]')
+            page.wait_for_selector('#student-list .year-fold > summary')
+            page.locator('#student-list .year-fold > summary').first.click()
             page.wait_for_selector('[data-open-student]')
             page.locator('[data-open-student]').first.click()
             page.wait_for_selector('[data-guardian]')

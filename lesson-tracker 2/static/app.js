@@ -316,22 +316,50 @@ function studentFold(group, admin){
 function renderStudents(){
  const admin=['owner','admin'].includes(state.user.role);
  const groups=studentGroups().filter(group=>studyFilter==='all'||(group[0].study_status||'studying')===studyFilter).map(group=>group.filter(s=>s.no_course||!admin||studentStatus==='all'||(studentStatus==='renewal'?needsRenewal(s):!needsRenewal(s)))).filter(group=>group.length&&group.some(s=>`${s.name} ${s.course} ${s.subject_name||''} ${s.phone} ${s.grade||''}`.toLowerCase().includes(search.toLowerCase())));
- $('#student-list').innerHTML=groups.length?groups.map(group=>{
-  const person=group[0];
-  const teacher=teacherForAccounts(group);
-  const tone=studentToneName(teacher);
-  const active=group.filter(account=>!account.no_course);
-  const subjects=active.length?active.map(account=>[shownLevel(account), account.subject_name||account.course, account.course_type_name].filter(Boolean).join(' · ')).join('，'):'未选课 / 请添加课程';
-  const teacherView=state.user.role==='teacher';
-  const balance=teacherView?'':(active.length?active.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · '):'—');
-  const health=String(person.health_notes||'').trim();
-  const legacy=legacyMark(group);
-  const pack=teacherView?null:group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
-  return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课'}</strong></div>`}${admin?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}</article>`;
- }).join(''):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
+ const searching=String(search||'')!=='';
+ $('#student-list').innerHTML=groups.length?(admin?yearLevelFolds(groups, searching):groups.map(group=>studentListCard(group, admin)).join('')):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
  document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; saveListPlace(); openDetail('/students/'+card.dataset.openStudent);});
  document.querySelectorAll('#student-list [data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
  document.querySelectorAll('#student-list [data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
+}
+function studentListCard(group, admin){
+ const person=group[0];
+ const teacher=teacherForAccounts(group);
+ const tone=studentToneName(teacher);
+ const active=group.filter(account=>!account.no_course);
+ const subjects=active.length?active.map(account=>[shownLevel(account), account.subject_name||account.course, account.course_type_name].filter(Boolean).join(' · ')).join('，'):'未选课 / 请添加课程';
+ const teacherView=state.user.role==='teacher';
+ const balance=teacherView?'':(active.length?active.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · '):'—');
+ const health=String(person.health_notes||'').trim();
+ const legacy=legacyMark(group);
+ const pack=teacherView?null:group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
+ return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${balance}</strong></div><div><div class="muted">状态</div><strong>${active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课'}</strong></div>`}${admin?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}</article>`;
+}
+const YEAR_LEVEL_ORDER=['K','Prep','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12'];
+function currentYearLabel(person){
+ const code=String(person&&person.level_calendar||'').trim();
+ const named={K:'K',Prep:'Prep'};
+ let text=named[code]||'';
+ const year=/^Y(1[0-2]|[1-9])$/.exec(code);
+ if(year) text='Year '+year[1];
+ if(!text) return '';
+ return person.level_past?text+' · 已毕业?':text;
+}
+function currentYearRank(person){
+ const code=String(person&&person.level_calendar||'').trim();
+ const index=YEAR_LEVEL_ORDER.indexOf(code);
+ if(index<0) return 100;
+ return index+(person&&person.level_past?0.5:0);
+}
+function yearLevelFolds(groups, searching){
+ const buckets=new Map();
+ groups.forEach(group=>{
+  const known=currentYearLabel(group[0]);
+  const label=known||'年级未填写';
+  if(!buckets.has(label)) buckets.set(label,{label,rank:known?currentYearRank(group[0]):100,groups:[]});
+  buckets.get(label).groups.push(group);
+ });
+ return [...buckets.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label,'en')).map(section=>`<details class="year-fold"${searching?' open':''}><summary><span class="year-fold-chevron" aria-hidden="true"></span><span class="year-fold-label">${escapeHTML(section.label)}</span><span class="year-fold-count">${section.groups.length} 位</span></summary><div class="year-fold-students">${section.groups.map(group=>studentListCard(group, true)).join('')}</div></details>`).join('');
 }
 function renderStudentProfile(){
  const group=studentGroups().find(item=>item.some(student=>String(student.id)===String(profileId)||String(student.profile_id)===String(profileId)));

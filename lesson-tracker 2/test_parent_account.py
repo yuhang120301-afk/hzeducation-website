@@ -120,6 +120,8 @@ class ParentAccountTests(unittest.TestCase):
             page.click('#login-form button[type=submit]')
             page.wait_for_selector('.sidebar [data-view=overview]')
             page.click('.sidebar [data-view=overview]')
+            page.wait_for_selector('#student-list .year-fold > summary')
+            page.locator('#student-list .year-fold > summary').first.click()
             page.wait_for_selector('[data-open-student]')
             page.locator('[data-open-student]').first.click()
             page.wait_for_selector('#page-back')
