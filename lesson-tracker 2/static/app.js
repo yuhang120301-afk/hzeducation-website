@@ -389,7 +389,7 @@ function studentFold(group, admin){
   const priceNote=singapore?`${account.legacy?`<span class="legacy-badge">单独价格 · ${userHTML(subjectLabel)}</span> `:''}新加坡数学不使用其他科目的价目。新学员 $150.00 / 小时，老学员 $120.00 / 小时，当前默认 ${listText}。这里填这个报名自己的每小时价格，填 0 就是免费。留空并保存，改回默认。`:`${account.legacy?`<span class="legacy-badge">老学员 · ${userHTML(subjectLabel)}</span> `:''}2027 价目 ${listText}。留空并保存，这一科就改回价目。`;
   const price=state.user.role==='owner'&&account.course_type_name?`<form class="legacy-price" data-legacy-form="${account.id}" data-price-default="${singapore?'默认价格':'2027 价目'}"><p class="footnote">${priceNote}</p><label class="field">${userHTML(subjectLabel)} 每小时价格 AUD<input name="hourly" inputmode="decimal" value="${account.custom_hourly_cents==null?'':(account.custom_hourly_cents/100).toFixed(2)}" placeholder="${singapore?'用默认价格':'用 2027 价目'}"></label><button class="btn" type="submit">保存价格</button></form>`:'';
   const teacherView=state.user.role==='teacher';
-  return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>${teacherView?'':`剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}`}</small></div><div class="num">${teacherView?'':accountStatus(account, group)}</div></article>${teacherView?'':price}<ul class="pack-list">${teacherView?'':packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button>${state.user.role==='owner'?`<button class="btn refund-action" data-remove-course="${account.id}" type="button">删除</button>`:''}</p>`:''}`;
+  return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>${teacherView?'':`剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}`}</small></div><div class="num">${teacherView?'':accountStatus(account, group)}</div></article>${teacherView?'':price}<ul class="pack-list">${teacherView?'':packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-settle="${account.id}" type="button">退课/停课</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button>${state.user.role==='owner'?`<button class="btn refund-action" data-remove-course="${account.id}" type="button">删除</button>`:''}</p>`:''}`;
  }).join('');
  const lessonBody=lesson=>`<div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div>`;
  const lessonRow=lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}">${lessonBody(lesson)}</article>`;
@@ -513,6 +513,7 @@ function bindProfileActions(){
   host.querySelectorAll('[data-course-tab]').forEach(item=>{const on=item===button; item.classList.toggle('on', on); item.setAttribute('aria-selected', on?'true':'false');});
   host.querySelectorAll('[data-course-panel]').forEach(panel=>{panel.hidden=panel.dataset.coursePanel!==button.dataset.courseTab;});
  });
+ document.querySelectorAll('[data-settle]').forEach(b=>b.onclick=event=>{event.stopPropagation(); settleCourseModal(b.dataset.settle);});
  document.querySelectorAll('[data-refund]').forEach(b=>b.onclick=event=>{event.stopPropagation(); refundModal(b.dataset.refund);});
  document.querySelectorAll('[data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
  document.querySelectorAll('[data-remove-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); removeCourseModal(b.dataset.removeCourse);});
@@ -778,6 +779,17 @@ function needsRenewal(s){return regularHours(s)<300;}
 function balanceSplit(s){return `<span class="credit-split">${unitFor(s)} ${fmt(regularHours(s))} · 赠送${unitFor(s)} ${fmt(s.gift_balance||0)}</span>`;}
 function creditBreakdown(e){if(!e.split_known)return '';return `<small class="credit-split">${unitFor(e)} ${signedUnits(e.paid_delta)} · 赠送${unitFor(e)} ${signedUnits(e.gift_delta)}${e.gift_void?` · ${e.gift_void>0?'作废赠课':'恢复赠课'} ${fmt(Math.abs(e.gift_void))}`:''}</small>`;}
 
+function settleCourseModal(id){
+ const account=(state.students||[]).find(item=>String(item.id)===String(id));
+ if(!account) return;
+ const hours=Number(account.balance||0);
+ modal('退课/停课',`<div class="form-context">${userHTML(account.name)} · ${userHTML(account.subject_name||account.course)}<br>余额 ${fmt(hours)} ${unitFor(account)}。退款、保留余额或作废都要写单据。作废余额不是收入。以后的课会取消。</div><label class="field">余额怎么处理<select name="reason" required><option value="keep">保留余额</option><option value="refund">退款</option><option value="void">作废</option></select></label><label class="field">退款金额 AUD（选退款时填写）<input name="refund" inputmode="decimal" placeholder="0.00"></label>`,'确认',async data=>{
+  const raw=String(data.refund||'').trim();
+  const refund_cents=data.reason==='refund'&&raw?Math.round(Number(raw)*100):0;
+  await api('students/course/settle',{student_id:account.id, reason:data.reason, refund_cents});
+  toast(data.reason==='void'?'已作废余额，并写下单据。':data.reason==='refund'?'已退课退款，并写下单据。':'已停课，余额保留，并写下单据。');
+ },true);
+}
 function withdrawCourses(person){
  const id=person&&person.profile_id;
  const rows=(state.students||[]).concat(state.archived_students||[], state.voided_students||[]).filter(account=>account.profile_id===id && !account.no_course);

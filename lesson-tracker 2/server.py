@@ -664,6 +664,11 @@ class Handler(BaseHTTPRequestHandler):
                     result=deletion.remove_course(c,user,data)
                     c.commit()
                     return self.response(200, result)
+                if self.path == '/api/students/course/settle':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=deletion.settle_course(c,user,data)
+                    c.commit()
+                    return self.response(200, result)
                 if self.path == '/api/students/course/stop':
                     c.execute('BEGIN IMMEDIATE')
                     result=deletion.stop_course(c,user,data)

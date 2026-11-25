@@ -130,6 +130,8 @@ def statement(c, user, period, day, start, end):
         # Her lesson value was not paid out as wages, so it is already inside the profit.
         pass
     cash = accounting.cash_breakdown(c, start, end)
+    forfeit_units = c.execute('''SELECT COALESCE(SUM(-delta),0) FROM ledger
+        WHERE kind='forfeit' AND lesson_date>=? AND lesson_date<=?''', (start.isoformat(), end.isoformat())).fetchone()[0]
     margin = None if not turnover else round((turnover - teacher_pay) * 100 / turnover, 1)
     by_type = {}
     for teacher in pay['teachers']:
@@ -144,6 +146,7 @@ def statement(c, user, period, day, start, end):
         'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'turnover_cents': turnover,
         'cash_received_cents': cash['received_cents'],
+        'forfeit_units': forfeit_units,
         'cash_refunded_cents': cash['refunded_cents'],
         'by_method': cash['by_method'],
         'by_receiver': cash['by_receiver'],

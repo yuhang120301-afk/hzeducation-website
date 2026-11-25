@@ -137,6 +137,36 @@ def withdraw_student(c, user, data):
     return {'ok': True}
 
 
+def settle_course(c, user, data):
+    """One 退课/停课 action. The balance needs 退款, 保留余额 or 作废."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以退课或停课。')
+    schema(c)
+    course = c.execute('SELECT * FROM students WHERE id=? AND archived=0 AND voided=0', (int(data.get('student_id') or 0),)).fetchone()
+    if not course:
+        raise ValueError('这门课不存在，请刷新页面。')
+    reason = str(data.get('reason') or '')
+    if int(course['balance'] or 0) > 0 and reason not in ('refund', 'keep', 'void'):
+        raise ValueError('还有余额，请选择退款、保留余额或作废。')
+    if reason not in ('refund', 'keep', 'void'):
+        reason = 'keep'
+    if reason == 'refund':
+        _settle_refund(c, user, course, data)
+    elif reason == 'void':
+        _settle_forfeit(c, user, course)
+    else:
+        _settle_keep(c, course, 'keep')
+    _drop_future(c, course['id'], '退课/停课', user)
+    c.execute('UPDATE students SET archived=1 WHERE id=?', (course['id'],))
+    import vouchers
+    note = {'refund': '退课退款', 'keep': '停课，余额保留', 'void': '作废余额'}[reason]
+    vid = vouchers.issue_stop(c, user, dict(course), False)
+    c.execute('UPDATE vouchers SET note=? WHERE id=?', (note, vid))
+    import timeline
+    timeline.record(c, user, course['id'], 'stop', f"{note} {course['course']}")
+    return {'ok': True, 'reason': reason, 'voucher_id': vid}
+
+
 def reinstate_student(c, user, data):
     """Bring a withdrawn student back. Kept balances stay. Refunded or forfeited courses return at zero."""
     if user['role'] != 'owner':
