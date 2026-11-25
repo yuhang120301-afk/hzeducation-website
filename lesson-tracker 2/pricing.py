@@ -1492,10 +1492,20 @@ def list_course_rates(c, include_left=False):
     return rows
 
 
+def _role(user):
+    """A logged-in user from SQLite is a Row. Row has no .get."""
+    if not user:
+        return ''
+    try:
+        return user['role'] or ''
+    except (KeyError, IndexError, TypeError):
+        return ''
+
+
 def apply_rate_visibility(c, user, people):
     """Hourly rates exist only on the boss payload. Other roles never receive them."""
     keys = ('rate_label', 'rate_hint', 'hourly_label', 'per_lesson_label')
-    if not user or user.get('role') != 'owner':
+    if _role(user) != 'owner':
         for person in people:
             for key in keys:
                 person.pop(key, None)

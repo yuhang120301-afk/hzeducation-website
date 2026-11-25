@@ -62,7 +62,13 @@ def open_on_ledger(c, ledger_id):
 
 
 def _owner(user):
-    if not user or user.get('role') != 'owner':
+    role = ''
+    if user:
+        try:
+            role = user['role'] or ''
+        except (KeyError, IndexError, TypeError):
+            role = ''
+    if role != 'owner':
         raise AccessError('只有老板可以登记挂账收款。')
 
 
