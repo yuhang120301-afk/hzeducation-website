@@ -420,18 +420,10 @@ def create_teacher(c,user,data,phone_value,password_hash,text_value):
     return {'ok':True,'teacher_id':tid}
 
 def require_scheduler(c,user,data):
-    if user['role'] in ('owner','admin'):return
-    if user['role']!='teacher' or data.get('lesson_id'):
-        raise AccessError('只有管理员可以排课或调整课程。')
-    own=c.execute('SELECT id FROM teachers WHERE user_id=?',(user['id'],)).fetchone()
-    if not own or str(data.get('teacher_id'))!=str(own['id']):
-        raise AccessError('老师只能为自己的学生安排自己的课程。')
-    members=data.get('student_ids')
-    if not isinstance(members,list) or not members:
-        raise AccessError('老师只能为自己的学生安排自己的课程。')
-    for sid in members:
-        if not c.execute('SELECT 1 FROM lesson_students ls JOIN lessons l ON ls.lesson_id=l.id WHERE ls.student_id=? AND l.teacher_id=?',(int(sid),own['id'])).fetchone():
-            raise AccessError('老师只能为自己的学生安排自己的课程。')
+    """Scheduling, rescheduling, skipping and hour changes are boss and admin only."""
+    if user['role'] in ('owner','admin'):
+        return
+    raise AccessError('只有老板或管理员可以排课或调整课程。')
 
 def save_schedule(c,user,data,units,text_value):
     require_scheduler(c,user,data)

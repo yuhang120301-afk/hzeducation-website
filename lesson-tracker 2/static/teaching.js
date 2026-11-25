@@ -12,8 +12,9 @@ function navigationItems(){
   ['',[['today','今天','clock'],['schedule','课表','grid'],['overview','学生','users'],['pay','工资','book'],['finance','财务','book'],['vouchers','单据','book'],['share','分红','book']]],
   ['更多',[['feedback','课后记录','check'],['accounting','收款与欠费','grid'],['prices','价格表','book'],['audit','操作日志','book'],['setup','设置','users']]]
  ];
- const items=[['schedule',role==='admin'?'排课日历':role==='teacher'?'我的课程':'孩子的课表','clock'],['feedback','课后记录','book'],['overview',role==='admin'?'学生与课时':role==='teacher'?'我的学生':'剩余余额','grid'],['records','余额明细','book']];
- if(role==='admin') items.push(['teachers','老师管理','users'],['settings','课程与地点设置','grid']);
+ if(role==='teacher') return [['',[['schedule','我的课程','clock'],['feedback','课后记录','book'],['overview','我的学生','users'],['pay','我的工资','book']]]];
+ if(role==='parent') return [['',[['schedule','孩子的课表','clock'],['feedback','课后记录','book'],['overview','剩余课时','grid'],['records','付款记录','book']]]];
+ const items=[['schedule','排课日历','clock'],['feedback','课后记录','book'],['overview','学生与课时','grid'],['records','余额明细','book'],['teachers','老师管理','users'],['settings','课程与地点设置','grid']];
  return [['',items]];
 }
 function flatNavigation(){
@@ -26,6 +27,7 @@ function flatNavigation(){
   if(view==='records') items.push(['records','余额明细','book']);
   if(view==='receipt') items.push(['receipt','单据','book']);
  }
+ if(view==='profile' && !items.some(item=>item[0]==='profile')) items.push(['profile','学生档案','users']);
  return items;
 }
 function headerActions(){
@@ -111,8 +113,10 @@ function studentFilter(){return `<select id="student-filter" class="select-filte
 function renderOverview(){
  if(typeof restoreStudentList!=='undefined' && restoreStudentList){restoreStudentList=false; loadListPlace();}
  const students=state.students,total=students.reduce((n,s)=>n+regularHours(s),0),staff=isStaff();
- $('#surface').innerHTML=`<section class="stats"><div class="stat featured"><div class="stat-label">${staff?'学生剩余余额':'孩子剩余余额'}${icon('clock')}</div><div class="stat-value">${balanceSummary(students)}</div><div class="stat-note">赠送 ${balanceSummary(students,true)}</div></div><div class="stat"><div class="stat-label">${staff?'关联学生':'关联孩子'}${icon('users')}</div><div class="stat-value">${studentGroups().length}<small>位</small></div><div class="stat-note">${staff?'可在课表中查看课程安排':'仅显示自己孩子的信息'}</div></div><div class="stat"><div class="stat-label">需要续费</div><div class="stat-value">${studentGroups().filter(g=>g.some(s=>!s.no_course&&needsRenewal(s)&&(s.study_status||'studying')!=='graduated')).length}<small>位</small></div><div class="stat-note">至少一个科目的余额不足 3 课时／小时，请续费</div></div></section>${staff?'<div class="section-head"><h2>学生课时</h2><input id="search" class="search" type="search" placeholder="搜索学生、课程或手机号" aria-label="搜索学生"></div><div id="student-list"></div>':parentCards()}<section class="recent"><div class="section-head"><h2>全校最近变动</h2><button class="action" id="all-records">全部记录 →</button></div><div id="records-list"></div></section>`;
+ const teacherHome=state.user.role==='teacher';
+ $('#surface').innerHTML=`<section class="stats"><div class="stat featured"><div class="stat-label">${teacherHome?'我的学生':staff?'学生剩余余额':'孩子剩余余额'}${icon('clock')}</div><div class="stat-value">${teacherHome?studentGroups().length:balanceSummary(students)}</div><div class="stat-note">${teacherHome?'只看自己课上的学生':`赠送 ${balanceSummary(students,true)}`}</div></div><div class="stat"><div class="stat-label">${staff?'关联学生':'关联孩子'}${icon('users')}</div><div class="stat-value">${studentGroups().length}<small>位</small></div><div class="stat-note">${staff?'可在课表中查看课程安排':'仅显示自己孩子的信息'}</div></div><div class="stat"><div class="stat-label">需要续费</div><div class="stat-value">${studentGroups().filter(g=>g.some(s=>!s.no_course&&needsRenewal(s)&&(s.study_status||'studying')!=='graduated')).length}<small>位</small></div><div class="stat-note">至少一个科目的余额不足 3 课时／小时，请续费</div></div></section>${staff?'<div class="section-head"><h2>学生课时</h2><input id="search" class="search" type="search" placeholder="搜索学生、课程或手机号" aria-label="搜索学生"></div><div id="student-list"></div>':parentCards()}<section class="recent"><div class="section-head"><h2>全校最近变动</h2><button class="action" id="all-records">全部记录 →</button></div><div id="records-list"></div></section>`;
  if(staff){if(['owner','admin'].includes(state.user.role)){$('#search').insertAdjacentHTML('afterend',`<select id="study-filter" class="select-filter" aria-label="按在读状态筛选"><option value="studying">在读</option><option value="graduated">已毕业</option><option value="all">全部</option></select><select id="student-status-filter" class="select-filter" aria-label="按学生课时状态筛选"><option value="all">全部状态</option><option value="normal">正常（余额不少于 3）</option><option value="renewal">需续费（余额不足 3）</option></select>`);$('#study-filter').value=studyFilter;$('#study-filter').onchange=e=>{studyFilter=e.target.value;renderStudents();};$('#student-status-filter').value=studentStatus;$('#student-status-filter').onchange=e=>{studentStatus=e.target.value;renderStudents();};}$('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderStudents();};renderStudents();}
+ document.querySelectorAll('.child-card[data-open-student]').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; if(typeof openDetail==='function') openDetail('/students/'+card.dataset.openStudent);});
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=()=>{selected=b.dataset.child; showView('records');});
  $('#all-records').onclick=()=>{selected=''; showView('records');};renderRecords();
 }
@@ -150,7 +154,7 @@ function timeCalendar(rows){
  const hour=String(first+i).padStart(2,'0')+':00';
  return `<tr><th class="time-axis">${hour}</th>${days.map(day=>{
  const slot=day+'T'+hour,list=rows.filter(l=>l.starts_at.slice(0,13)===slot.slice(0,13));
- return `<td class="${day===state.today?'calendar-today':''}">${list.map(lessonCard).join('')}${isStaff()?`<button class="calendar-slot ${list.length?'slot-add':''}" data-slot="${slot}" aria-label="${day} ${hour} · 新增排课">${list.length?'+':'<span>暂无课程</span><small>＋ 排课</small>'}</button>`:''}</td>`;
+ return `<td class="${day===state.today?'calendar-today':''}">${list.map(lessonCard).join('')}${['owner','admin'].includes(state.user.role)?`<button class="calendar-slot ${list.length?'slot-add':''}" data-slot="${slot}" aria-label="${day} ${hour} · 新增排课">${list.length?'+':'<span>暂无课程</span><small>＋ 排课</small>'}</button>`:''}</td>`;
  }).join('')}</tr>`;
  }).join('')}</tbody></table></div>`;
 }
