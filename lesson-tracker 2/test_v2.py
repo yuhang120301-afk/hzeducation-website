@@ -93,7 +93,7 @@ class PackageValueTests(unittest.TestCase):
             VALUES(?,?,?,?,100,'教室',?,?)''', (tid, '数学', soon, end, actor, uuid.uuid4().hex)).lastrowid
         self.c.execute('INSERT INTO lesson_students VALUES(?,?)', (lid, sid))
         lesson = dict(self.c.execute('SELECT * FROM lessons WHERE id=?', (lid,)).fetchone())
-        teaching.cancel_lesson(self.c, {'id': 1, 'role': 'owner'}, {'lesson_id': lid, 'version': lesson['version'], 'reason': '临时请假'}, lambda *a, **k: '请假')
+        teaching.cancel_lesson(self.c, {'id': 1, 'role': 'owner'}, {'lesson_id': lid, 'version': lesson['version'], 'reason': '临时请假', 'charge': True}, lambda *a, **k: '请假')
         balance = self.c.execute('SELECT balance FROM students WHERE id=?', (sid,)).fetchone()['balance']
         self.assertEqual(balance, 0)
         self.assertEqual(self.c.execute("SELECT status FROM lessons WHERE id=?", (lid,)).fetchone()['status'], 'cancelled')

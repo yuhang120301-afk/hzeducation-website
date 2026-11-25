@@ -55,6 +55,15 @@ def schema(c):
         actor_id INTEGER NOT NULL REFERENCES users(id), payload TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
+    CREATE TABLE IF NOT EXISTS arrears (
+        id INTEGER PRIMARY KEY,
+        student_id INTEGER NOT NULL REFERENCES students(id),
+        lesson_id INTEGER,
+        amount INTEGER NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        settled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
     CREATE INDEX IF NOT EXISTS lesson_time ON lessons(teacher_id,starts_at,ends_at);
     CREATE INDEX IF NOT EXISTS enrollment_student ON lesson_students(student_id,lesson_id);
     ''')
@@ -892,15 +901,6 @@ def apply_late_leave(c, lesson):
     gap = (start - now).total_seconds()
     if gap <= 0 or gap > 48 * 3600:
         return
-    c.execute('''CREATE TABLE IF NOT EXISTS arrears (
-        id INTEGER PRIMARY KEY,
-        student_id INTEGER NOT NULL REFERENCES students(id),
-        lesson_id INTEGER,
-        amount INTEGER NOT NULL,
-        reason TEXT NOT NULL DEFAULT '',
-        settled INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    )''')
     import credit_batches
     for row in c.execute('SELECT student_id FROM lesson_students WHERE lesson_id=?', (lesson['id'],)):
         student = c.execute('SELECT balance, billing_unit FROM students WHERE id=?', (row['student_id'],)).fetchone()
