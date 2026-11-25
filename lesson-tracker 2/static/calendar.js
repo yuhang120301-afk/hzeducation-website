@@ -446,7 +446,7 @@ async function renderToday(){
   hits.hidden=false;
   hits.innerHTML=[...students.map(student=>`<button type="button" data-open-student="${student.id}">学生 · ${userHTML(student.name)}</button>`),...teachers.map(teacher=>`<button type="button" data-open-teacher="${teacher.id}">老师 · ${userHTML(teacher.name)}</button>`)].join('')||'<p>没有匹配的老师或学生。</p>';
   hits.querySelectorAll('[data-open-student]').forEach(button=>button.onclick=()=>{if(typeof openDetail==='function') openDetail('/students/'+button.dataset.openStudent);});
-  hits.querySelectorAll('[data-open-teacher]').forEach(button=>button.onclick=()=>{teacherFilter=button.dataset.openTeacher;view='schedule';render();});
+  hits.querySelectorAll('[data-open-teacher]').forEach(button=>button.onclick=()=>{teacherFilter=button.dataset.openTeacher; if(typeof showView==='function') showView('schedule'); else {view='schedule'; render();}});
  };
  document.querySelectorAll('[data-today-done]').forEach(button=>button.onclick=()=>quickCloseModal(lessonById(button.dataset.todayDone)));
  document.querySelectorAll('[data-today-leave]').forEach(button=>button.onclick=async()=>{
