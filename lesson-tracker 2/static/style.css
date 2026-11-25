@@ -249,6 +249,9 @@ tr[data-voucher]{cursor:pointer}
 }
 .page-back{margin:0 0 16px;text-align:left}
 .page-back .btn{font-weight:700}
+.profile-student{margin:0 0 18px}
+.profile-student h2{margin:0 0 4px;font-size:28px;line-height:1.25;letter-spacing:-.4px;color:#204F40}
+.profile-student .muted{margin:0;font-size:14px;line-height:1.6}
 .year-fold{margin:0 0 10px;border:1px solid #D9E3DF;border-radius:12px;background:#fff;overflow:hidden}
 .year-fold:not([open])>.year-fold-students{display:none}
 .year-fold>summary{display:flex;align-items:center;gap:10px;min-height:52px;padding:12px 16px;cursor:pointer;list-style:none;font-weight:700;color:#204F40}

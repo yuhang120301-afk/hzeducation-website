@@ -122,11 +122,13 @@ function showView(name){
 }
 function openDetail(path){
  sessionStorage.setItem('hz-internal-nav','1');
- history.pushState({hz:1}, '', path);
+ const fromStudentList=view==='overview' && !location.pathname.startsWith('/students/');
+ if(!fromStudentList && /^\/students\/\d+\/?$/.test(path)) forgetListFocus();
+ history.pushState({hz:1, fromStudentList:!!fromStudentList}, '', path);
  applyRoute();
  render();
 }
-let restoreStudentList=false;
+let restoreStudentList=false, pendingListFocus=null;
 function goBack(parent){
  if(String(parent).includes('overview')) restoreStudentList=true;
  let same=false;
@@ -136,6 +138,18 @@ function goBack(parent){
  applyRoute();
  render();
 }
+function backToStudents(){
+ restoreStudentList=true;
+ if(history.state && history.state.fromStudentList){history.back(); return;}
+ const target='/?view=overview';
+ if(location.pathname+location.search!==target) history.pushState({hz:1}, '', target);
+ applyRoute();
+ render();
+}
+function bindStudentBack(){
+ const button=$('#page-back');
+ if(button) button.onclick=()=>backToStudents();
+}
 function backBar(){
  return `<p class="page-back"><button type="button" class="btn" id="page-back">返回</button></p>`;
 }
@@ -143,8 +157,21 @@ function bindBack(parent){
  const button=$('#page-back');
  if(button) button.onclick=()=>goBack(parent);
 }
-function saveListPlace(){
- try{sessionStorage.setItem('hz-student-list', JSON.stringify({search, studentStatus, studyFilter, y:window.scrollY}));}catch(error){}
+function saveListPlace(studentId){
+ const openYears=[];
+ document.querySelectorAll('#student-list details.year-fold[open]').forEach(fold=>{
+  if(fold.dataset.year) openYears.push(fold.dataset.year);
+ });
+ try{sessionStorage.setItem('hz-student-list', JSON.stringify({search, studentStatus, studyFilter, y:window.scrollY, openYears, studentId:studentId?String(studentId):''}));}catch(error){}
+}
+function forgetListFocus(){
+ try{
+  const saved=JSON.parse(sessionStorage.getItem('hz-student-list')||'null');
+  if(!saved) return;
+  saved.openYears=[];
+  saved.studentId='';
+  sessionStorage.setItem('hz-student-list', JSON.stringify(saved));
+ }catch(error){}
 }
 function loadListPlace(){
  try{
@@ -153,8 +180,30 @@ function loadListPlace(){
   search=saved.search||'';
   studentStatus=saved.studentStatus||studentStatus;
   studyFilter=saved.studyFilter||studyFilter;
-  requestAnimationFrame(()=>window.scrollTo(0, saved.y||0));
+  pendingListFocus=saved;
  }catch(error){}
+}
+function revealStudentList(){
+ const saved=pendingListFocus;
+ pendingListFocus=null;
+ if(!saved || view!=='overview') return;
+ const open=new Set((saved.openYears||[]).map(String));
+ document.querySelectorAll('#student-list details.year-fold').forEach(fold=>{
+  if(open.has(fold.dataset.year||'')) fold.open=true;
+ });
+ const id=String(saved.studentId||'');
+ const card=/^\d+$/.test(id)?document.querySelector('#student-list [data-open-student="'+id+'"]'):null;
+ if(card){
+  const fold=card.closest('details.year-fold');
+  if(fold) fold.open=true;
+ }
+ const pin=()=>{
+  if(card && card.isConnected) card.scrollIntoView({block:'center', inline:'nearest'});
+  else window.scrollTo(0, Number(saved.y)||0);
+  if(placeHold) placeHold.window=window.scrollY||document.documentElement.scrollTop||0;
+ };
+ pin();
+ requestAnimationFrame(pin);
 }
 window.addEventListener('popstate', ()=>{if(state.user) render();});
 function render(){
@@ -169,6 +218,7 @@ function render(){
  }
  dashboard();
  if(place) armPlace(place);
+ if(pendingListFocus) revealStudentList();
 }
 function contactCard(){
  const info=state.contact||{};
@@ -319,7 +369,8 @@ function studentFold(group, admin){
  const teacherView=state.user.role==='teacher';
  const parentView=state.user.role==='parent';
  const links=`<p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button> ${state.user.role==='owner'?`<button class="action" data-vouchers="${person.id}" type="button">单据 →</button>`:''}</p>`;
- const who=teacherView?studyTag(person):`<p class="muted">${userHTML(person.parent_name||'未填家长')}${parentView?'':` · ${userHTML(person.contact_phone||person.phone||'')}`}${person.birthday?' · '+escapeHTML(person.birthday):''} ${studyTag(person)}</p>`;
+ const parentLine=teacherView?studyTag(person):`${userHTML(person.parent_name||'未填家长')}${parentView?'':` · ${userHTML(person.contact_phone||person.phone||'')}`}${person.birthday?' · '+escapeHTML(person.birthday):''} ${studyTag(person)}`;
+ const who=`<div class="profile-student"><h2>${userHTML(person.name)}</h2><p class="muted">${parentLine}</p></div>`;
  return `${who}${actions}${profileSection('courses',teacherView?'报名课程':'报名与课时包',active.length?enrolments:'<p>未选课 / 请添加课程</p>',true)}${profileSection('recent','最近课时记录',previewList(recent, recentRow, '还没有这名学生的课时记录。'),true)}${profileSection('lessons','上课记录',lessonTimeline(lessons, lessonRow, attendedRow),true)}${teacherView?'':profileSection('payments',parentView?'付款记录':'收款',previewList(payments, payRow, '还没有收款或退款。'),true)}${teacherView||parentView?'':profileSection('notes','备注',`<p>${person.notes?userHTML(person.notes):'没有备注。'}</p>${links}`,true)}${stopped.length&&!teacherView?profileSection('stopped',`已停课程 (${stopped.length})`,previewList(stopped, stoppedRow, ''),false):''}`;
 }
 function renderStudents(){
@@ -327,7 +378,7 @@ function renderStudents(){
  const groups=studentGroups().filter(group=>studyFilter==='all'||(group[0].study_status||'studying')===studyFilter).map(group=>group.filter(s=>s.no_course||!admin||studentStatus==='all'||(studentStatus==='renewal'?needsRenewal(s):!needsRenewal(s)))).filter(group=>group.length&&group.some(s=>`${s.name} ${s.course} ${s.subject_name||''} ${s.phone} ${s.grade||''}`.toLowerCase().includes(search.toLowerCase())));
  const searching=String(search||'')!=='';
  $('#student-list').innerHTML=groups.length?(admin?yearLevelFolds(groups, searching):groups.map(group=>studentListCard(group, admin)).join('')):`<div class="panel empty">${search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。'}</div>`;
- document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; saveListPlace(); openDetail('/students/'+card.dataset.openStudent);});
+ document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; saveListPlace(card.dataset.openStudent); openDetail('/students/'+card.dataset.openStudent);});
  document.querySelectorAll('#student-list [data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
  document.querySelectorAll('#student-list [data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
 }
@@ -361,6 +412,8 @@ function currentYearRank(person){
  return index+(person&&person.level_past?0.5:0);
 }
 function yearLevelFolds(groups, searching){
+ const remembered=pendingListFocus && Array.isArray(pendingListFocus.openYears)?new Set(pendingListFocus.openYears.map(String)):new Set();
+ const focusId=pendingListFocus?String(pendingListFocus.studentId||''):'';
  const buckets=new Map();
  groups.forEach(group=>{
   const known=currentYearLabel(group[0]);
@@ -368,14 +421,18 @@ function yearLevelFolds(groups, searching){
   if(!buckets.has(label)) buckets.set(label,{label,rank:known?currentYearRank(group[0]):100,groups:[]});
   buckets.get(label).groups.push(group);
  });
- return [...buckets.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label,'en')).map(section=>`<details class="year-fold"${searching?' open':''}><summary><span class="year-fold-chevron" aria-hidden="true"></span><span class="year-fold-label">${escapeHTML(section.label)}</span><span class="year-fold-count">${section.groups.length} 位</span></summary><div class="year-fold-students">${section.groups.map(group=>studentListCard(group, true)).join('')}</div></details>`).join('');
+ return [...buckets.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label,'en')).map(section=>{
+  const contains=focusId && section.groups.some(group=>String(group[0].id)===focusId);
+  const opened=searching || remembered.has(section.label) || contains;
+  return `<details class="year-fold" data-year="${escapeHTML(section.label)}"${opened?' open':''}><summary><span class="year-fold-chevron" aria-hidden="true"></span><span class="year-fold-label">${escapeHTML(section.label)}</span><span class="year-fold-count">${section.groups.length} 位</span></summary><div class="year-fold-students">${section.groups.map(group=>studentListCard(group, true)).join('')}</div></details>`;
+ }).join('');
 }
 function renderStudentProfile(){
  const group=studentGroupById(profileId);
  const admin=['owner','admin'].includes(state.user.role);
- if(!group){$('#surface').innerHTML=`${backBar()}<div class="panel empty">找不到这位学生。</div>`; bindBack('/?view=overview'); return;}
+ if(!group){$('#surface').innerHTML=`${backBar()}<div class="panel empty">找不到这位学生。</div>`; bindStudentBack(); return;}
  $('#surface').innerHTML=`${backBar()}${studentFold(group, admin)}`;
- bindBack('/?view=overview');
+ bindStudentBack();
  bindProfileActions();
 }
 function reportHasRecord(report){
