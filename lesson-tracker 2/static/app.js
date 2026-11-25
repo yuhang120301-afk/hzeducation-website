@@ -104,6 +104,12 @@ function applyRoute(){
  if(requested) view=requested;
  else if(view==='profile') view='overview';
 }
+function showView(name){
+ const next='/?view='+encodeURIComponent(name);
+ if(location.pathname+location.search!==next) history.pushState({hz:1}, '', next);
+ view=name;
+ render();
+}
 function openDetail(path){
  sessionStorage.setItem('hz-internal-nav','1');
  history.pushState({hz:1}, '', path);
