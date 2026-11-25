@@ -39,7 +39,9 @@ class PlanError(RuntimeError):
 
 def connect(db_path, write):
     if write:
-        c = sqlite3.connect(db_path, timeout=30)
+        # isolation_level=None does not open a transaction on the first statement.
+        # Schema work can then finish before BEGIN IMMEDIATE.
+        c = sqlite3.connect(db_path, timeout=30, isolation_level=None)
         c.execute('PRAGMA foreign_keys=ON')
     else:
         c = sqlite3.connect(f'file:{os.path.realpath(db_path)}?mode=ro', uri=True, timeout=30)
@@ -47,6 +49,12 @@ def connect(db_path, write):
     c.row_factory = sqlite3.Row
     c.execute('PRAGMA busy_timeout=30000')
     return c
+
+
+def finish_implicit_transaction(c):
+    """Schema reads and ALTERs can leave a transaction open under the default adapter."""
+    if c.in_transaction:
+        c.commit()
 
 
 def integrity(c, when):
@@ -300,6 +308,8 @@ def main():
     c = connect(args.db, True)
     try:
         profiles.schema(c)
+        auditlog.schema(c)
+        finish_implicit_transaction(c)
         c.execute('BEGIN IMMEDIATE')
         integrity(c, 'before changes')
         groups = build_groups(c, source, moves)
