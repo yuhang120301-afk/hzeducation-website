@@ -190,7 +190,7 @@
  '把每一次进步，认真记下来。':'A thoughtful record of every step forward.',
  '账目总结':'Reconciliation','核对收款、退款与课时变动，每笔数字都有明细。':'Review receipts, refunds and lesson credits with transaction-level details.',
  '由老板开通管理员账号，分工管理机构日常事务。':'Create administrator accounts to manage daily school operations.',
- '排课日历':'Lesson calendar','我的课表':'My schedule','孩子的课表':'My child’s schedule','课后记录':'Lesson reports','学生与课时':'Students & credits','我的学生':'My students','剩余课时':'Remaining credits','课时明细':'Credit history','老师管理':'Teachers',
+ '排课日历':'Lesson calendar','我的课表':'My schedule','孩子的课表':'My child’s schedule','课后记录':'Lesson reports','学生与课时':'Students & credits','我的学生':'My students','剩余课时':'Remaining paid credits','剩余赠送课时':'Remaining gift credits','课时明细':'Credit history','老师管理':'Teachers',
  '记录学习内容、今日作业和课后反馈。':'Record learning content, homework and feedback.','查看孩子每节课的学习内容、作业与老师反馈。':'See what your child learned, their homework and teacher feedback.',
  '查看学生余额，管理每一笔课时。':'View student balances and manage lesson credits.','剩余课时与学习记录，随时查看。':'Check remaining credits and learning records at any time.',
  '每一笔课时变动，均有记录可查。':'Every credit change has a clear record.','为任课老师开通独立账号，并安排课程。':'Create individual teacher accounts and assign lessons.',
