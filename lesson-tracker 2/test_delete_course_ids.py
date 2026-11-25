@@ -107,6 +107,73 @@ class DeleteCourseIdTests(unittest.TestCase):
             self.assertEqual(claire['name'], 'Claire')
             self.assertEqual(claire['course'], '')
 
+    def test_force_names_the_rows_and_drops_only_zero_documents(self):
+        env = {**os.environ, 'LESSON_DB': str(DB)}
+        with server.connect() as c:
+            parent = c.execute("SELECT id FROM users WHERE phone='0433200002'").fetchone()[0]
+            owner = c.execute("SELECT id FROM users WHERE phone='0433200001'").fetchone()[0]
+            teacher = c.execute('SELECT id FROM teachers LIMIT 1').fetchone()[0]
+
+            def add_person(student_id, name):
+                profile = c.execute('INSERT INTO student_profiles(name,grade) VALUES(?,?)', (name, 'Y5')).lastrowid
+                c.execute('INSERT INTO profile_parents(profile_id, user_id) VALUES(?,?)', (profile, parent))
+                c.execute('''INSERT INTO students(id,name,course,parent_id,profile_id,balance,archived,voided)
+                    VALUES(?,?,?,?,?,0,0,0)''', (student_id, name, '数学', parent, profile))
+                return profile
+
+            void_person = add_person(126, 'VoidDoc')
+            zero_person = add_person(169, 'ZeroDoc')
+            money_person = add_person(170, 'MoneyDoc')
+            taught_person = add_person(171, 'Taught')
+            void_id = c.execute('''INSERT INTO vouchers(number,kind,status,student_id,student_name,course,lesson_date,amount_cents,created_by)
+                VALUES('CZ-TEST-VOID','receipt','void',126,'VoidDoc','数学','2026-10-01',0,?)''', (owner,)).lastrowid
+            event_id = c.execute('''INSERT INTO voucher_events(voucher_id,actor_id,action,detail)
+                VALUES(?,?,'void','作废')''', (void_id, owner)).lastrowid
+            zero_id = c.execute('''INSERT INTO vouchers(number,kind,status,student_id,student_name,course,lesson_date,amount_cents,paid_units,gift_units,created_by)
+                VALUES('CZ-TEST-ZERO','receipt','pending',169,'ZeroDoc','数学','2026-10-02',0,0,0,?)''', (owner,)).lastrowid
+            money_id = c.execute('''INSERT INTO vouchers(number,kind,status,student_id,student_name,course,lesson_date,amount_cents,created_by)
+                VALUES('CZ-TEST-MONEY','receipt','approved',170,'MoneyDoc','数学','2026-10-03',8000,?)''', (owner,)).lastrowid
+            lesson = c.execute('''INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,created_by,request_id,status)
+                VALUES(?,?,?,?,100,'教室',?,?,'completed')''',
+                (teacher, '数学', '2026-10-04T16:00', '2026-10-04T17:00', owner, uuid.uuid4().hex)).lastrowid
+            c.execute('INSERT INTO lesson_students(lesson_id,student_id) VALUES(?,171)', (lesson,))
+            c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,updated_by)
+                VALUES(?,171,100,'上过了',?)''', (lesson, owner))
+            c.commit()
+        ids = '126,169,170,171'
+        dry = subprocess.run([sys.executable, str(SCRIPT), '--delete-course-ids', ids], env=env, capture_output=True, text=True)
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        self.assertIn(f'vouchers #{void_id}', dry.stdout)
+        self.assertIn(f'voucher_events #{event_id}', dry.stdout)
+        self.assertIn(f'vouchers #{zero_id}', dry.stdout)
+        self.assertIn(f'vouchers #{money_id}（有单据）', dry.stdout)
+        self.assertIn(f'lesson_reports lesson={lesson} student=171（有上课记录）', dry.stdout)
+        self.assertIn('courses_delete=0', dry.stdout)
+        forced = subprocess.run([sys.executable, str(SCRIPT), '--delete-course-ids', ids, '--force'],
+            env=env, capture_output=True, text=True)
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertIn('courses_delete=2', forced.stdout)
+        self.assertIn(f'vouchers #{money_id}（有单据）', forced.stdout)
+        self.assertIn('有上课记录', forced.stdout)
+        self.assertIn('未写入', forced.stdout)
+        applied = subprocess.run([sys.executable, str(SCRIPT), '--delete-course-ids', ids, '--force', '--apply'],
+            env=env, capture_output=True, text=True)
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertIn('payments_before=0', applied.stdout)
+        self.assertIn('payments_after=0', applied.stdout)
+        with server.connect() as c:
+            self.assertIsNone(c.execute('SELECT 1 FROM students WHERE id IN (126,169)').fetchone())
+            self.assertIsNone(c.execute('SELECT 1 FROM vouchers WHERE id IN (?,?)', (void_id, zero_id)).fetchone())
+            self.assertIsNone(c.execute('SELECT 1 FROM voucher_events WHERE id=?', (event_id,)).fetchone())
+            self.assertEqual(c.execute('SELECT name FROM student_profiles WHERE id=?', (void_person,)).fetchone()[0], 'VoidDoc')
+            self.assertEqual(c.execute('SELECT name FROM student_profiles WHERE id=?', (zero_person,)).fetchone()[0], 'ZeroDoc')
+            self.assertIsNotNone(c.execute('SELECT 1 FROM students WHERE id=170').fetchone())
+            self.assertIsNotNone(c.execute('SELECT 1 FROM vouchers WHERE id=?', (money_id,)).fetchone())
+            self.assertIsNotNone(c.execute('SELECT 1 FROM students WHERE id=171').fetchone())
+            self.assertIsNotNone(c.execute('SELECT 1 FROM lesson_reports WHERE student_id=171').fetchone())
+            self.assertEqual(c.execute('SELECT name FROM student_profiles WHERE id=?', (money_person,)).fetchone()[0], 'MoneyDoc')
+            self.assertEqual(c.execute('SELECT name FROM student_profiles WHERE id=?', (taught_person,)).fetchone()[0], 'Taught')
+
 
 if __name__ == '__main__':
     unittest.main()
