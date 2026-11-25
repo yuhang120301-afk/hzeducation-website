@@ -294,7 +294,7 @@ def _public(row, actor):
 def search(c, user, student_id=None, kind=None, status=None, start=None, end=None, query=None):
     _owner(user)
     sql = '''SELECT v.*, u.name actor_name FROM vouchers v
-        LEFT JOIN users u ON u.id=v.created_by WHERE 1=1'''
+        LEFT JOIN users u ON u.id=v.created_by WHERE NOT (v.kind='stop' AND v.status='void')'''
     args = []
     if student_id:
         sql += ' AND v.student_id=?'

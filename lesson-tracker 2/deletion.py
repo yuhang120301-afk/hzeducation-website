@@ -81,7 +81,15 @@ def _history(c, sid):
     return False
 
 
-def _drop_future(c, sid):
+def schema(c):
+    cols = {row['name'] for row in c.execute('PRAGMA table_info(students)')}
+    if 'voided' not in cols:
+        c.execute('ALTER TABLE students ADD COLUMN voided INTEGER NOT NULL DEFAULT 0')
+    if 'void_reason' not in cols:
+        c.execute("ALTER TABLE students ADD COLUMN void_reason TEXT NOT NULL DEFAULT ''")
+
+
+def _drop_future(c, sid, cancel_reason='停课'):
     """Cancel this course's future lessons and stop a series that would keep adding it."""
     now = now_local().strftime('%Y-%m-%dT%H:%M')
     lessons = list(c.execute('''SELECT l.id, l.series_id, l.occurrence_index FROM lessons l
@@ -93,7 +101,7 @@ def _drop_future(c, sid):
         if others:
             c.execute('DELETE FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], sid))
         else:
-            c.execute("UPDATE lessons SET status='cancelled', cancel_reason='停课', version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (lesson['id'],))
+            c.execute("UPDATE lessons SET status='cancelled', cancel_reason=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (cancel_reason, lesson['id'],))
         if lesson['series_id']:
             seen.add(lesson['series_id'])
     for rule in c.execute('SELECT * FROM lesson_series'):
@@ -154,3 +162,110 @@ def stop_course(c, user, data):
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (sid, user['id'], 'course_stopped'))
     _tell_vouchers(c, user, student, False)
     return {'ok': True, 'deleted': False, 'archived': True, 'balance': balance}
+
+
+def _has(c, name):
+    return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def course_problems(c, sid):
+    """Why this course cannot be removed as a mistake. Empty means a void is allowed."""
+    problems = []
+    attended = c.execute('''SELECT COUNT(*) n FROM lessons l
+        JOIN lesson_students ls ON ls.lesson_id=l.id
+        WHERE ls.student_id=? AND l.status='completed' ''', (sid,)).fetchone()['n']
+    if _has(c, 'lesson_reports'):
+        attended += c.execute('''SELECT COUNT(*) n FROM lesson_reports
+            WHERE student_id=? AND (ledger_id IS NOT NULL OR content!='' OR homework!='' OR feedback!='')''', (sid,)).fetchone()['n']
+    if attended:
+        problems.append(f'已经上过或写过记录（{attended}）')
+    charged = c.execute('''SELECT COUNT(*) n FROM ledger WHERE student_id=? AND kind='lesson'
+        AND NOT EXISTS (SELECT 1 FROM ledger r WHERE r.reversal_of=ledger.id)''', (sid,)).fetchone()['n']
+    if charged:
+        problems.append(f'已经扣过课时（{charged} 笔）')
+    if _has(c, 'cash_entries'):
+        money = c.execute('''SELECT COALESCE(SUM(ABS(cash.cash_delta)),0) n
+            FROM cash_entries cash JOIN ledger l ON l.id=cash.ledger_id
+            WHERE l.student_id=? AND cash.cash_delta!=0''', (sid,)).fetchone()['n']
+        if money:
+            problems.append('有收过或退过的钱')
+    return problems
+
+
+def _erase_zero_money(c, sid):
+    """Drop packs and receipts that never moved money. Charged lessons are refused earlier."""
+    ledger_ids = [row['id'] for row in c.execute(
+        "SELECT id FROM ledger WHERE student_id=? AND kind!='lesson'", (sid,))]
+    if not ledger_ids:
+        if _has(c, 'credit_batches'):
+            c.execute('DELETE FROM credit_batches WHERE student_id=?', (sid,))
+        c.execute('UPDATE students SET balance=0 WHERE id=?', (sid,))
+        return
+    marks = ','.join('?' for _ in ledger_ids)
+    if _has(c, 'vouchers'):
+        voucher_ids = [row['id'] for row in c.execute(
+            f'SELECT id FROM vouchers WHERE student_id=? OR ledger_id IN ({marks})', (sid, *ledger_ids))]
+        if voucher_ids:
+            vmarks = ','.join('?' for _ in voucher_ids)
+            if _has(c, 'voucher_events'):
+                c.execute(f'DELETE FROM voucher_events WHERE voucher_id IN ({vmarks})', tuple(voucher_ids))
+            c.execute(f'DELETE FROM vouchers WHERE id IN ({vmarks})', tuple(voucher_ids))
+    if _has(c, 'cash_entries'):
+        c.execute(f'DELETE FROM cash_entries WHERE ledger_id IN ({marks})', tuple(ledger_ids))
+    if _has(c, 'credit_movements'):
+        c.execute(f'DELETE FROM credit_movements WHERE ledger_id IN ({marks})', tuple(ledger_ids))
+    if _has(c, 'credit_batches'):
+        c.execute(f'DELETE FROM credit_batches WHERE student_id=? OR ledger_id IN ({marks})', (sid, *ledger_ids))
+    c.execute(f'DELETE FROM ledger WHERE id IN ({marks}) AND reversal_of IS NOT NULL', tuple(ledger_ids))
+    c.execute(f'DELETE FROM ledger WHERE id IN ({marks})', tuple(ledger_ids))
+    c.execute('UPDATE students SET balance=0 WHERE id=?', (sid,))
+
+
+def _void_course(c, user, student, reason):
+    sid = student['id']
+    if not _history(c, sid):
+        c.execute('DELETE FROM credit_batches WHERE student_id=?', (sid,))
+        if _has(c, 'arrears'):
+            c.execute('DELETE FROM arrears WHERE student_id=?', (sid,))
+        c.execute('DELETE FROM profile_audit WHERE student_id=?', (sid,))
+        c.execute('DELETE FROM students WHERE id=?', (sid,))
+        return {'ok': True, 'deleted': True, 'voided': True, 'archived': False}
+    _drop_future(c, sid, '加错了')
+    _erase_zero_money(c, sid)
+    c.execute('UPDATE students SET archived=1, voided=1, void_reason=?, balance=0 WHERE id=?', (reason[:200], sid))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (sid, user['id'], 'course_voided'))
+    return {'ok': True, 'deleted': False, 'voided': True, 'archived': True}
+
+
+def remove_course(c, user, data):
+    """Delete one course. 加错了 voids it. 退课 keeps today's withdrawal receipt."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以删除课程。')
+    schema(c)
+    reason = str(data.get('reason') or 'mistake')
+    if reason not in ('mistake', 'withdraw', 'other'):
+        raise ValueError('请选择原因。')
+    note = str(data.get('note') or '').strip()
+    if reason == 'other' and not note:
+        raise ValueError('请填写原因。')
+    if len(note) > 200:
+        raise ValueError('原因不能超过 200 个字。')
+    sid = int(data.get('student_id') or data.get('id') or 0)
+    student = c.execute('SELECT * FROM students WHERE id=? AND archived=0', (sid,)).fetchone()
+    if not student:
+        raise ValueError('这门课不存在，请刷新页面。')
+    problems = course_problems(c, sid)
+    if reason != 'withdraw' and problems:
+        raise ValueError('这门课不能按加错了删除：' + '；'.join(problems) + '。请改选退课。')
+    import auditlog
+    auditlog.begin(c)
+    if reason == 'withdraw':
+        result = stop_course(c, user, {'student_id': sid})
+        label = '退课'
+    else:
+        result = _void_course(c, user, student, note or '加错了')
+        label = note or '加错了'
+    auditlog.hint(c, f"删除课程 {student['name']} {student['course']}（{label}）")
+    auditlog.finish(c, user)
+    result['reason'] = reason
+    return result
