@@ -280,3 +280,11 @@ th.voucher-check,td.voucher-check{padding-left:16px;padding-right:8px}
  .year-fold .pay-card>div:nth-child(2) h2{font-size:18px;line-height:1.35}
  .year-fold .pay-card .btn{margin-left:auto}
 }
+.lesson-card.absent,.gcal-event.absent,.month-chip.absent{--event-bg:#FDECEC;--event-ink:#7A1F1F;--event-edge:#D64545;background:#FDECEC;color:#7A1F1F;border-color:#D64545}
+.lesson-card.absent{border-color:#F3C7C7;border-left-color:#D64545}
+.lesson-card.absent .lesson-time,.lesson-card.absent .lesson-state,.lesson-card.absent>span{color:#7A1F1F}
+.lesson-card.absent:hover{background:#F8DADA}
+.today-lesson.absent{--fill:#FDECEC;--tone:#D64545;background:#FDECEC}
+.absence-tag{display:inline-block;margin-top:2px;padding:0 5px;border-radius:4px;background:#B42318;color:#fff;font-style:normal;font-weight:700;font-size:11px;line-height:1.6}
+.badge.absent{background:#FDECEC;color:#B42318}
+.scope-actions{display:flex;flex-wrap:wrap;gap:10px}

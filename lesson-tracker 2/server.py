@@ -667,7 +667,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:result=accounting.supplement_cash(c,user,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/schedule-options','/api/teachers/edit','/api/teachers/status','/api/teachers','/api/lessons','/api/lessons/cancel','/api/reports/draft','/api/reports/complete','/api/reports/close','/api/reports/edit'):
+                if self.path in ('/api/schedule-options','/api/teachers/edit','/api/teachers/status','/api/teachers','/api/lessons','/api/lessons/cancel','/api/lessons/absent','/api/lessons/absent/undo','/api/reports/draft','/api/reports/complete','/api/reports/close','/api/reports/edit'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/schedule-options':
                         result=teaching.save_option(c,user,data,text_value)
@@ -685,6 +685,10 @@ class Handler(BaseHTTPRequestHandler):
                         result=teaching.save_schedule(c,user,data,units,text_value)
                     elif self.path=='/api/lessons/cancel':
                         result=teaching.cancel_lesson(c,user,data,text_value)
+                    elif self.path=='/api/lessons/absent':
+                        result=teaching.mark_absent(c,user,data,units)
+                    elif self.path=='/api/lessons/absent/undo':
+                        result=teaching.undo_absent(c,user,data)
                     else:
                         result=teaching.save_reports(c,user,data,units,self.path.rsplit('/',1)[1])
                     c.commit()

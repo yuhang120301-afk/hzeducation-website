@@ -4,6 +4,10 @@ A confirmed lesson is worth the package price divided by the paid lessons in
 that package. Gift lessons are worth nothing. Helen can type over that number.
 Vincent's teaching pay (his own percentage) is separate from his share of what
 is left after shared costs are taken out of new students' fees.
+
+An absence is not taught time. absence_pay_clause is the only place that
+decides whether one is paid. Charging the student's balance does not pay
+the teacher.
 """
 import calendar
 import csv
@@ -258,6 +262,21 @@ def student_is_new(helen_original):
     return not helen_original
 
 
+def absence_pay_clause():
+    """SQL AND-fragment for teacher pay. This is the only pay decision for 请假.
+
+    Absences are not taught hours and are not paid, whether or not the
+    student's balance was charged. Pay rules that pay an attended lesson do
+    not apply to an absence. To pay a charged absence the same way as an
+    attended lesson, return:
+        " AND (COALESCE(l.absent,0)=0 OR COALESCE(l.absent_charge,0)=1)"
+    Uncharged absences stay unpaid with that change too, unless the fragment
+    is widened further. A charged absence has no lesson report, so it still
+    produces no pay line until this query is also given one.
+    """
+    return ' AND COALESCE(l.absent, 0)=0'
+
+
 def confirmed_rows(c, start, end):
     return c.execute('''SELECT l.id lesson_id, l.teacher_id, l.title, l.starts_at, l.ends_at, l.course_type_id,
         (SELECT name FROM course_types WHERE id=l.course_type_id) course_type_name,
@@ -272,6 +291,7 @@ def confirmed_rows(c, start, end):
         JOIN ledger led ON led.id=r.ledger_id
         WHERE l.status!='cancelled' AND substr(l.starts_at,1,10)>=? AND substr(l.starts_at,1,10)<=?
           AND NOT EXISTS (SELECT 1 FROM ledger rev WHERE rev.reversal_of=r.ledger_id)'''
+        + absence_pay_clause()
         + __import__('vouchers').hide_sql(c, 'led') + ' ORDER BY l.starts_at, l.id, s.name''', (start.isoformat(), end.isoformat())).fetchall()
 
 

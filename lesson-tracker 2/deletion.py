@@ -89,7 +89,7 @@ def schema(c):
         c.execute("ALTER TABLE students ADD COLUMN void_reason TEXT NOT NULL DEFAULT ''")
 
 
-def _drop_future(c, sid, cancel_reason='停课'):
+def _drop_future(c, sid, cancel_reason='停课', user=None):
     """Cancel this course's future lessons and stop a series that would keep adding it."""
     now = now_local().strftime('%Y-%m-%dT%H:%M')
     lessons = list(c.execute('''SELECT l.id, l.series_id, l.occurrence_index FROM lessons l
@@ -98,6 +98,9 @@ def _drop_future(c, sid, cancel_reason='停课'):
     seen = set()
     for lesson in lessons:
         others = c.execute('SELECT 1 FROM lesson_students WHERE lesson_id=? AND student_id!=?', (lesson['id'], sid)).fetchone()
+        if user:
+            import teaching
+            teaching.release_absence(c, user, lesson['id'], None if not others else sid, clear=not others)
         if others:
             c.execute('DELETE FROM lesson_students WHERE lesson_id=? AND student_id=?', (lesson['id'], sid))
         else:
@@ -157,7 +160,7 @@ def stop_course(c, user, data):
         c.execute('DELETE FROM students WHERE id=?', (sid,))
         _tell_vouchers(c, user, student, True)
         return {'ok': True, 'deleted': True, 'archived': False, 'balance': balance}
-    _drop_future(c, sid)
+    _drop_future(c, sid, user=user)
     c.execute('UPDATE students SET archived=1 WHERE id=?', (sid,))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (sid, user['id'], 'course_stopped'))
     _tell_vouchers(c, user, student, False)
@@ -230,7 +233,7 @@ def _void_course(c, user, student, reason):
         c.execute('DELETE FROM profile_audit WHERE student_id=?', (sid,))
         c.execute('DELETE FROM students WHERE id=?', (sid,))
         return {'ok': True, 'deleted': True, 'voided': True, 'archived': False}
-    _drop_future(c, sid, '加错了')
+    _drop_future(c, sid, '加错了', user)
     _erase_zero_money(c, sid)
     c.execute('UPDATE students SET archived=1, voided=1, void_reason=?, balance=0 WHERE id=?', (reason[:200], sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (sid, user['id'], 'course_voided'))
