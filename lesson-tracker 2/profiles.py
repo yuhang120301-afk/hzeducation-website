@@ -148,6 +148,7 @@ def course_shells(c, rows):
         source['gift_balance'] = 0
         source['credit_batches'] = []
         source['archived'] = 0
+        source['voided'] = 0
         source['legacy'] = False
         source['legacy_subjects'] = []
         source['study_status'] = source.get('study_status') or 'studying'
@@ -364,6 +365,8 @@ def add_course(c,user,data,text_value):
     study = pricing.clean_study_level(data.get('study_level'))
     c.execute('UPDATE students SET billing_unit=?,helen_original=?,subject_id=?,course_type_id=?,level_code=?,level_year=?,study_level=? WHERE id=?',(s['billing_unit'],created,subject_id,type_id,s['level_code'] if 'level_code' in s.keys() else '', s['level_year'] if 'level_year' in s.keys() else 0, study, sid))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'course_added'))
+    import timeline
+    timeline.record(c, user, sid, 'course_added', f'添加课程 {course}')
     moved=relink_future_lessons(c, sid)
     return {'ok':True,'student_id':sid,'moved':moved}
 
