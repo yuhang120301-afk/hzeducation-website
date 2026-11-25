@@ -425,7 +425,11 @@ def allowed_lesson(c,user,lesson_id):
     return lesson
 
 def check_version(lesson,data):
-    if int(data.get('version',0))!=lesson['version']:
+    try:
+        sent=int(data.get('version',0))
+    except (TypeError, ValueError):
+        raise ValueError('这节课已被更新，请刷新页面后再操作。')
+    if sent!=lesson['version']:
         raise ValueError('这节课已被更新，请刷新页面后再操作。')
 
 def datetime_value(value):
@@ -629,7 +633,10 @@ def save_lesson(c,user,data,units,text_value):
     if not data.get('title') and type_name:
         data = {**data, 'title': ((subject_name['name'] + ' · ') if subject_name else '') + type_name['name']}
     title=text_value(data.get('title'),'课程名称',80)
-    teacher_id=int(data.get('teacher_id',0))
+    try:
+        teacher_id=int(data.get('teacher_id') or 0)
+    except (TypeError, ValueError):
+        raise ValueError('请选择有效的任课老师。')
     if not c.execute('SELECT 1 FROM teachers t JOIN users u ON t.user_id=u.id WHERE t.id=? AND u.active=1',(teacher_id,)).fetchone():
         raise ValueError('请选择有效的任课老师。')
     if subject_name and subject_name['name'] == SINGAPORE_SUBJECT:
@@ -647,7 +654,10 @@ def save_lesson(c,user,data,units,text_value):
     allow_empty=bool(data.get('allow_empty'))
     if not isinstance(raw,list) or len(raw)>30 or (not allow_empty and len(raw)<1):
         raise ValueError('每节课请选择 1–30 位学生。')
-    members=sorted(set(int(x) for x in raw))
+    try:
+        members=sorted(set(int(x) for x in raw))
+    except (TypeError, ValueError):
+        raise ValueError('请选择有效的学生。')
     profile_ids=[]
     for sid in members:
         account=c.execute('SELECT profile_id FROM students WHERE id=?',(sid,)).fetchone()

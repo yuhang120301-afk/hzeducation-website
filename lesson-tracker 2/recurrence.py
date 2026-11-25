@@ -114,7 +114,11 @@ def update_future(c,user,data,units,text_value):
     if first['status']!='scheduled': raise ValueError('只能调整尚未完成的课程。')
     if not first['series_id']: raise ValueError('这不是重复课程，请选择仅本次。')
     rule=c.execute('SELECT * FROM lesson_series WHERE id=?',(first['series_id'],)).fetchone()
-    if int(data.get('series_version',0))!=rule['version']:
+    try:
+        sent_series=int(data.get('series_version',0))
+    except (TypeError, ValueError):
+        sent_series=-1
+    if sent_series!=rule['version']:
         raise ValueError('重复课程已被调整，请刷新后重试。')
     shift={k:teaching.datetime_value(data[k])-dt.datetime.fromisoformat(first[k]) for k in ('starts_at','ends_at')}
     lessons=list(c.execute("SELECT * FROM lessons WHERE series_id=? AND occurrence_index>=? AND status='scheduled' ORDER BY occurrence_index",(rule['id'],first['occurrence_index'])))
