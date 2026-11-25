@@ -10,7 +10,9 @@ import uuid
 import auditlog
 import credit_batches
 import pricing
-from teaching import AccessError, now_local
+from teaching import AccessError, OFFERED_SUBJECTS, now_local
+
+SUBJECT_REQUIRED = '请选择数学、英语、VCE 中数、VCE 低数或 VCE 高数。'
 
 
 def schema(c):
@@ -91,8 +93,8 @@ def _each_millis(c, student, product, subject, minutes, level, manual):
 
 def _choice(c, data, student):
     subject = str(data.get('subject') or '').strip()
-    if subject not in ('数学', '英语'):
-        raise ValueError('请选择数学或英语。')
+    if subject not in OFFERED_SUBJECTS:
+        raise ValueError(SUBJECT_REQUIRED)
     type_id = int(data.get('course_type_id') or 0)
     kind = c.execute('SELECT id, name FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone()
     if not kind:
@@ -133,7 +135,7 @@ def _target_student(c, source, choice):
         return c.execute('SELECT * FROM students WHERE id=?', (archived['id'],)).fetchone()
     subject = c.execute('SELECT id FROM subjects WHERE name=?', (choice['subject'],)).fetchone()
     if not subject:
-        raise ValueError('请选择数学或英语。')
+        raise ValueError(SUBJECT_REQUIRED)
     shown, _past = pricing.calendar_level(pricing.stored_level(dict(source)), now_local().date())
     study = choice['level'] if shown in pricing.LEVELS and pricing.LEVELS.index(choice['level']) > pricing.LEVELS.index(shown) else ''
     sid = c.execute('''INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes,billing_unit,subject_id,course_type_id,level_code,level_year,study_level)

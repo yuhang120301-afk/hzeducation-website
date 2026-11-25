@@ -1,6 +1,6 @@
 """Editable student profiles and guardian account administration."""
 import datetime as dt
-from teaching import AccessError, now_local
+from teaching import AccessError, now_local, vce_subject
 
 def schema(c):
     c.execute("CREATE TABLE IF NOT EXISTS student_profiles (id INTEGER PRIMARY KEY)")
@@ -366,8 +366,15 @@ def add_course(c,user,data,text_value):
 
 
 def same_subject(left_name, left_subject, right_name, right_subject):
-    """数学 and 英语 match even when the old course name is longer, such as 数学 一对一."""
+    """数学 and 英语 match even when the old course name is longer, such as 数学 一对一.
+
+    VCE 中数, VCE 低数 and VCE 高数 do not match 数学. Math Methods matches VCE 中数.
+    """
     def token(name, subject):
+        for part in (subject, name, f'{subject or ""} {name or ""}'):
+            found = vce_subject(part)
+            if found:
+                return found
         text=f'{subject or ""} {name or ""}'
         if '数学' in text:
             return '数学'

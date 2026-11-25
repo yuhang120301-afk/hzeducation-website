@@ -176,17 +176,20 @@ function renderTeachers(){
  document.querySelectorAll('[data-teacher-edit]').forEach(b=>b.onclick=()=>teacherModal(state.teachers.find(t=>t.id==b.dataset.teacherEdit)));
  document.querySelectorAll('[data-teacher-status]').forEach(b=>b.onclick=()=>{const t=state.teachers.find(t=>t.id==b.dataset.teacherStatus);modal(t.active?'离职 / 停用':'恢复在职',`<div class="form-context">${userHTML(t.name)}<br>${t.active?'停用后无法登录或接受新排课。已有课程保留，请另行调整未完成课程。':'恢复后可使用原账号登录并接受排课。'}</div>`,'确认',async()=>{await api('teachers/status',{teacher_id:t.id,active:!t.active});toast('老师状态已更新。');},!!t.active);});
 }
+var offeredSubjects=['数学','英语','VCE 中数','VCE 低数','VCE 高数'];
 function canonicalTeacherSubject(name){
  const text=String(name||'').trim();
  if(!text) return '';
  const key=text.toLocaleLowerCase();
+ const vce=[['mathematical methods','VCE 中数'],['specialist mathematics','VCE 高数'],['general mathematics','VCE 低数'],['maths methods','VCE 中数'],['math methods','VCE 中数'],['vce 中数','VCE 中数'],['vce 低数','VCE 低数'],['vce 高数','VCE 高数']];
+ for(const [alias,label] of vce){if(key===alias || key.startsWith(alias+' ') || key.startsWith(alias+'·') || key.startsWith(alias+' ·')) return label;}
  const aliases={数学:'数学',maths:'数学',math:'数学',mathematics:'数学',英语:'英语',english:'英语',科学:'科学',science:'科学',物理:'物理',化学:'化学',中文:'中文',写作:'写作',writing:'写作',高数:'高数',中数:'中数'};
  return aliases[key]||aliases[text]||text;
 }
 function teacherSubjectChoices(teacher){
  const current=(teacher?.subjects||[]).map(canonicalTeacherSubject).filter(Boolean);
  const choices=[];
- ['数学','英语','物理','科学','学业跟踪辅导',...current].forEach(name=>{if(name && !choices.includes(name)) choices.push(name);});
+ [...offeredSubjects,'物理','科学','学业跟踪辅导',...current].forEach(name=>{if(name && !choices.includes(name)) choices.push(name);});
  return choices;
 }
 function teacherModal(existing=null){
@@ -281,12 +284,12 @@ function typeBadge(name){
  return label?`<span class="type-badge type-${kind}">${escapeHTML(label)}</span>`:'';
 }
 function catalogSelect(list, field, current, placeholder){
- const allowed=field==='subject_id'?['数学','英语']:field==='course_type_id'?['一对一','一对二','小班课']:null;
+ const allowed=field==='subject_id'?offeredSubjects:field==='course_type_id'?['一对一','一对二','小班课']:null;
  const rows=(list||[]).filter(item=>item.active && (!allowed || allowed.includes(item.name)));
  return `<select name="${field}" required><option value="">${placeholder}</option>${rows.map(item=>`<option value="${item.id}" ${String(item.id)===String(current)?'selected':''}>${escapeHTML(item.name)}</option>`).join('')}</select>`;
 }
 function scheduleOptions(kind,current){
- const options=(state.schedule_options||[]).filter(o=>o.kind===kind&&o.active&&(kind!=='course'||['数学','英语'].includes(o.name))).map(o=>o.name);
+ const options=(state.schedule_options||[]).filter(o=>o.kind===kind&&o.active&&(kind!=='course'||offeredSubjects.includes(o.name))).map(o=>o.name);
  if(current&&kind!=='course'&&!options.includes(current))options.unshift(current);
  return `<option value="">${kind==='course'?'请选择课程':'不指定地点'}</option>`+options.map(name=>`<option data-user-content value="${escapeHTML(name)}" ${name===current?'selected':''}>${escapeHTML(name)}</option>`).join('');
 }
