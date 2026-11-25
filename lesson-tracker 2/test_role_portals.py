@@ -33,6 +33,14 @@ class Client:
             response = exc
         return response.status, json.loads(response.read())
 
+    def page(self, path):
+        req = urllib.request.Request('http://127.0.0.1:%s%s' % (PORT, path))
+        try:
+            response = self.opener.open(req)
+        except urllib.error.HTTPError as exc:
+            response = exc
+        return response.status, response.read()
+
     def login(self, phone, password):
         status, _ = self.request('login', {'phone': phone, 'password': password})
         assert status == 200
@@ -113,6 +121,15 @@ class RolePortalTests(unittest.TestCase):
         self.assertEqual(parent.request('audit')[0], 403)
         self.assertEqual(parent.request('lessons', {})[0], 403)
         self.assertEqual(parent.request('reports/complete', {'lesson_id': 1})[0], 403)
+        child = state['students'][0]['id']
+        self.assertEqual(parent.page('/students/%s' % child)[0], 403)
+        self.assertEqual(parent.page('/students/1')[0], 403)
+        owner = Client()
+        owner.login('0400000000', 'TeacherDemo2026!')
+        self.assertEqual(owner.page('/students/%s' % child)[0], 200)
+        teacher = Client()
+        teacher.login('0400000011', 'TutorDemo2026!')
+        self.assertEqual(teacher.page('/students/%s' % child)[0], 200)
 
     def test_teacher_and_parent_pages_match_the_boss_layout(self):
         try:
@@ -151,14 +168,17 @@ class RolePortalTests(unittest.TestCase):
             self.assertEqual([button.inner_text() for button in page.locator('.sidebar .nav-item').all()], ['孩子的课表', '课后记录', '剩余课时', '付款记录'])
             page.click('.sidebar [data-view=overview]')
             page.wait_for_selector('.child-card')
-            self.assertIn('剩余', page.locator('.child-card').first.inner_text())
-            page.locator('.child-card').first.click()
-            page.wait_for_function('() => location.pathname.startsWith("/students/")')
-            page.wait_for_selector('#page-back')
-            self.assertGreater(page.locator('summary').filter(has_text='付款记录').count(), 0)
-            self.assertEqual(page.locator('summary').filter(has_text='备注').count(), 0)
-            page.click('#page-back')
-            page.wait_for_function('() => document.querySelector("h1")?.textContent === "剩余课时"')
+            card = page.locator('.child-card').first
+            self.assertIn('剩余', card.inner_text())
+            self.assertEqual(page.locator('.child-card[data-open-student]').count(), 0)
+            self.assertIn(card.evaluate('el => getComputedStyle(el).cursor'), ['auto', 'default'])
+            stayed = page.url
+            card.click()
+            self.assertEqual(page.url, stayed)
+            self.assertEqual(page.locator('h1').inner_text(), '剩余课时')
+            page.click('.sidebar [data-view=records]')
+            page.wait_for_selector('#records-list')
+            self.assertIn('$', page.locator('#records-list').inner_text())
             page.click('.sidebar [data-view=records]')
             page.wait_for_selector('#records-list')
             self.assertIn('$', page.locator('#records-list').inner_text())
