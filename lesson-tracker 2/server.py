@@ -78,10 +78,12 @@ def _units_or_zero(raw, label):
 
 
 def _consume_prior_hours(c, user, student_id, credit_ledger_id, day, used, request_id):
-    """Hours already taught before this system. No lesson row and no teacher pay."""
-    batch = c.execute('SELECT id FROM credit_batches WHERE ledger_id=?', (credit_ledger_id,)).fetchone()
+    """Paid lessons already taught. Gift lessons are not reduced here. No lesson row and no teacher pay."""
+    batch = c.execute('SELECT id, paid_left FROM credit_batches WHERE ledger_id=?', (credit_ledger_id,)).fetchone()
     if not batch:
         raise ValueError('没有找到这次补录的课时包。')
+    if used > int(batch['paid_left'] or 0):
+        raise ValueError('已用的付费课时多于总节数。')
     use_id = c.execute('''INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id)
         VALUES(?,0,'lesson',?,?,?,?)''', (
         student_id, day, '补录已用课时，没有对应课程', user['id'], request_id + '-used')).lastrowid
@@ -1033,12 +1035,14 @@ class Handler(BaseHTTPRequestHandler):
             if backdated and str(data.get('payment_status') or 'paid') in ('unpaid', '挂账'):
                 raise ValueError('补录以前的包是已经收过的钱，不能再挂账。')
             if backdated:
-                total_units = units(data.get('amount'))
-                prior_used = total_units - _units_or_zero(data.get('remaining'), '还剩几节')
-                if prior_used < 0:
+                paid_units = units(data.get('amount'))
+                remaining_units = _units_or_zero(data.get('remaining'), '还剩几节')
+                gift_left = _units_or_zero(data.get('gift_remaining') or 0, '还剩赠送几节')
+                if remaining_units > paid_units:
                     raise ValueError('还剩几节不能多于总节数。')
-                data['gift_amount'] = 0
-                data['backdated_used'] = prior_used
+                data['amount'] = paid_units / 100
+                data['gift_amount'] = gift_left / 100
+                data['backdated_used'] = paid_units - remaining_units
             delta = (credit_batches.zero_units(data.get('amount'),units)+credit_batches.zero_units(data.get('gift_amount',0),units)) if kind=='credit' else -units(data.get('amount'))
             note = str(data.get('note','')).strip()
             if backdated:
