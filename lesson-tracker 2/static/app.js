@@ -537,11 +537,41 @@ function renderRecords(){
  document.querySelectorAll('[data-edit-entry]').forEach(b=>b.onclick=()=>editEntryModal(state.entries.find(e=>e.id==b.dataset.editEntry)));
  document.querySelectorAll('[data-reverse]').forEach(b=>b.onclick=()=>reverseModal(b.dataset.reverse));
 }
+function fieldErrorMessage(el){
+ const named={subject_id:'请选择科目。',course_type_id:'请选择课程类型。',teacher_id:'请选择任课老师。',amount:'请填写大于 0 的课时。',repeat_count:'总课次数需为 2–52 次，包含本次。',name:'请填写名称。',phone:'请填写手机号。',password:'请填写密码。',level:'请选择年级。',starts_at:'请选择开始时间。',ends_at:'请选择结束时间。'};
+ if(el.dataset.error) return el.dataset.error;
+ if(named[el.name]) return named[el.name];
+ if(el.type==='date') return '请选择日期。';
+ return '请把必填项填完整。';
+}
+function showModalError(message){
+ const text=message||'操作未完成，请重试。';
+ const box=$('#modal-error');
+ if(box){box.textContent=text; box.hidden=false; box.scrollIntoView({block:'nearest'});}
+ else if(typeof toast==='function') toast(text);
+}
 function modal(title, body, submit, onsubmit, danger=false){
  lastFocus=document.activeElement;$('#modal').classList.remove('wide');
- $('#modal-body').innerHTML=`<form id="modal-form" class="modal-inner"><div class="modal-head"><h2 id="modal-title">${title}</h2><button type="button" class="close" aria-label="关闭">×</button></div>${body}<div id="modal-error" class="error" role="alert"></div><div class="modal-footer"><button type="button" class="btn cancel">取消</button><button type="submit" class="btn ${danger?'danger':'primary'}">${submit}</button></div></form>`;
+ $('#modal-body').innerHTML=`<form id="modal-form" class="modal-inner" novalidate><div class="modal-head"><h2 id="modal-title">${title}</h2><button type="button" class="close" aria-label="关闭">×</button></div>${body}<div id="modal-error" class="error" role="alert" hidden></div><div class="modal-footer"><button type="button" class="btn cancel">取消</button><button type="submit" class="btn ${danger?'danger':'primary'}">${submit}</button></div></form>`;
  const close=()=>$('#modal').close();$('.close').onclick=close;$('.cancel').onclick=close;
- $('#modal-form').onsubmit=async e=>{e.preventDefault();const button=e.currentTarget.querySelector('[type=submit]');e.currentTarget.querySelectorAll('button').forEach(b=>b.disabled=true);$('#modal-error').textContent='';try{const outcome=await onsubmit(Object.fromEntries(new FormData(e.currentTarget)));if(outcome==='stay')return;$('#modal').close();await refresh();}catch(err){$('#modal-error').textContent=err.message;const form=$('#modal-form');if(form)form.querySelectorAll('button').forEach(b=>b.disabled=false);}};
+ $('#modal-form').onsubmit=async e=>{
+  e.preventDefault();
+  const form=e.currentTarget;
+  const invalid=form.querySelector(':invalid');
+  if(invalid){showModalError(fieldErrorMessage(invalid)); invalid.focus({preventScroll:true}); return;}
+  form.querySelectorAll('button').forEach(b=>b.disabled=true);
+  const box=$('#modal-error'); if(box){box.textContent=''; box.hidden=true;}
+  try{
+   const outcome=await onsubmit(Object.fromEntries(new FormData(form)));
+   if(outcome==='stay'){const current=$('#modal-form'); if(current) current.querySelectorAll('button').forEach(b=>b.disabled=false); return;}
+   if($('#modal')?.open) $('#modal').close();
+   await refresh();
+  }catch(err){
+   showModalError(err&&err.message);
+   const current=$('#modal-form');
+   if(current) current.querySelectorAll('button').forEach(b=>b.disabled=false);
+  }
+ };
  $('#modal').showModal();
 }
 $('#modal').addEventListener('close',()=>lastFocus?.isConnected&&lastFocus.focus({preventScroll:true}));

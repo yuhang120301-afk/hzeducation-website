@@ -334,7 +334,8 @@ function initTimeGrid(){
   button.onpointerdown = event=>{
    if(event.button!==0) return;
    event.stopPropagation();
-   drag={x:event.clientX,y:event.clientY,moved:false,resize:!!event.target.closest('.gcal-resize')};
+   const span = gcalSpan(lesson);
+   drag={x:event.clientX,y:event.clientY,moved:false,resize:!!event.target.closest('.gcal-resize'),origin:span.start,duration:span.duration,previewStart:span.start,previewEnd:span.start+span.duration};
    button.dataset.resizing=drag.resize?'1':'0';
    button.setPointerCapture(event.pointerId);
   };
@@ -344,14 +345,21 @@ function initTimeGrid(){
    if(!drag.moved) return;
    button.classList.add('gcal-ghost');
    const column = columnAt(event.clientX, event.clientY) || button.closest('.gcal-col');
-   const span = gcalSpan(lesson);
    const delta = Math.round(((event.clientY-drag.y)/GCAL_PX)*60/15)*15;
-   const start = Math.max(0, Math.min(24*60-Math.min(span.duration,24*60), span.start+delta));
-   showPreview(column, start, start+span.duration);
+   if(drag.resize){
+    drag.previewStart=drag.origin;
+    drag.previewEnd=Math.max(drag.origin+15, Math.min(24*60, drag.origin+drag.duration+delta));
+   }else{
+    drag.previewStart=Math.max(0, Math.min(24*60-Math.min(drag.duration,24*60), drag.origin+delta));
+    drag.previewEnd=drag.previewStart+drag.duration;
+   }
+   showPreview(column, drag.previewStart, drag.previewEnd);
   };
   button.onpointerup = event=>{
    if(!drag) return;
    const moved = drag.moved;
+   const previewStart = drag.previewStart;
+   const previewEnd = drag.previewEnd;
    drag=null;
    button.classList.remove('gcal-ghost');
    if(!moved){clearPreview();return;}
@@ -359,12 +367,7 @@ function initTimeGrid(){
    clearPreview();
    calendarClickSuppressedUntil = Date.now()+500;
    if(!column) return;
-   const span = gcalSpan(lesson);
-   const point = gcalSnap(event.clientY-column.getBoundingClientRect().top);
-   const start = dragWasResize(button) ? span.start : point;
-   const end = dragWasResize(button) ? Math.max(span.start+15, point) : point+span.duration;
-   moveCalendarLesson(lesson, gcalSlot(column.dataset.day, start), gcalSlot(column.dataset.day, end));
-   void delta;
+   moveCalendarLesson(lesson, gcalSlot(column.dataset.day, previewStart), gcalSlot(column.dataset.day, previewEnd));
   };
  });
  document.querySelectorAll('.gcal-col').forEach(column=>{
@@ -401,7 +404,6 @@ function initTimeGrid(){
   column.onpointercancel = ()=>{drag=null;clearPreview();};
  });
 }
-function dragWasResize(button){return button.dataset.resizing==='1';}
 function columnAt(x,y){
  for(const element of document.elementsFromPoint(x,y)){
   const column = element.closest?.('.gcal-col');
