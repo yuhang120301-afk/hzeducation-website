@@ -184,7 +184,11 @@ class SingaporeMathsTests(unittest.TestCase):
                 'amount': '1', 'student_ids': [sid], 'subject_id': subject_id, 'location': '', 'color': 'green'}
             with self.assertRaises(ValueError) as caught:
                 teaching.save_lesson(c, user, {**base, 'teacher_id': tutor, 'course_type_id': one, 'request_id': uuid.uuid4().hex}, server.units, server.text_value)
-            self.assertIn('Helen', str(caught.exception))
+            self.assertIn('勾选新加坡数学', str(caught.exception))
+            c.execute('UPDATE teachers SET subjects=? WHERE id=?', ('["数学","新加坡数学"]', tutor))
+            ticked = teaching.save_lesson(c, user, {**base, 'teacher_id': tutor, 'course_type_id': one, 'request_id': uuid.uuid4().hex}, server.units, server.text_value)
+            self.assertEqual(c.execute('SELECT teacher_id FROM lessons WHERE id=?', (ticked['lesson_id'],)).fetchone()['teacher_id'], tutor)
+            c.execute("UPDATE lessons SET status='cancelled' WHERE id=?", (ticked['lesson_id'],))
             with self.assertRaises(ValueError) as caught:
                 teaching.save_lesson(c, user, {**base, 'teacher_id': helen, 'course_type_id': two, 'request_id': uuid.uuid4().hex}, server.units, server.text_value)
             self.assertIn('一对一', str(caught.exception))

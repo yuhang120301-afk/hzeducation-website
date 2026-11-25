@@ -152,10 +152,8 @@ def _choice(c, data, student):
     teacher = c.execute('SELECT t.id, u.name FROM teachers t JOIN users u ON u.id=t.user_id WHERE t.id=? AND u.active=1', (teacher_id,)).fetchone()
     if not teacher:
         raise ValueError('请选择任课老师。')
-    if teaching.singapore_subject(subject) and not c.execute(
-            'SELECT 1 FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id WHERE t.id=?',
-            (teacher_id,)).fetchone():
-        raise ValueError('新加坡数学只由 Helen 授课。')
+    if teaching.singapore_subject(subject) and not teaching.may_teach_singapore(c, teacher_id):
+        raise ValueError(teaching.SINGAPORE_TEACHER)
     each, source = _each_millis(c, student, product, subject, minutes, level, data.get('manual_price'))
     if each is None:
         raise ValueError('新课程还没有每节价格。')

@@ -157,7 +157,13 @@ class TeacherChangeTests(unittest.TestCase):
         base['title'] = '新加坡数学 · 一对一'
         with self.assertRaises(ValueError) as caught:
             self.save(data=base)
-        self.assertIn('新加坡数学只由 Helen 授课', str(caught.exception))
+        self.assertIn('勾选新加坡数学', str(caught.exception))
+        self.c.execute('UPDATE teachers SET subjects=? WHERE id=?', ('["数学","新加坡数学"]', self.angela))
+        base['request_id'] = uuid.uuid4().hex
+        allowed = self.save(data=base)
+        self.assertEqual(self.teacher_of(allowed['lesson_id']), self.angela)
+        self.c.execute("UPDATE lessons SET status='cancelled' WHERE id=?", (allowed['lesson_id'],))
+        self.c.execute('UPDATE teachers SET subjects=? WHERE id=?', ('["数学"]', self.angela))
         base['teacher_id'] = self.helen
         base['request_id'] = uuid.uuid4().hex
         saved = self.save(data=base)
@@ -169,7 +175,7 @@ class TeacherChangeTests(unittest.TestCase):
                 **base, 'teacher_id': self.angela, 'lesson_id': saved['lesson_id'],
                 'version': lesson['version'], 'scope': 'single', 'request_id': uuid.uuid4().hex,
             })
-        self.assertIn('新加坡数学只由 Helen 授课', str(caught.exception))
+        self.assertIn('勾选新加坡数学', str(caught.exception))
         self.c.execute('ROLLBACK TO sg')
         self.assertEqual(self.teacher_of(saved['lesson_id']), self.helen)
 

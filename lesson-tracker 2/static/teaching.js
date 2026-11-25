@@ -375,6 +375,13 @@ function typeBadge(name){
  const kind=label==='一对一'?'one':label==='一对二'?'two':'small';
  return label?`<span class="type-badge type-${kind}">${escapeHTML(label)}</span>`:'';
 }
+function teacherTeaches(teacher, subject){
+ if(!teacher) return false;
+ if(teacher.account_role==='owner') return true;
+ const names=[].concat(teacher.subjects||[]);
+ String(teacher.subject||'').split(/[、,，]/).forEach(part=>{if(part.trim()) names.push(part.trim());});
+ return names.some(name=>name===subject);
+}
 function limitSingaporeChoices(){
  const subjectBox=document.querySelector('#modal [name=subject_id]');
  const typeBox=document.querySelector('#modal [name=course_type_id]');
@@ -386,7 +393,7 @@ function limitSingaporeChoices(){
   if(typeBox) [...typeBox.options].forEach(option=>{option.hidden=singapore&&option.textContent.trim()==='一对二'; option.disabled=option.hidden; if(option.hidden&&option.selected) typeBox.value='';});
   if(teacherBox) [...teacherBox.options].forEach(option=>{
    const teacher=(state.teachers||[]).find(item=>String(item.id)===option.value);
-   const blocked=singapore&&!(teacher&&teacher.account_role==='owner');
+   const blocked=singapore&&!teacherTeaches(teacher,'新加坡数学');
    option.hidden=blocked;
    option.disabled=blocked||option.dataset.inactive==='1';
    if(option.disabled&&option.selected){const next=[...teacherBox.options].find(item=>!item.disabled&&item.value); teacherBox.value=next?next.value:'';}
@@ -397,7 +404,7 @@ function limitSingaporeChoices(){
     note=document.createElement('p');
     note.id='singapore-teacher-note';
     note.className='footnote';
-    note.textContent='新加坡数学只由 Helen 授课。其他老师不能选。';
+    note.textContent='勾选了新加坡数学的老师可以排这科。还没勾选的老师不会出现在这里。';
     teacherBox.closest('label')?.insertAdjacentElement('afterend', note);
    }
   }else if(note) note.remove();

@@ -858,6 +858,21 @@ function switchCourseModal(studentId, batchId){
   modal('确认换课',`<div class="form-context"><p>原课时包：${escapeHTML(preview.old_label)}（${escapeHTML(preview.old_course)}）</p><p>剩余 ${preview.remaining_lessons} 节，剩余价值 ${escapeHTML(preview.remaining_value)}</p><p>新课程：${escapeHTML(preview.new_subject)} ${escapeHTML(preview.new_type)} · ${escapeHTML(preview.teacher_name)} · 每节 ${escapeHTML(preview.new_each)}</p><p>换成 ${preview.new_lessons} 节，结余 ${escapeHTML(preview.leftover)}</p><p>原包会标成已换课并留在记录里。这笔不记成新的收款，也不记成退款。</p></div>`,'确认换课',async()=>{const result=await api('students/course/switch',{...data,batch_id:Number(batchId)}); toast(`已换成 ${result.new_lessons} 节，结余 ${result.leftover}。`); if(result.target_student_id && String(result.target_student_id)!==String(profileId)){sessionStorage.setItem('hz-internal-nav','1'); history.pushState({hz:1},'','/students/'+result.target_student_id);} });
   return 'stay';
  });
+ const subjectPick=document.querySelector('#modal [name=subject]');
+ const teacherPick=document.querySelector('#modal [name=teacher_id]');
+ const limitTeachers=()=>{
+  if(!subjectPick||!teacherPick) return;
+  const singapore=subjectPick.value==='新加坡数学';
+  [...teacherPick.options].forEach(option=>{
+   if(!option.value) return;
+   const teacher=(state.teachers||[]).find(item=>String(item.id)===option.value);
+   const allowed=!singapore || (typeof teacherTeaches==='function' && teacherTeaches(teacher,'新加坡数学'));
+   option.hidden=!allowed;
+   option.disabled=!allowed;
+   if(!allowed && option.selected) teacherPick.value='';
+  });
+ };
+ if(subjectPick){ subjectPick.addEventListener('change', limitTeachers); limitTeachers(); }
 }
 function moneyAud(cents){return '$'+((cents||0)/100).toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2});}
 async function showOffer(query, host){
