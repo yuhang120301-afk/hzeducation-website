@@ -451,7 +451,7 @@ function studentFold(group, admin){
  const parked=stopped.concat(mistaken);
  const courseBody=`<div class="course-tabs" role="tablist"><button type="button" class="on" data-course-tab="current" aria-selected="true">在上</button><button type="button" data-course-tab="stopped" aria-selected="false">已停${parked.length?` (${parked.length})`:''}</button></div><div data-course-panel="current">${active.length?enrolments:'<p>暂无课程</p>'}</div><div data-course-panel="stopped" hidden>${parked.length?parked.map(stoppedRow).join(''):'<p class="muted">没有已停的课程。</p>'}</div>`;
  const events=(state.profile_events||[]).filter(event=>String(event.profile_id)===String(person.profile_id));
- const eventRow=event=>`<article class="trow"><div class="grow">${escapeHTML(eventWhen(event.created_at))} · ${userHTML(event.summary)}<small>${userHTML(event.actor_name||'')}</small></div></article>`;
+ const eventRow=event=>`<article class="trow"><div class="grow">${escapeHTML(eventWhen(event.created_at))} · ${userHTML(event.summary)}<small>${userHTML(event.actor_name||'')}</small></div>${event.action==='void'&&event.voucher_status==='void'&&event.voucher_id&&state.user.role==='owner'?`<button class="btn" type="button" data-unvoid-voucher="${event.voucher_id}" data-unvoid-student="${event.student_id||''}">取消作废</button>`:''}</article>`;
  const showLog=['owner','admin'].includes(state.user.role);
  const links=`<p><button class="action" data-history="${person.id}" type="button">全部余额明细 →</button> ${state.user.role==='owner'?`<button class="action" data-vouchers="${person.id}" type="button">单据 →</button>`:''}</p>`;
  const statusTag=withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person);
@@ -618,6 +618,7 @@ function bindProfileActions(){
  });
  document.querySelectorAll('[data-history]').forEach(b=>b.onclick=event=>{event.stopPropagation(); selected=b.dataset.history; history.pushState({hz:1},'','/?view=records'); render();});
  document.querySelectorAll('[data-vouchers]').forEach(b=>b.onclick=event=>{event.stopPropagation(); voucherStudent=b.dataset.vouchers; history.pushState({hz:1},'','/?view=vouchers'); render();});
+ document.querySelectorAll('[data-unvoid-voucher]').forEach(b=>b.onclick=event=>{event.stopPropagation(); if(typeof unvoidVoucher==='function'){const student=(state.voided_students||[]).concat(state.archived_students||[], state.students||[]).find(item=>String(item.id)===String(b.dataset.unvoidStudent)); unvoidVoucher(b.dataset.unvoidVoucher, '', !!(student && (Number(student.voided)===1 || student.void_reason==='加错了')));}});
 }
 function courseBlockers(account){
  if(Array.isArray(account.delete_blockers)) return account.delete_blockers.filter(Boolean);
@@ -669,9 +670,10 @@ function renderRecords(){
  const admin=['owner','admin'].includes(state.user.role);
  const parentView=state.user.role==='parent';
  const movement=e=>parentView&&(e.cash_delta||e.cash_delta===0)?entryMoney(e):`${e.delta>0?'+':'−'}${fmt(Math.abs(e.delta))} ${unitFor(e)}`;
- $('#records-list').innerHTML=rows.length?`<div class="panel table-wrap"><table><thead><tr><th>日期 / 学生</th><th>类型</th><th>${parentView?'付款金额':'余额变动'}</th><th>备注</th><th>${admin?'登记人 / 操作':'登记人'}</th></tr></thead><tbody>${rows.map(e=>`<tr><td>${escapeHTML(e.lesson_date)}<div class="muted" style="font-size:12px;margin-top:6px">${userHTML(e.student_name)} · ${userHTML(e.course)}</div></td><td><span class="badge ${e.kind==='lesson'?'low':''}">${{lesson:'上课扣除',credit:parentView?'付款':'充值'+unitFor(e),refund:'退课退款',reversal:'撤销返还 / 扣回',switch:'换课'}[e.kind]||e.kind}</span>${e.reversed_by?'<div class="muted" style="font-size:12px;margin-top:6px">已撤销</div>':''}</td><td class="${e.delta>0?'positive':'negative'}">${movement(e)}</td><td class="note-cell">${userHTML(e.note)||'—'}${creditBreakdown(e)}</td><td>${userHTML(e.actor_name)}${state.user.role==='owner'&&e.kind!=='switch'?`<button class="action" data-edit-entry="${e.id}">编辑单据</button>`:''}${admin&&!['reversal','switch'].includes(e.kind)&&!e.reversed_by?`<button class="action" data-reverse="${e.id}">撤销</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="panel empty">暂无课时变动记录。</div>';
+ $('#records-list').innerHTML=rows.length?`<div class="panel table-wrap"><table><thead><tr><th>日期 / 学生</th><th>类型</th><th>${parentView?'付款金额':'余额变动'}</th><th>备注</th><th>${admin?'登记人 / 操作':'登记人'}</th></tr></thead><tbody>${rows.map(e=>`<tr><td>${escapeHTML(e.lesson_date)}<div class="muted" style="font-size:12px;margin-top:6px">${userHTML(e.student_name)} · ${userHTML(e.course)}</div></td><td><span class="badge ${e.kind==='lesson'?'low':''}">${{lesson:'上课扣除',credit:parentView?'付款':'充值'+unitFor(e),refund:'退课退款',reversal:'撤销返还 / 扣回',switch:'换课'}[e.kind]||e.kind}</span>${e.reversed_by?'<div class="muted" style="font-size:12px;margin-top:6px">已撤销</div>':''}</td><td class="${e.delta>0?'positive':'negative'}">${movement(e)}</td><td class="note-cell">${userHTML(e.note)||'—'}${creditBreakdown(e)}</td><td>${userHTML(e.actor_name)}${state.user.role==='owner'&&e.kind!=='switch'?`<button class="action" data-edit-entry="${e.id}">编辑单据</button>`:''}${admin&&!['reversal','switch'].includes(e.kind)&&!e.reversed_by?`<button class="action" data-reverse="${e.id}">撤销</button>`:''}${state.user.role==='owner'&&e.void_voucher_id?`<button class="action" data-unvoid-voucher="${e.void_voucher_id}">取消作废</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="panel empty">暂无课时变动记录。</div>';
  document.querySelectorAll('[data-edit-entry]').forEach(b=>b.onclick=()=>editEntryModal(state.entries.find(e=>e.id==b.dataset.editEntry)));
  document.querySelectorAll('[data-reverse]').forEach(b=>b.onclick=()=>reverseModal(b.dataset.reverse));
+ document.querySelectorAll('#records-list [data-unvoid-voucher]').forEach(b=>b.onclick=()=>{if(typeof unvoidVoucher==='function'){const entry=(state.entries||[]).find(item=>String(item.void_voucher_id)===String(b.dataset.unvoidVoucher)); const student=(state.voided_students||[]).concat(state.archived_students||[], state.students||[]).find(item=>String(item.id)===String(entry&&entry.student_id)); unvoidVoucher(b.dataset.unvoidVoucher, '', !!(student && (Number(student.voided)===1 || student.void_reason==='加错了')));}});
 }
 function fieldErrorMessage(el){
  const named={subject_id:'请选择科目。',course_type_id:'请选择课程类型。',teacher_id:'请选择任课老师。',amount:'请填写大于 0 的课时。',repeat_count:'总课次数需为 2–52 次，包含本次。',name:'请填写名称。',phone:'请填写手机号。',password:'请填写密码。',level:'请选择年级。',starts_at:'请选择开始时间。',ends_at:'请选择结束时间。'};
@@ -812,12 +814,13 @@ function packLine(batch, money, account){
  const price=batch.total_cents!=null?` · 总额 ${money(batch.total_cents)}`:'';
  const left=(batch.paid_left||0)+(batch.gift_left||0);
  const closed=batch.status==='switched';
+ const voidedPack=batch.status==='voided';
  const owed=batch.payment_status==='unpaid'?Math.max(0,(batch.receivable_cents||0)-(batch.paid_cents||0)):0;
  const owe=owed?` · 挂账还欠 ${money(owed)}`:'';
  const button=account && !closed && left>0 && state.user?.role==='owner'?`<button class="btn" type="button" data-switch-pack="${batch.id}" data-switch-student="${account.id}">换课</button>`:'';
  const pay=owed&&account&&state.user?.role==='owner'?`<button class="btn" type="button" data-collect-pack="${batch.id}" data-collect-student="${account.id}">收款</button>`:'';
  const credit=batch.leftover_millis?` · 结余 ${money(Math.round(batch.leftover_millis/10))}`:'';
- return `<li>${batch.pack_label?escapeHTML(batch.pack_label):(batch.legacy?'原有课时':escapeHTML(batch.credited_on||'课时包'))}${closed?' · 已换课':''}${price}${owe} · 购买 ${fmt(batch.purchased||0)} · 赠送 ${fmt(batch.gifted||0)} · 已用 ${fmt(used)} · 还剩 ${fmt(left)}${credit} ${pay} ${button}</li>`;
+ return `<li>${batch.pack_label?escapeHTML(batch.pack_label):(batch.legacy?'原有课时':escapeHTML(batch.credited_on||'课时包'))}${closed?' · 已换课':''}${voidedPack?' · 已作废':''}${price}${owe} · 购买 ${fmt(batch.purchased||0)} · 赠送 ${fmt(batch.gifted||0)} · 已用 ${fmt(used)} · 还剩 ${fmt(left)}${credit} ${pay} ${button}</li>`;
 }
 function collectPackModal(studentId, batchId){
  const account=(state.students||[]).find(item=>String(item.id)===String(studentId));
