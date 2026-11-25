@@ -1,4 +1,4 @@
-"""Owner-only teacher pay.
+"""Teacher pay. Bosses see everyone. A teacher sees only their own pay.
 
 A confirmed lesson is worth the package price divided by the paid lessons in
 that package. Gift lessons are worth nothing. Helen can type over that number.
@@ -12,7 +12,7 @@ import io
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import accounting
-from teaching import now_local
+from teaching import AccessError, now_local
 
 SEED_KEY = 'pay_seed_v1'
 # Name fragment, rule type, percent in basis points, hourly floor cents or None.
@@ -437,7 +437,15 @@ def partner_section(c, lessons, teachers, start, end):
 
 
 def report(c, user, period, day, start, end):
-    require_owner(user)
+    own_teacher = None
+    if user['role'] == 'teacher':
+        if period not in ('day', 'week', 'fortnight', 'month'):
+            raise ValueError('请选择今天、本周、双周或本月。')
+        own_teacher = c.execute('SELECT id FROM teachers WHERE user_id=?', (user['id'],)).fetchone()
+        if not own_teacher:
+            raise AccessError('无法查看工资。')
+    else:
+        require_owner(user)
     start, end = period_bounds(period, day, start, end)
     rules = [dict(r) for r in c.execute('SELECT * FROM pay_rules ORDER BY teacher_id, effective_from, id')]
     by_teacher = {}
@@ -462,6 +470,11 @@ def report(c, user, period, day, start, end):
         item = dict(row)
         item['is_new'] = student_is_new(row['helen_original'])
         students.append(item)
+    if own_teacher:
+        teachers = [teacher for teacher in teachers if teacher['teacher_id'] == own_teacher['id']]
+        return {'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
+            'teachers': teachers, 'partner': None, 'rules': [], 'cost_entries': [], 'cost_schedules': [],
+            'students': [], 'generated_at': now_local().isoformat(timespec='seconds')}
     return {'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'teachers': teachers, 'partner': partner_section(c, lessons, teachers, start, end),
         'rules': [public_rule(r) for r in rules],

@@ -387,6 +387,11 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     params=parse_qs(urlsplit(self.path).query)
                     result=payroll.report(c,user,params.get('period',['week'])[0],params.get('date',[None])[0],params.get('start',[None])[0],params.get('end',[None])[0])
+                    if user['role']=='teacher':
+                        asked=params.get('teacher_id',[''])[0]
+                        own_ids={teacher['teacher_id'] for teacher in result['teachers']}
+                        if asked and int(asked) not in own_ids:
+                            raise teaching.AccessError('只能查看自己的工资。')
                     if path.endswith('.csv'):
                         raw=params.get('teacher_id',[''])[0]
                         blob=payroll.csv_bytes(result,int(raw) if raw else None)
@@ -520,14 +525,11 @@ class Handler(BaseHTTPRequestHandler):
                         person['custom_hourly_cents']=offer['custom_hourly_cents']
                 if user['role'] == 'teacher':
                     for person in students:
-                        for key in ('parent_email', 'phone', 'contact_phone', 'legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents'):
+                        for key in ('parent_email', 'phone', 'contact_phone', 'parent_name', 'legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents', 'balance', 'paid_balance', 'gift_balance', 'credit_batches', 'health_notes'):
                             person.pop(key, None)
-                        for batch in person.get('credit_batches') or []:
-                            batch.pop('total_cents', None)
-                            batch.pop('unit_fees', None)
                 if user['role'] == 'parent':
                     for person in students:
-                        for key in ('legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents'):
+                        for key in ('legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents', 'phone', 'contact_phone'):
                             person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
@@ -543,11 +545,15 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
                 entries = [dict(x) for x in c.execute('SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,pack.total_cents pack_cents,r.id reversed_by FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN subjects sb ON sb.id=s.subject_id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id LEFT JOIN credit_batches pack ON pack.ledger_id=l.id'+entry_condition+' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC',params)]
+                if user['role']=='teacher':
+                    entries=[e for e in entries if e['kind']=='lesson']
+                    for e in entries:
+                        for key in ('cash_delta','payment_method','reference','pack_cents','request_id','reversal_of'):
+                            e.pop(key, None)
                 if user['role']=='parent':
-                    entries=[e for e in entries if e['kind']!='reversal' and not e['reversed_by']]
+                    entries=[e for e in entries if e['kind'] in ('credit','refund') and not e['reversed_by']]
                     for e in entries:
                         for key in ('request_id','reversal_of','version'):e.pop(key,None)
-                    for s in students:s.pop('credit_batches',None)
                 for person in students+archived_students:
                     person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
                 return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
