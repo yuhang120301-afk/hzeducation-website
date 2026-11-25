@@ -310,6 +310,33 @@ function teacherForAccounts(accounts){
  const lesson=(state.lessons||[]).find(item=>(item.students||[]).some(student=>ids.has(String(student.id))) && item.status!=='cancelled');
  return lesson?.teacher_name||'待定';
 }
+const TEACHER_FILLS={helen:'#E4F0E9',vincent:'#E7ECF3',angela:'#F5EAE8',kelsey:'#EDEAF3',ethan:'#E4F0EF',christina:'#F5F1E7',other:'#EEF2F0'};
+const TEACHER_EDGES={helen:'#78B48F',vincent:'#85A1C2',angela:'#CB958B',kelsey:'#A695C3',ethan:'#7AB6AD',christina:'#CEBA88',other:'#9AA7AF'};
+/* cardPaint:start */
+function courseTeachers(accounts){
+ const names=[];
+ (accounts||[]).filter(account=>account&&!account.no_course&&!account.archived&&!account.voided).forEach(account=>{
+  const lessons=(state.lessons||[]).filter(lesson=>lesson.status!=='cancelled' && (lesson.students||[]).some(student=>String(student.id)===String(account.id)))
+   .sort((a,b)=>String(b.starts_at||'').localeCompare(String(a.starts_at||'')));
+  const name=lessons[0]&&lessons[0].teacher_name;
+  if(name && !names.includes(name)) names.push(name);
+ });
+ return names;
+}
+function cardPaint(names){
+ if(!names||!names.length) return {className:'', style:''};
+ const tones=names.map(studentToneName);
+ if(tones.length===1) return {className:'t-'+tones[0], style:''};
+ const stops=tones.map((tone,index)=>{
+  const color=TEACHER_FILLS[tone]||TEACHER_FILLS.other;
+  const start=(index/tones.length*100);
+  const end=((index+1)/tones.length*100);
+  return color+' '+start+'% '+end+'%';
+ }).join(', ');
+ const edge=TEACHER_EDGES[tones[0]]||TEACHER_EDGES.other;
+ return {className:'is-split', style:'--tone:'+edge+';background:linear-gradient(to right, '+stops+')'};
+}
+/* cardPaint:end */
 function accountStatus(account, group){
  if((account.balance||0)<=0 && !sameSubjectCovered(account, group||[])) return '欠费';
  if(needsRenewal(account)) return '该续费';
@@ -454,8 +481,9 @@ function leftPeopleSection(){
  const cards=[...groups.values()].map(group=>{
   const person=group[0];
   const active=group.filter(account=>!account.no_course&&!account.archived&&!account.voided);
+  const paint=cardPaint(courseTeachers(active));
   const label=active.length?active.map(account=>account.subject_name||account.course).filter(Boolean).join('，'):'暂无课程';
-  return `<article class="pay-card" data-open-student="${person.id}"><div style="flex:1"><h2>${userHTML(person.name)}</h2><p class="muted">${userHTML(label)}</p>${person.left_reason?`<p class="footnote">${userHTML(person.left_reason)}</p>`:''}</div><button class="btn" type="button" data-return-student="${person.profile_id}">恢复</button></article>`;
+  return `<article class="pay-card ${paint.className}" data-open-student="${person.id}"${paint.style?` style="${paint.style}"`:''}><div style="flex:1"><h2>${userHTML(person.name)}</h2><p class="muted">${userHTML(label)}</p>${person.left_reason?`<p class="footnote">${userHTML(person.left_reason)}</p>`:''}</div><button class="btn" type="button" data-return-student="${person.profile_id}">恢复</button></article>`;
  }).join('');
  return `<details class="year-fold" id="left-people"><summary><span class="year-fold-label">已离开</span><span class="year-fold-count">${groups.size} 位</span></summary><div class="year-fold-students">${cards}</div></details>`;
 }
@@ -483,10 +511,11 @@ function leaveModal(person){
 }
 function studentListCard(group, admin){
  const person=group[0];
- const teacher=teacherForAccounts(group);
- const tone=studentToneName(teacher);
  const withdrawn=group.some(account=>account.withdrawn);
  const active=group.filter(account=>!account.no_course&&!account.archived&&!account.voided);
+ const teacherNames=courseTeachers(active);
+ const paint=cardPaint(teacherNames);
+ const teacher=teacherNames.join(' · ')||(active.length?'待定':'');
  const listed=withdrawn?group.filter(account=>!account.no_course):active;
  const subjects=listed.length?listed.map(account=>[shownLevel(account), account.subject_name||account.course, account.voided?'加错了':account.course_type_name].filter(Boolean).join(' · ')).join('，'):(withdrawn?'已退学':'暂无课程');
  const teacherView=state.user.role==='teacher';
@@ -495,7 +524,7 @@ function studentListCard(group, admin){
  const legacy=legacyMark(group);
  const pack=teacherView?null:group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
  const statusText=withdrawn?'退学':(active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课');
- return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2>${listed.length?`<ul class="person-courses">${listed.map(account=>`<li>${userHTML([shownLevel(account), account.subject_name||account.course].filter(Boolean).join(' '))} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}</li>`).join('')}</ul>`:`<p class="muted">${userHTML(subjects)}</p>`}<p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong></div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">开课</button>`):''}${withdrawn&&state.user.role==='owner'?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</article>`;
+ return `<article class="pay-card ${paint.className}" data-open-student="${person.id}"${paint.style?` style="${paint.style}"`:''}><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2>${listed.length?`<ul class="person-courses">${listed.map(account=>`<li>${userHTML([shownLevel(account), account.subject_name||account.course].filter(Boolean).join(' '))} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}</li>`).join('')}</ul>`:`<p class="muted">${userHTML(subjects)}</p>`}<p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong></div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">开课</button>`):''}${withdrawn&&state.user.role==='owner'?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</article>`;
 }
 const YEAR_LEVEL_ORDER=['Prep','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12'];
 function currentYearLabel(person){
