@@ -113,7 +113,8 @@ class YearLevelTests(unittest.TestCase):
         self.assertEqual(listed['levels'][0], 'Prep')
         self.assertNotIn('K', listed['levels'])
         bands = [row for table in listed['tables'] for row in table['rows']]
-        self.assertTrue(any(row['product'] == 'term' and row['level_from'] == 'K' for row in bands))
+        self.assertTrue(any(row['product'] == 'term' and row['level_from'] == 'Prep' and row['level_to'] == 'Y6' for row in bands))
+        self.assertFalse(any(row['level_from'] == 'K' for row in bands))
 
     def test_screens_do_not_offer_kindergarten(self):
         root = Path(__file__).resolve().parent

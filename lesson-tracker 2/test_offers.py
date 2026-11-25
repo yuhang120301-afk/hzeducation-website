@@ -142,7 +142,7 @@ class OfferTests(unittest.TestCase):
     def test_year_code_is_recognised(self):
         self.assertEqual(pricing.parse_level('Y6'), 'Y6')
         self.assertEqual(pricing.parse_level('6年级'), 'Y6')
-        self.assertEqual(pricing.remember_level({'grade': 'Y6'}, 'Y6', dt.date(2026, 11, 24)), ('Y6', 2027))
+        self.assertEqual(pricing.remember_level({'grade': 'Y6'}, 'Y6', dt.date(2026, 11, 24)), ('Y7', 2027))
 
     def test_finance_presets_cover_last_month_and_this_year(self):
         start, end = accounting.bounds('last_month', '2026-03-15')
