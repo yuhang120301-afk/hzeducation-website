@@ -6,13 +6,15 @@ Do not point this at production until there is a backup.
 
   LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py
   LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py --apply
-  LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py --delete-course-ids 26,69
-  LESSON_DB="$LESSON_DB" python3 scripts/cleanup_merged_test_traces.py --delete-course-ids 26,69 --apply
+  python3 scripts/cleanup_merged_test_traces.py --delete-course-ids 26,69
+  python3 scripts/cleanup_merged_test_traces.py --delete-course-ids 26,69 --force
+  python3 scripts/cleanup_merged_test_traces.py --delete-course-ids 26,69 --force --apply
 
---delete-course-ids removes only those course rows, and only when each one
-has no ledger, no class report, no lesson that is still on the calendar,
-no pack with any value, no pack payment, no arrears and no balance.
-The person's profile stays. Do not set LESSON_DB yourself on production.
+--delete-course-ids removes only those course rows. A dry-run prints the
+table and row id of every blocker. --force also removes zero-value or voided
+vouchers and other zero-money rows on those ids. A row with real money, or a
+taught lesson report, is still refused. The person's profile stays.
+Do not set LESSON_DB yourself on production.
 
 The profile row is kept when a course row is removed. Atticus's taught
 history on #46 and #66 is not touched. Claire #69 is only reported.
@@ -110,28 +112,100 @@ def batch_is_empty(row):
     return True
 
 
-def course_block(c, row):
+def _money(value):
+    return int(value or 0)
+
+
+def _taught_report(report):
+    if report['ledger_id'] if 'ledger_id' in report.keys() else None:
+        return True
+    for name in ('content', 'homework', 'feedback'):
+        if name in report.keys() and str(report[name] or '').strip():
+            return True
+    return False
+
+
+def _voucher_has_money(voucher):
+    if str(voucher['status'] or '') == 'void':
+        return False
+    if _money(voucher['amount_cents'] if 'amount_cents' in voucher.keys() else 0):
+        return True
+    paid = _money(voucher['paid_units'] if 'paid_units' in voucher.keys() else 0)
+    gift = _money(voucher['gift_units'] if 'gift_units' in voucher.keys() else 0)
+    return bool(paid or gift)
+
+
+def course_obstacles(c, row):
+    """Hard blockers always refuse. Soft ones are zero-money rows --force may remove."""
     student_id = row['id']
-    if count_where(c, 'lesson_reports', 'student_id', student_id):
-        return '有课后记录'
-    if count_where(c, 'ledger', 'student_id', student_id):
-        return '有账'
-    if int(row['balance'] or 0) != 0:
-        return '余额不是 0'
-    lessons = lesson_rows(c, student_id)
-    if any(lesson['status'] != 'cancelled' for lesson in lessons):
-        return '有没取消的课'
+    hard, soft = [], []
+    if _money(row['balance']) != 0:
+        hard.append('余额不是 0')
+    if has_table(c, 'lesson_reports'):
+        for report in c.execute('SELECT * FROM lesson_reports WHERE student_id=?', (student_id,)):
+            label = f"lesson_reports lesson={report['lesson_id']} student={report['student_id']}"
+            if _taught_report(report) or _money(report['amount'] if 'amount' in report.keys() else 0):
+                hard.append(label + '（有上课记录）')
+            else:
+                soft.append(label)
+    for lesson in lesson_rows(c, student_id):
+        if lesson['status'] != 'cancelled':
+            hard.append(f"lessons #{lesson['id']}（有没取消的课）")
+    if has_table(c, 'ledger'):
+        for ledger in c.execute('SELECT * FROM ledger WHERE student_id=?', (student_id,)):
+            cash = 0
+            if has_table(c, 'cash_entries'):
+                cash = _money(c.execute('SELECT COALESCE(SUM(cash_delta),0) n FROM cash_entries WHERE ledger_id=?',
+                    (ledger['id'],)).fetchone()['n'])
+            label = f"ledger #{ledger['id']}"
+            if _money(ledger['delta']) or cash:
+                hard.append(label + '（有账）')
+            else:
+                soft.append(label)
     if has_table(c, 'credit_batches'):
         for batch in c.execute('SELECT * FROM credit_batches WHERE student_id=?', (student_id,)):
-            if not batch_is_empty(batch):
-                return '课时包不是空的'
-    if count_where(c, 'vouchers', 'student_id', student_id):
-        return '有单据'
-    if count_where(c, 'arrears', 'student_id', student_id):
-        return '有欠费'
-    if pack_payment_count(c, student_id):
-        return '有课时包收款'
-    return ''
+            label = f"credit_batches #{batch['id']}"
+            if batch_is_empty(batch):
+                soft.append(label)
+            else:
+                hard.append(label + '（课时包不是空的）')
+    if has_table(c, 'pack_payments') and has_table(c, 'credit_batches') and 'batch_id' in columns(c, 'pack_payments'):
+        for payment in c.execute('''SELECT p.* FROM pack_payments p
+                JOIN credit_batches b ON b.id=p.batch_id WHERE b.student_id=?''', (student_id,)):
+            label = f"pack_payments #{payment['id']}（有课时包收款）"
+            if _money(payment['amount_cents'] if 'amount_cents' in payment.keys() else 0):
+                hard.append(label)
+            else:
+                soft.append(label)
+    if has_table(c, 'arrears'):
+        for arrears in c.execute('SELECT * FROM arrears WHERE student_id=?', (student_id,)):
+            label = f"arrears #{arrears['id']}"
+            if _money(arrears['amount'] if 'amount' in arrears.keys() else 0):
+                hard.append(label + '（有欠费）')
+            else:
+                soft.append(label)
+    if has_table(c, 'vouchers'):
+        for voucher in c.execute('SELECT * FROM vouchers WHERE student_id=?', (student_id,)):
+            label = f"vouchers #{voucher['id']}"
+            if _voucher_has_money(voucher):
+                hard.append(label + '（有单据）')
+            else:
+                soft.append(label)
+                if has_table(c, 'voucher_events'):
+                    for event in c.execute('SELECT id FROM voucher_events WHERE voucher_id=?', (voucher['id'],)):
+                        soft.append(f"voucher_events #{event['id']}")
+    return hard, soft
+
+
+def course_block(c, row):
+    """Original cleanup still deletes a course that only has an empty pack."""
+    hard, soft = course_obstacles(c, row)
+    blocking = list(hard)
+    for item in soft:
+        if item.startswith('credit_batches '):
+            continue
+        blocking.append(item)
+    return '；'.join(blocking)
 
 
 def pack_payment_count(c, student_id):
@@ -278,29 +352,30 @@ def plan_duplicates(c, today, dropping):
     return same_course, different
 
 
-def plan_listed_courses(c, course_ids):
-    """Delete only these course rows, and only when each one is empty."""
+def plan_listed_courses(c, course_ids, force=False):
+    """Delete only these course rows. --force also drops zero-money documents."""
     actions = []
     for student_id in course_ids:
         row = student_row(c, student_id)
         if not row:
             actions.append({'id': student_id, 'action': 'skip', 'detail': '没有这一行'})
             continue
-        reason = course_block(c, row)
+        hard, soft = course_obstacles(c, row)
         item = {'id': student_id, 'name': row['name'], 'course': row['course']}
-        if reason:
+        if hard or (soft and not force):
             item['action'] = 'skip'
-            item['detail'] = reason
+            item['detail'] = '不删：' + '；'.join(hard + soft)
         else:
             item['action'] = 'delete'
-            item['detail'] = '空课，删除课程行，人还在'
+            extra = ('，并删除 ' + '；'.join(soft)) if soft else ''
+            item['detail'] = '空课，删除课程行，人还在' + extra
         actions.append(item)
     return actions
 
 
-def build_plan(c, today, course_ids=None):
+def build_plan(c, today, course_ids=None, force=False):
     if course_ids:
-        courses = plan_listed_courses(c, course_ids)
+        courses = plan_listed_courses(c, course_ids, force)
         return {'courses': courses, 'only_ids': course_ids,
             'amelia': {'action': 'skip', 'detail': '这次只删指定的课程行'},
             'confirm': [], 'same_course': [], 'different_course': []}
@@ -343,6 +418,9 @@ def delete_course_row(c, student_id):
             if has_table(c, 'pack_payments'):
                 c.execute('DELETE FROM pack_payments WHERE batch_id=?', (batch_id,))
             c.execute('DELETE FROM credit_batches WHERE id=?', (batch_id,))
+    if has_table(c, 'voucher_events') and has_table(c, 'vouchers'):
+        c.execute('''DELETE FROM voucher_events WHERE voucher_id IN (
+            SELECT id FROM vouchers WHERE student_id=?)''', (student_id,))
     for table, column in (
         ('lesson_students', 'student_id'), ('lesson_reports', 'student_id'),
         ('lesson_absence_charges', 'student_id'), ('arrears', 'student_id'),
@@ -350,7 +428,24 @@ def delete_course_row(c, student_id):
         ('vouchers', 'student_id'),
     ):
         _delete_where(c, table, column, student_id)
+    _drop_zero_ledgers(c, student_id)
     c.execute('DELETE FROM students WHERE id=?', (student_id,))
+
+
+def _drop_zero_ledgers(c, student_id):
+    if not has_table(c, 'ledger'):
+        return
+    rows = list(c.execute('SELECT id, delta FROM ledger WHERE student_id=?', (student_id,)))
+    if not rows:
+        return
+    for row in rows:
+        cash = 0
+        if has_table(c, 'cash_entries'):
+            cash = _money(c.execute('SELECT COALESCE(SUM(cash_delta),0) n FROM cash_entries WHERE ledger_id=?',
+                (row['id'],)).fetchone()['n'])
+        if _money(row['delta']) or cash:
+            raise RuntimeError(f"ledger #{row['id']} 还有钱，不删")
+    delete_ledger_pair(c, [row['id'] for row in rows])
 
 
 def delete_ledger_pair(c, ledger_ids):
@@ -456,6 +551,8 @@ def main():
     parser.add_argument('--today', default='')
     parser.add_argument('--delete-course-ids', default='',
         help='Comma-separated course row ids to remove when each row is empty.')
+    parser.add_argument('--force', action='store_true',
+        help='With --delete-course-ids, also remove zero-value or voided vouchers and other zero-money rows.')
     args = parser.parse_args()
     if not args.db or not os.path.exists(args.db):
         raise SystemExit('请设置 LESSON_DB，或传入 --db。')
@@ -469,6 +566,8 @@ def main():
             course_ids.append(int(part))
         if not course_ids:
             raise SystemExit('请传入要删除的课程编号。')
+    elif args.force:
+        raise SystemExit('--force 只能和 --delete-course-ids 一起用。')
     from teaching import now_local
     today = args.today or now_local().date().isoformat()
     c = connect(args.db, args.apply)
@@ -476,7 +575,7 @@ def main():
         if args.apply:
             c.execute('BEGIN IMMEDIATE')
         before = money_totals(c)
-        plan = build_plan(c, today, course_ids)
+        plan = build_plan(c, today, course_ids, args.force)
         after = before
         if args.apply:
             apply_plan(c, plan)
