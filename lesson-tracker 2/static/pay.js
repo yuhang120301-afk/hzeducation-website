@@ -322,6 +322,67 @@ async function renderFinance(){
   }catch(error){/* prices stay marked as unread */}
  }catch(error){if(view==='finance') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`;}
 }
+function feeModal(button){
+ modal('修改这节课的课酬',`<p class="footnote">留空并选择恢复，会重新按课时包价格 ÷ 付费课时计算。赠课仍是 0。</p><label class="field">课酬 AUD<input name="fee_amount" inputmode="decimal" value="${escapeHTML(button.dataset.feeValue)}" required></label>`,'保存手改金额',async data=>{await api('pay/fee',{lesson_id:Number(button.dataset.feeLesson),student_id:Number(button.dataset.feeStudent),fee_amount:data.fee_amount});toast('课酬已更新。');});
+ const reset=document.createElement('button');
+ reset.type='button';reset.className='btn';reset.textContent='恢复课时包单价';
+ $('.modal-footer').prepend(reset);
+ reset.onclick=async()=>{try{await api('pay/fee',{lesson_id:Number(button.dataset.feeLesson),student_id:Number(button.dataset.feeStudent),reset:true});$('#modal').close();toast('已恢复为课时包单价。');await refresh();}catch(error){toast(error.message);}};
+}
+function paySettings(data){
+ const teachers=state.teachers.map(teacher=>`<option value="${teacher.id}">${escapeHTML(teacher.name)}</option>`).join('');
+ const people=[...new Map(data.students.filter(student=>!student.archived).map(student=>[student.profile_id,student])).values()];
+ return `<details class="panel pay-settings"><summary>工资规则和成本</summary><div class="pay-settings-body"><section><h3>老师工资规则</h3><form id="pay-rule-form" class="pay-form"><label class="field">老师<select name="teacher_id" required>${teachers}</select></label><label class="field">方式<select name="rule_type"><option value="percent">课酬百分比</option><option value="hourly">时薪</option></select></label><label class="field">百分比<input name="percent" inputmode="decimal" placeholder="40"></label><label class="field">保底时薪 AUD（选填）<input name="hourly_floor" inputmode="decimal" placeholder="35"></label><label class="field">时薪 AUD<input name="hourly_rate" inputmode="decimal" placeholder="0.00"></label><label class="field">生效日期<input name="effective_from" type="date" value="${state.today}" required></label><button class="btn primary" type="submit">保存规则</button></form><ul class="pay-rule-list">${data.rules.map(rule=>`<li>${userHTML(state.teachers.find(teacher=>teacher.id===rule.teacher_id)?.name||'老师')} · 自 ${escapeHTML(rule.effective_from)} · ${ruleLabel(rule)}</li>`).join('')||'<li>还没有规则。</li>'}</ul></section><section><h3>成本</h3><p class="footnote">房租、教材、广告这些开支请到「成本」页。这里勾选「共同成本」才会从新学生课酬里扣除。不勾选的只是记录，不参与分成。</p><form id="pay-cost-form" class="pay-form"><label class="field">名称<input name="label" maxlength="80" required placeholder="例如：房租"></label><label class="field">金额 AUD<input name="amount" inputmode="decimal" required></label><label class="field">日期<input name="cost_date" type="date" value="${state.today}" required></label><label class="report-choice"><input type="checkbox" name="shared">这是共同成本</label><button class="btn primary" type="submit">添加一笔</button></form><ul class="pay-rule-list">${data.cost_entries.map(entry=>`<li class="${entry.voided?'muted':''}">${escapeHTML(entry.cost_date)} · ${userHTML(entry.label)} · ${cashFmt(entry.amount_cents)} · ${entry.shared?'共同成本':'不参与分成'} ${entry.voided?'（已作废）':''}<button type="button" class="action" data-cost-void="${entry.id}" data-voided="${entry.voided?0:1}">${entry.voided?'恢复':'作废'}</button></li>`).join('')||'<li>还没有单笔成本。</li>'}</ul><form id="pay-schedule-form" class="pay-form"><label class="field">固定成本名称<input name="label" maxlength="80" required></label><label class="field">金额 AUD<input name="amount" inputmode="decimal" required></label><label class="field">周期<select name="cadence"><option value="month">每月</option><option value="week">每周</option><option value="day">每天</option></select></label><label class="field">从<input name="effective_from" type="date" value="${state.today}" required></label><label class="report-choice"><input type="checkbox" name="shared" checked>这是共同成本</label><button class="btn primary" type="submit">添加固定成本</button></form><ul class="pay-rule-list">${data.cost_schedules.map(item=>`<li>${userHTML(item.label)} · ${cashFmt(item.amount_cents)} / ${{day:'天',week:'周',month:'月'}[item.cadence]} · ${item.shared?'共同成本':'不参与分成'} · ${escapeHTML(item.effective_from)}${item.effective_to?' 至 '+escapeHTML(item.effective_to):''}${item.active?`<button type="button" class="action" data-schedule-stop="${item.id}">从今天起停止</button>`:'（已停止）'}</li>`).join('')||'<li>还没有固定成本。</li>'}</ul></section></div></details>`;
+}
+function bindPaySettings(){
+ const send=(id, path, build)=>{const form=$('#'+id); if(!form) return; form.onsubmit=async event=>{event.preventDefault();const button=event.currentTarget.querySelector('[type=submit]'); if(button) button.disabled=true; try{await api(path, build(form, Object.fromEntries(new FormData(form))));toast('已保存。');await refresh();}catch(error){toast(error.message); if(button) button.disabled=false;}};};
+ send('pay-rule-form','pay/rules',(_,data)=>({teacher_id:Number(data.teacher_id),rule_type:data.rule_type,percent:data.percent,hourly_floor:data.hourly_floor,hourly_rate:data.hourly_rate,effective_from:data.effective_from}));
+  send('pay-cost-form','pay/costs',(form,data)=>({...data,shared:form.querySelector('[name=shared]').checked}));
+ send('pay-schedule-form','pay/schedules',(form,data)=>({...data,shared:form.querySelector('[name=shared]').checked}));
+ document.querySelectorAll('[data-original]').forEach(box=>box.onchange=async()=>{try{await api('pay/students',{profile_ids:[Number(box.dataset.original)],helen_original:box.checked});toast(box.checked?'已标为 Helen 的原有学生。':'已改回新学生。');await refresh();}catch(error){toast(error.message);box.checked=!box.checked;}});
+ document.querySelectorAll('[data-cost-void]').forEach(button=>button.onclick=async()=>{try{await api('pay/costs/void',{id:Number(button.dataset.costVoid),voided:button.dataset.voided==='1'});await refresh();}catch(error){toast(error.message);}});
+ document.querySelectorAll('[data-schedule-stop]').forEach(button=>button.onclick=async()=>{try{await api('pay/schedules/stop',{id:Number(button.dataset.scheduleStop)});await refresh();}catch(error){toast(error.message);}});
+}
+
+let sharePeriod='month', shareDate='', shareStart='', shareEnd='', shareReady=false, shareAnchor={start:'',end:''};
+function loadShareChoice(){
+ if(shareReady) return;
+ shareReady=true;
+ try{
+  const saved=JSON.parse(localStorage.getItem('hz-share-range')||'{}');
+  if(['day','week','month','last_month','year','custom'].includes(saved.period)) sharePeriod=saved.period;
+  if(saved.start) shareStart=saved.start;
+  if(saved.end) shareEnd=saved.end;
+ }catch(error){}
+}
+function saveShareChoice(){
+ try{localStorage.setItem('hz-share-range', JSON.stringify({period:sharePeriod,start:shareStart,end:shareEnd}));}catch(error){}
+}
+function shareQuery(){
+ if(sharePeriod==='custom') return `period=custom&start=${encodeURIComponent(shareStart)}&end=${encodeURIComponent(shareEnd)}`;
+ return `period=${sharePeriod}&date=${encodeURIComponent(shareDate)}`;
+}
+function bindShareCalendar(which, selected){
+ const button=$('#share-'+which), panel=$('#share-'+which+'-cal');
+ if(!button||!panel) return;
+ if(!shareAnchor[which]) shareAnchor[which]=selected;
+ const paint=()=>{
+  panel.innerHTML=financeMonth(shareAnchor[which], which==='start'?shareStart:shareEnd, which).replaceAll('data-fin-','data-share-');
+  panel.querySelectorAll('[data-share-move]').forEach(item=>item.onclick=event=>{
+   event.stopPropagation();
+   const month=shareAnchor[which].slice(0,8)+'01';
+   shareAnchor[which]=(item.dataset.shareMove==='1'?datePlus(month,32):datePlus(month,-1)).slice(0,8)+'01';
+   paint(); panel.hidden=false;
+  });
+  panel.querySelectorAll('[data-share-day]').forEach(item=>item.onclick=()=>{
+   if(which==='start') shareStart=item.dataset.shareDay; else shareEnd=item.dataset.shareDay;
+   if(shareEnd<shareStart){const swap=shareStart; shareStart=shareEnd; shareEnd=swap;}
+   saveShareChoice(); renderShare();
+  });
+ };
+ paint();
+ button.onclick=()=>{const open=panel.hidden; panel.hidden=!open; button.setAttribute('aria-expanded', String(open));};
+}
 async function renderShare(){
  loadShareChoice();
  if(!shareDate) shareDate=state.today;
