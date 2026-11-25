@@ -359,6 +359,8 @@ def add_course(c,user,data,text_value):
     import pricing
     kind = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone() if type_id else None
     level = s['level_code'] if 'level_code' in s.keys() else ''
+    course, subject_id, type_id = pricing.apply_primary_class(c, course, subject_id, type_id, kind['name'] if kind else '', level)
+    kind = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone() if type_id else kind
     pricing.assert_singapore_enrolment(course, kind['name'] if kind else '', level)
     sid=c.execute('INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes) VALUES(?,?,?,?,?,?,?)',(s['name'],course,s['parent_id'],s['profile_id'],s['birthday'],s['grade'],s['notes'])).lastrowid
     pricing.schema(c)
@@ -378,7 +380,10 @@ def same_subject(left_name, left_subject, right_name, right_subject):
     新加坡数学 does not match 数学.
     """
     def token(name, subject):
-        for part in (subject, name, f'{subject or ""} {name or ""}'):
+        blob = f'{subject or ""} {name or ""}'
+        if '数学加英语' in blob:
+            return '数学加英语'
+        for part in (subject, name, blob):
             found = vce_subject(part) or singapore_subject(part)
             if found:
                 return found

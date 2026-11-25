@@ -228,6 +228,8 @@ function syncScheduleCourse(){
  const subjects=[...new Set(checked.map(box=>box.dataset.subjectId).filter(Boolean))];
  const subjectBox=document.querySelector('#modal [name=subject_id]');
  if(subjects.length===1 && subjectBox) subjectBox.value=subjects[0];
+ const student=(state.students||[]).find(item=>String(item.id)===String(checked[0]?.value));
+ if(typeof syncPrimaryClass==='function') syncPrimaryClass(student?.level_code||student?.level_calendar||'');
  if(typeof limitSingaporeChoices==='function') limitSingaporeChoices();
 }
 function askAbsenceCharge(){

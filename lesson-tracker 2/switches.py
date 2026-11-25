@@ -93,14 +93,14 @@ def _each_millis(c, student, product, subject, minutes, level, manual):
             raise ValueError('新加坡数学还没有价格。')
         return pricing.per_lesson_cents(hourly, int(minutes)) * 10, source
     if subject == pricing.COMBO_SUBJECT:
-        if str(level) != pricing.COMBO_LEVEL:
-            raise ValueError('数学加英语的价格用在 Prep。')
+        if str(level) not in pricing.PRIMARY_CLASS_LEVELS:
+            raise ValueError('数学加英语只开到 Year 6。')
         table = pricing.table_on(c, now_local().date().isoformat())
         rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
-        band = pricing.matching_row(rows, pricing.COMBO_PRODUCT, pricing.COMBO_LEVEL)
+        band = pricing.matching_row(rows, 'term', str(level))
         if not band:
-            raise ValueError('还没有价格')
-        return pricing.per_lesson_cents(band['hourly_cents'], int(minutes)) * 10, 'catalog'
+            raise ValueError('这个年级还没有价目。')
+        return pricing.per_lesson_cents(band['hourly_cents'], int(band['lesson_minutes'] or pricing.COMBO_MINUTES)) * 10, 'catalog'
     custom = pricing.subject_lesson_cents(c, student['profile_id'], product, subject, int(minutes))
     if custom is not None:
         return int(custom) * 10, 'custom'
@@ -126,7 +126,10 @@ def _choice(c, data, student):
     level = str(data.get('level') or '').strip()
     if level not in pricing.LEVELS:
         raise ValueError('请选择年级。')
+    subject = pricing.align_primary_class(subject, kind['name'], level)
     minutes = int(data.get('lesson_minutes') or 0)
+    if subject == pricing.COMBO_SUBJECT:
+        minutes = pricing.COMBO_MINUTES
     import teaching
     if teaching.singapore_subject(subject):
         if kind['name'] not in pricing.SINGAPORE_TYPES:

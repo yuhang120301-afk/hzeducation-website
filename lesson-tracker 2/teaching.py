@@ -724,6 +724,14 @@ def save_lesson(c,user,data,units,text_value):
     type_id, subject_id = courses_match_lesson(c, members, subject_id, type_id)
     type_name = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone() if type_id else type_name
     subject_name = c.execute('SELECT name FROM subjects WHERE id=?', (subject_id,)).fetchone() if subject_id else None
+    if subject_name and type_name:
+        import pricing
+        for sid in members:
+            enrolled = c.execute('SELECT level_code FROM students WHERE id=?', (sid,)).fetchone()
+            year = enrolled['level_code'] if enrolled and 'level_code' in enrolled.keys() else ''
+            mapped = pricing.align_primary_class(subject_name['name'], type_name['name'], year)
+            if mapped != subject_name['name']:
+                raise ValueError('小学小班课是数学加英语，不能单独排数学或英语。')
     if subject_name and subject_name['name'] == SINGAPORE_SUBJECT:
         if not type_name or type_name['name'] not in ('一对一', '小班课'):
             raise ValueError('新加坡数学只有一对一和小班课。')

@@ -849,6 +849,14 @@ class Handler(BaseHTTPRequestHandler):
         if 'grade' in data and not str(data.get('grade') or '').strip():
             raise ValueError('请选择年级。')
         level_code, level_year = pricing.remember_level(data, grade)
+        type_guess = c.execute('SELECT id, name FROM course_types WHERE id=?', (int(data.get('course_type_id') or 0),)).fetchone() if data.get('course_type_id') else None
+        course, forced_subject, forced_type = pricing.apply_primary_class(
+            c, course, data.get('subject_id'), type_guess['id'] if type_guess else None,
+            type_guess['name'] if type_guess else '', level_code)
+        if forced_subject:
+            data['subject_id'] = forced_subject
+        if forced_type:
+            data['course_type_id'] = forced_type
         if teaching.singapore_subject(course):
             type_row = c.execute('SELECT name FROM course_types WHERE id=?', (int(data.get('course_type_id') or 0),)).fetchone()
             pricing.assert_singapore_enrolment(course, type_row['name'] if type_row else '', level_code)
