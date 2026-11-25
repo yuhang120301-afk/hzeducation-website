@@ -229,6 +229,11 @@ dialog.dock-right{margin:0 0 0 auto;height:100%;max-height:100%;max-width:min(48
 .voucher-sheet dd{margin:0}
 .voucher-actions{display:flex;flex-wrap:wrap;gap:8px}
 tr[data-voucher]{cursor:pointer}
+.voucher-check{width:1%;white-space:nowrap}
+th.voucher-check,td.voucher-check{padding-left:16px;padding-right:8px}
+.voucher-check label{display:inline-flex;align-items:center;gap:6px;font-weight:500;color:var(--ink)}
+.voucher-check input{width:16px;height:16px;margin:0;accent-color:#214e3e}
+#voucher-bulk:disabled{cursor:not-allowed}
 @media print{.sidebar,.topbar,.demo-banner,.page-head,.page-back,.voucher-tools,.voucher-actions,.nav-toggle,.nav-backdrop{display:none !important}.shell{display:block}.main{margin-left:0 !important}.voucher-sheet{box-shadow:none;border:0}}
 @media(min-width:761px){
  .shell{display:grid;grid-template-columns:228px minmax(0,1fr)}

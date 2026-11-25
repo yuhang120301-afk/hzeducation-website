@@ -184,6 +184,13 @@ def _load(c, voucher_id):
     return row
 
 
+def _mark_approved(c, user, row):
+    """The only write single and bulk approve share. Approval does not move the balance."""
+    c.execute("UPDATE vouchers SET status='approved', approved_by=?, approved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+        (user['id'], row['id']))
+    _event(c, row['id'], user, '审核', row['number'])
+
+
 def approve(c, user, voucher_id):
     _owner(user)
     row = _load(c, voucher_id)
@@ -191,10 +198,55 @@ def approve(c, user, voucher_id):
         raise ValueError('已作废的单据不能审核。')
     if row['status'] == 'approved':
         return {'ok': True}
-    c.execute("UPDATE vouchers SET status='approved', approved_by=?, approved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
-        (user['id'], row['id']))
-    _event(c, row['id'], user, '审核', row['number'])
+    _mark_approved(c, user, row)
     return {'ok': True}
+
+
+def _voucher_ids(raw):
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, (list, tuple)):
+        raise ValueError('请选择要审核的单据。')
+    if not raw:
+        raise ValueError('请选择要审核的单据。')
+    if len(raw) > 500:
+        raise ValueError('一次最多审核 500 张单据。')
+    ids = []
+    seen = set()
+    for item in raw:
+        if isinstance(item, bool):
+            raise ValueError('单据编号无效。')
+        if isinstance(item, int):
+            vid = item
+        elif isinstance(item, str) and item.isdigit():
+            vid = int(item)
+        else:
+            raise ValueError('单据编号无效。')
+        if vid < 1:
+            raise ValueError('单据编号无效。')
+        if vid in seen:
+            continue
+        seen.add(vid)
+        ids.append(vid)
+    return ids
+
+
+def approve_many(c, user, ids):
+    """Approve each pending receipt with the single-approve write. Does not commit."""
+    _owner(user)
+    chosen = _voucher_ids(ids)
+    approved_ids = []
+    skipped = []
+    for vid in chosen:
+        row = c.execute('SELECT * FROM vouchers WHERE id=?', (vid,)).fetchone()
+        if not row or row['status'] != 'pending':
+            skipped.append({
+                'id': vid,
+                'number': row['number'] if row else '',
+                'status': row['status'] if row else 'missing',
+            })
+            continue
+        _mark_approved(c, user, row)
+        approved_ids.append(vid)
+    return {'ok': True, 'approved': len(approved_ids), 'approved_ids': approved_ids, 'skipped': skipped}
 
 
 def unapprove(c, user, voucher_id):
