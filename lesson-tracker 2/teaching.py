@@ -367,11 +367,13 @@ def state_for(c,user):
     if role=='teacher':
         where,params=(' WHERE t.user_id=?',(user['id'],))
     elif role=='parent':
-        where,params=(' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=l.id AND s.parent_id=?)',(user['id'],))
+        import profiles
+        profiles.schema(c)
+        where,params=(' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=l.id AND '+profiles.linked_clause('s')+')', profiles.linked_params(user['id']))
     lessons=[dict(x) for x in c.execute('SELECT l.*, ct.name course_type_name, sb.name subject_name, (SELECT version FROM lesson_series WHERE id=l.series_id) series_version,(SELECT endless FROM lesson_series WHERE id=l.series_id) repeats_forever,(SELECT course_type_id FROM lesson_series WHERE id=l.series_id) series_course_type_id, u.name teacher_name FROM lessons l JOIN teachers t ON l.teacher_id=t.id JOIN users u ON t.user_id=u.id LEFT JOIN course_types ct ON ct.id=l.course_type_id LEFT JOIN subjects sb ON sb.id=l.subject_id'+where+' ORDER BY l.starts_at,l.id',params)]
     for lesson in lessons:
-        member_where=' AND s.parent_id=?' if role=='parent' else ''
-        member_params=(lesson['id'],user['id']) if role=='parent' else (lesson['id'],)
+        member_where=' AND '+profiles.linked_clause('s') if role=='parent' else ''
+        member_params=(lesson['id'],*profiles.linked_params(user['id'])) if role=='parent' else (lesson['id'],)
         lesson['students']=[dict(x) for x in c.execute('SELECT s.id,s.name,s.course,s.balance,s.billing_unit,s.grade FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=?'+member_where+' ORDER BY s.id',member_params)]
         if role=='parent' and lesson['status']!='completed':
             lesson['reports']=[]

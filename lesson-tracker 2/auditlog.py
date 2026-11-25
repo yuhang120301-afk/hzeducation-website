@@ -20,6 +20,7 @@ RANK = {
     'cost_schedules': 40,
     'cost_entries': 40,
     'students': 50,
+    'profile_parents': 45,
     'lessons': 60,
     'ledger': 70,
     'credit_batches': 80,
@@ -31,6 +32,7 @@ RANK = {
 }
 PRIMARY = {
     'students': ('id',),
+    'profile_parents': ('profile_id', 'user_id'),
     'ledger': ('id',),
     'credit_batches': ('id',),
     'credit_movements': ('ledger_id', 'batch_id'),

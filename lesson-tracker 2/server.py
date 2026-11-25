@@ -463,6 +463,14 @@ class Handler(BaseHTTPRequestHandler):
                 print(message, file=sys.stderr, flush=True)
                 return self.response(503, {'ok': False, 'error': message})
             return self.response(200, {'ok': True})
+        if path == '/api/parents/search':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    return self.response(200, profiles.search_parents(c, user, parse_qs(urlsplit(self.path).query).get('q',[''])[0]))
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/api/state':
             with connect() as c:
                 user = self.current(c)
@@ -473,11 +481,15 @@ class Handler(BaseHTTPRequestHandler):
                     if requested:
                         teaching.dt.date.fromisoformat(requested[0])
                 except (ValueError,OverflowError,IndexError):return self.response(400,{'error':'日期无效。'})
-                condition = '' if user['role'] in ('owner','admin') else ' WHERE s.parent_id=?'
-                params = () if user['role'] in ('owner','admin') else (user['id'],)
+                condition = ''
+                params = ()
                 if user['role']=='teacher':
                     condition=' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN lessons tl ON ls.lesson_id=tl.id WHERE ls.student_id=s.id AND tl.teacher_id=?)'
                     params=(user['teacher_id'],)
+                elif user['role']=='parent':
+                    profiles.schema(c)
+                    condition=' WHERE '+profiles.linked_clause('s')
+                    params=profiles.linked_params(user['id'])
                 students = [dict(x) for x in c.execute('''SELECT s.*,u.name parent_name,u.phone,u.contact_phone,
                     ct.name course_type_name, sb.name subject_name
                     FROM students s JOIN users u ON s.parent_id=u.id
@@ -491,6 +503,10 @@ class Handler(BaseHTTPRequestHandler):
                         if key != 'id':
                             person[key] = value
                     pricing.annotate(person)
+                if user['role'] in ('owner','admin'):
+                    profiles.schema(c)
+                    for person in students:
+                        person['parents']=profiles.parents_for(c, person.get('profile_id'), person.get('parent_id'))
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
@@ -669,6 +685,16 @@ class Handler(BaseHTTPRequestHandler):
                     result=profiles.set_study_status(c,user,data)
                     c.commit()
                     return self.response(200,result)
+                if self.path == '/api/students/parents/link':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=profiles.link_parent(c,user,data,phone_value,password_hash,text_value)
+                    c.commit()
+                    return self.response(200,result)
+                if self.path == '/api/students/parents/unlink':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=profiles.unlink_parent(c,user,data)
+                    c.commit()
+                    return self.response(200,result)
                 if self.path in ('/api/students/profile','/api/students/guardian','/api/students/course'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path.endswith('/profile'): result=profiles.update(c,user,data,text_value)
@@ -791,6 +817,7 @@ class Handler(BaseHTTPRequestHandler):
         profile_id=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
         profiles.save_enrolment(c, profile_id, data)
         sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
+        c.execute('INSERT OR IGNORE INTO profile_parents(profile_id, user_id) VALUES(?,?)', (profile_id, pid))
         type_id, subject_id = teaching.resolve_catalog(c, data, None, course)
         level_code, level_year = pricing.remember_level(data, grade)
         c.execute('UPDATE students SET birthday=?,grade=?,notes=?,billing_unit=?,course_type_id=?,subject_id=?,course_note=?,level_code=?,level_year=? WHERE id=?',(birthday,grade,notes,billing_unit,type_id,subject_id,course,level_code,level_year,sid))

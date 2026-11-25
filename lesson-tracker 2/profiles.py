@@ -22,6 +22,13 @@ def schema(c):
     if 'contact_phone' not in cols:
         c.execute("ALTER TABLE users ADD COLUMN contact_phone TEXT NOT NULL DEFAULT ''")
     c.execute("CREATE TABLE IF NOT EXISTS profile_audit (id INTEGER PRIMARY KEY, student_id INTEGER NOT NULL REFERENCES students(id), actor_id INTEGER NOT NULL REFERENCES users(id), action TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))")
+    c.execute('''CREATE TABLE IF NOT EXISTS profile_parents (
+        profile_id INTEGER NOT NULL REFERENCES student_profiles(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        PRIMARY KEY(profile_id, user_id)
+    )''')
+    c.execute('''INSERT OR IGNORE INTO profile_parents(profile_id, user_id)
+        SELECT DISTINCT profile_id, parent_id FROM students WHERE profile_id IS NOT NULL''')
     ensure_enrolment_columns(c)
 
 
@@ -177,21 +184,6 @@ def update(c,user,data,text_value):
     save_enrolment(c, s['profile_id'], data)
     if str(data.get('study_status') or ''):
         set_study_status(c, user, {'student_id': s['id'], 'study_status': data.get('study_status')})
-    parent_name = str(data.get('parent_name') or '').strip()
-    phone_raw = str(data.get('phone') or '').strip()
-    if parent_name or phone_raw:
-        parent = c.execute("SELECT * FROM users WHERE id=? AND role='parent'", (s['parent_id'],)).fetchone()
-        if parent:
-            import re
-            name = parent_name or parent['name']
-            phone = parent['phone']
-            if phone_raw:
-                phone = re.sub(r'[\s()\-]', '', phone_raw)
-                if not re.fullmatch(r'\+?[0-9]{7,15}', phone):
-                    raise ValueError('请输入完整手机号，可包含国家区号。')
-                if c.execute('SELECT 1 FROM users WHERE phone=? AND id!=?', (phone, parent['id'])).fetchone():
-                    raise ValueError('此登录手机号已被其他账号使用。')
-            c.execute('UPDATE users SET name=?, phone=? WHERE id=?', (name, phone, parent['id']))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'profile_updated'))
     return {'ok':True}
 
@@ -217,6 +209,112 @@ def guardian(c,user,data,text_value,phone_value,password_hash):
         c.execute('DELETE FROM sessions WHERE user_id=?',(parent['id'],))
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',(s['id'],user['id'],'guardian_updated_with_reset' if password else 'guardian_updated'))
     return {'ok':True}
+
+
+def linked_clause(alias='s'):
+    """A parent sees a child on the original parent_id and on any extra link."""
+    return (f'({alias}.parent_id=? OR EXISTS (SELECT 1 FROM profile_parents pp '
+            f'WHERE pp.profile_id={alias}.profile_id AND pp.user_id=?))')
+
+
+def linked_params(user_id):
+    return (user_id, user_id)
+
+
+def parents_for(c, profile_id, primary_id):
+    rows = []
+    seen = set()
+    if primary_id:
+        row = c.execute("SELECT id, name, phone FROM users WHERE id=? AND role='parent'", (primary_id,)).fetchone()
+        if row:
+            rows.append({'id': row['id'], 'name': row['name'], 'phone': row['phone'], 'primary': True})
+            seen.add(row['id'])
+    for row in c.execute('''SELECT u.id, u.name, u.phone FROM profile_parents pp
+            JOIN users u ON u.id=pp.user_id WHERE pp.profile_id=? AND u.role='parent' ORDER BY u.name''', (profile_id,)):
+        if row['id'] in seen:
+            continue
+        rows.append({'id': row['id'], 'name': row['name'], 'phone': row['phone'], 'primary': False})
+        seen.add(row['id'])
+    return rows
+
+
+def search_parents(c, user, query):
+    if user['role'] not in ('owner', 'admin'):
+        raise AccessError('只有老板或管理员可以查找家长。')
+    text = str(query or '').strip()
+    if len(text) < 1:
+        return {'parents': []}
+    like = f'%{text}%'
+    rows = []
+    for row in c.execute('''SELECT u.id, u.name, u.phone, u.contact_phone FROM users u
+            WHERE u.role='parent' AND NOT EXISTS (SELECT 1 FROM teachers t WHERE t.user_id=u.id)
+              AND (u.name LIKE ? OR u.phone LIKE ? OR u.contact_phone LIKE ?)
+            ORDER BY u.name LIMIT 8''', (like, like, like)):
+        rows.append({'id': row['id'], 'name': row['name'], 'phone': row['phone'], 'contact_phone': row['contact_phone']})
+    return {'parents': rows}
+
+
+def _parent_account(c, user_id):
+    row = c.execute("SELECT * FROM users WHERE id=? AND role='parent'", (int(user_id),)).fetchone()
+    if not row or c.execute('SELECT 1 FROM teachers WHERE user_id=?', (row['id'],)).fetchone():
+        raise ValueError('请选择一个家长账号。')
+    return row
+
+
+def link_parent(c, user, data, phone_value, password_hash, text_value):
+    """Attach one existing parent, or create one account, without renaming anyone else."""
+    if user['role'] not in ('owner', 'admin'):
+        raise AccessError('只有老板或管理员可以关联家长。')
+    schema(c)
+    student_row = student(c, data)
+    chosen = data.get('parent_user_id')
+    import auditlog
+    auditlog.begin(c)
+    if chosen:
+        parent = _parent_account(c, chosen)
+    else:
+        name = text_value(data.get('parent_name'), '家长姓名', 40)
+        phone = phone_value(data.get('phone'))
+        password = str(data.get('password') or '')
+        if not 10 <= len(password) <= 128:
+            raise ValueError('新家长的初始密码需为 10–128 位。')
+        existing = c.execute('SELECT id, role FROM users WHERE phone=?', (phone,)).fetchone()
+        if existing:
+            raise ValueError('这个手机号已有账号。请从搜索结果里选择，不要新建。')
+        pid = c.execute('INSERT INTO users(phone,name,password,role) VALUES(?,?,?,?)',
+            (phone, name, password_hash(password), 'parent')).lastrowid
+        parent = _parent_account(c, pid)
+    c.execute('INSERT OR IGNORE INTO profile_parents(profile_id, user_id) VALUES(?,?)',
+        (student_row['profile_id'], parent['id']))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',
+        (student_row['id'], user['id'], 'parent_linked'))
+    auditlog.hint(c, f"关联家长 {parent['name']} 到 {student_row['name']}")
+    auditlog.finish(c, user)
+    return {'ok': True, 'parent_id': parent['id']}
+
+
+def unlink_parent(c, user, data):
+    if user['role'] not in ('owner', 'admin'):
+        raise AccessError('只有老板或管理员可以取消家长关联。')
+    schema(c)
+    student_row = student(c, data)
+    parent = _parent_account(c, data.get('parent_user_id') or 0)
+    others = [row['user_id'] for row in c.execute(
+        'SELECT user_id FROM profile_parents WHERE profile_id=? AND user_id!=?',
+        (student_row['profile_id'], parent['id']))]
+    if student_row['parent_id'] == parent['id'] and not others:
+        raise ValueError('至少保留一位家长。可以先关联另一位，再取消这一位。')
+    import auditlog
+    auditlog.begin(c)
+    c.execute('DELETE FROM profile_parents WHERE profile_id=? AND user_id=?',
+        (student_row['profile_id'], parent['id']))
+    if student_row['parent_id'] == parent['id']:
+        c.execute('UPDATE students SET parent_id=? WHERE profile_id=?', (others[0], student_row['profile_id']))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)',
+        (student_row['id'], user['id'], 'parent_unlinked'))
+    auditlog.hint(c, f"取消家长 {parent['name']} 与 {student_row['name']} 的关联")
+    auditlog.finish(c, user)
+    return {'ok': True}
 
 
 def add_course(c,user,data,text_value):
