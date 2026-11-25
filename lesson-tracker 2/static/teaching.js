@@ -1,4 +1,4 @@
-let weekStart='', teacherFilter='', scheduleStatus='all', profileId='', recordTeacher='', recordQuery='';
+let weekStart='', teacherFilter='', scheduleStatus='all', profileId='', payTeacherId='', recordTeacher='', recordQuery='';
 const statusName={scheduled:'待上课',completed:'已完成',cancelled:'已取消'};
 const datePlus=(day,n)=>{const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
 const monday=day=>{const n=new Date(day+'T12:00:00Z').getUTCDay();return datePlus(day,-((n+6)%7));};
@@ -68,7 +68,7 @@ function dashboard(){
  const navHtml=nav.map(([label,items])=>`${label==='更多'?'<p class="nav-more">更多</p>':label?`<p class="nav-label">${label}</p>`:''}${items.map(item=>`<button class="nav-item ${shown===item[0]?'active':''}" data-view="${item[0]}">${icon(item[2])}${item[1]}</button>`).join('')}`).join('');
  $('#app').innerHTML=`<div class="shell"><aside class="sidebar ${role==='owner'?'a2':''}">${brand()}<nav>${navHtml}</nav><div class="side-foot"><strong>HZ Education Melbourne</strong>把每一次进步，认真记下来。</div></aside><button type="button" class="nav-backdrop" id="nav-backdrop" aria-label="关闭菜单"></button><main class="main">${state.demo?'<div class="demo-banner">本机演示版 · 虚构数据 · 可分别体验Helen校长端、管理员、任课老师和家长账号</div>':''}<header class="topbar"><button type="button" class="nav-toggle" id="nav-toggle" aria-label="打开菜单"><span></span><span></span><span></span></button><div class="breadcrumb">${center}<span>/　${current[1]}</span></div><div class="account"><span class="avatar">${userHTML(state.user.name.slice(0,1))}</span><span>${userHTML(state.user.name)}</span><span class="role-label">${role==='owner'?'Helen校长端':admin?'管理员':staff?'任课老师':'家长'}</span><button class="text-btn" id="password">修改密码</button><button class="text-btn logout" id="logout">退出</button></div></header><div class="content"><div class="page-head ${role==='owner'?'a2-head':''}"><div><h1>${current[1]}</h1><p>${escapeHTML(subtitles[view]||'')}</p></div>${headerActions()}</div><div id="surface"></div></div></main></div>`;
  const closeNav=()=>document.querySelector('.shell')?.classList.remove('nav-open');
- document.querySelectorAll('.sidebar [data-view]').forEach(button=>button.onclick=()=>{view=button.dataset.view;selected='';closeNav();render();});
+ document.querySelectorAll('.sidebar [data-view]').forEach(button=>button.onclick=()=>{view=button.dataset.view;selected='';payTeacherId='';closeNav();const next='/?view='+encodeURIComponent(view);if(location.pathname+location.search!==next)history.pushState({hz:1},'',next);render();});
  $('#nav-toggle').onclick=()=>document.querySelector('.shell').classList.toggle('nav-open');
  $('#nav-backdrop').onclick=closeNav;
  $('#password').onclick=passwordModal;
@@ -85,7 +85,7 @@ function dashboard(){
  if(view==='share')renderShare();
  if(view==='prices')renderPrices();
  if(view==='audit')renderAudit();
- if(view==='profile')renderProfile();
+ if(view==='profile')renderStudentProfile();
  if(view==='setup')renderSetup();
  if(view==='administrators')renderAdministrators();
  if(view==='settings')renderScheduleSettings();
@@ -100,9 +100,10 @@ function dashboard(){
 }
 function studentFilter(){return `<select id="student-filter" class="select-filter" aria-label="按学生筛选"><option value="">全部学生</option>${state.students.map(s=>`<option data-user-content value="${s.id}" ${selected==s.id?'selected':''}>${escapeHTML(s.name)}${s.no_course?'':` · ${escapeHTML(s.course)}`}</option>`).join('')}</select>`;}
 function renderOverview(){
+ if(typeof restoreStudentList!=='undefined' && restoreStudentList){restoreStudentList=false; loadListPlace();}
  const students=state.students,total=students.reduce((n,s)=>n+regularHours(s),0),staff=isStaff();
  $('#surface').innerHTML=`<section class="stats"><div class="stat featured"><div class="stat-label">${staff?'学生剩余余额':'孩子剩余余额'}${icon('clock')}</div><div class="stat-value">${balanceSummary(students)}</div><div class="stat-note">赠送 ${balanceSummary(students,true)}</div></div><div class="stat"><div class="stat-label">${staff?'关联学生':'关联孩子'}${icon('users')}</div><div class="stat-value">${studentGroups().length}<small>位</small></div><div class="stat-note">${staff?'可在课表中查看课程安排':'仅显示自己孩子的信息'}</div></div><div class="stat"><div class="stat-label">需要续费</div><div class="stat-value">${studentGroups().filter(g=>g.some(s=>!s.no_course&&needsRenewal(s)&&(s.study_status||'studying')!=='graduated')).length}<small>位</small></div><div class="stat-note">至少一个科目的余额不足 3 课时／小时，请续费</div></div></section>${staff?'<div class="section-head"><h2>学生课时</h2><input id="search" class="search" type="search" placeholder="搜索学生、课程或手机号" aria-label="搜索学生"></div><div id="student-list"></div>':parentCards()}<section class="recent"><div class="section-head"><h2>全校最近变动</h2><button class="action" id="all-records">全部记录 →</button></div><div id="records-list"></div></section>`;
- if(staff){if(['owner','admin'].includes(state.user.role)){$('#search').insertAdjacentHTML('afterend',`<select id="study-filter" class="select-filter" aria-label="按在读状态筛选"><option value="studying">在读</option><option value="graduated">已毕业</option><option value="all">全部</option></select><select id="student-status-filter" class="select-filter" aria-label="按学生课时状态筛选"><option value="all">全部状态</option><option value="normal">正常（余额不少于 3）</option><option value="renewal">需续费（余额不足 3）</option></select>`);$('#study-filter').value=studyFilter;$('#study-filter').onchange=e=>{studyFilter=e.target.value;renderStudents();};$('#student-status-filter').value=studentStatus;$('#student-status-filter').onchange=e=>{studentStatus=e.target.value;renderStudents();};}$('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderStudents();};renderStudents();document.querySelectorAll('.student-profile h3, #student-list .staff h3').forEach(heading=>heading.onclick=()=>{const student=state.students.find(item=>item.name===heading.textContent);if(!student)return;profileId=String(student.id);view='profile';render();});}
+ if(staff){if(['owner','admin'].includes(state.user.role)){$('#search').insertAdjacentHTML('afterend',`<select id="study-filter" class="select-filter" aria-label="按在读状态筛选"><option value="studying">在读</option><option value="graduated">已毕业</option><option value="all">全部</option></select><select id="student-status-filter" class="select-filter" aria-label="按学生课时状态筛选"><option value="all">全部状态</option><option value="normal">正常（余额不少于 3）</option><option value="renewal">需续费（余额不足 3）</option></select>`);$('#study-filter').value=studyFilter;$('#study-filter').onchange=e=>{studyFilter=e.target.value;renderStudents();};$('#student-status-filter').value=studentStatus;$('#student-status-filter').onchange=e=>{studentStatus=e.target.value;renderStudents();};}$('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderStudents();};renderStudents();}
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=()=>{view='records';selected=b.dataset.child;render();});
  $('#all-records').onclick=()=>{view='records';selected='';render();};renderRecords();
 }
@@ -285,7 +286,7 @@ let calendarClickSuppressedUntil=0;
 async function changeScheduleWeek(day){
  const target=monday(day);
  weekStart=target;
- if(typeof calendarSpan==='undefined' || calendarSpan!=='day') gcalDay=target;
+ if(typeof calendarSpan==='undefined' || (calendarSpan!=='day' && calendarSpan!=='month')) gcalDay=target;
  renderSchedule();
  const through=calendarSpan==='month'?datePlus(monthStart(gcalDay||target), 41):datePlus(target, calendarSpan==='day'?0:6);
  try{const next=await api('state?through='+encodeURIComponent(through));state=next;weekStart=target;renderSchedule();}catch(e){toast(e.message);}

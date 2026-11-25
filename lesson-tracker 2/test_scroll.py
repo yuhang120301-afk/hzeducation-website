@@ -52,17 +52,19 @@ class ScrollPlaceTests(unittest.TestCase):
             page.click('[data-demo=owner]')
             page.wait_for_selector('.sidebar [data-view=overview]')
             page.click('.sidebar [data-view=overview]')
-            page.wait_for_selector('#student-list details')
+            page.wait_for_selector('#student-list .pay-card')
+            page.locator('#student-list .pay-card').first.click()
+            page.wait_for_selector('[data-profile-section="lessons"]')
             page.evaluate('''() => {
               document.body.style.minHeight = '4000px';
               window.scrollTo(0, 900);
-              document.querySelector('#student-list details').open = true;
+              document.querySelector('[data-profile-section="lessons"]').open = true;
             }''')
             page.evaluate('() => refresh()')
             page.wait_for_timeout(400)
             place = page.evaluate('''() => ({
               y: window.scrollY,
-              open: document.querySelector('#student-list details').open
+              open: document.querySelector('[data-profile-section="lessons"]').open
             })''')
             browser.close()
         self.assertGreater(place['y'], 700)
