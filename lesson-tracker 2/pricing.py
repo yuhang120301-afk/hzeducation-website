@@ -4,8 +4,9 @@ Prices are effective by the payment date. A student's own price wins over the
 table. Nothing here is shown to parents, teachers, or the front desk.
 """
 import datetime as dt
+import logging
 import re
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
 from teaching import AccessError, now_local
 
@@ -180,9 +181,12 @@ def enrolment_hourly(student):
     if 'custom_hourly_cents' not in keys:
         return None
     value = student['custom_hourly_cents']
-    if value is None:
+    if value is None or value == '':
         return None
-    return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def singapore_list_hourly(student):
@@ -1303,52 +1307,73 @@ def normalize_purchase(c, user, data):
     return purchased
 
 
+def _safe_int(value, default=None):
+    try:
+        if value is None or value == '':
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _aud(cents):
-    cents = int(cents)
+    cents = _safe_int(cents, 0) or 0
     sign = '-' if cents < 0 else ''
     cents = abs(cents)
     return f'{sign}${cents // 100}.{cents % 100:02d}'
 
 
 def _rate_minutes(c, student, batch):
-    student = dict(student)
-    if batch and int(batch.get('lesson_minutes') or 0) > 0:
-        return int(batch['lesson_minutes'])
-    row = c.execute('''SELECT starts_at, ends_at FROM lessons l
-        JOIN lesson_students ls ON ls.lesson_id=l.id
-        WHERE ls.student_id=? AND l.status!='cancelled'
-        ORDER BY l.starts_at DESC LIMIT 1''', (student['id'],)).fetchone()
-    if row and row['starts_at'] and row['ends_at']:
-        start = dt.datetime.fromisoformat(row['starts_at'])
-        end = dt.datetime.fromisoformat(row['ends_at'])
-        minutes = int((end - start).total_seconds() // 60)
-        if minutes > 0:
-            return minutes
-    subject = student.get('subject_name') or student.get('course') or ''
-    kind = student.get('course_type_name') or ''
-    import teaching
-    if teaching.combo_subject(subject) or kind == '小班课':
-        return COMBO_MINUTES
-    return 60
+    try:
+        student = dict(student)
+        stored = _safe_int(batch.get('lesson_minutes') if batch else None, 0) or 0
+        if stored > 0:
+            return stored
+        row = c.execute('''SELECT starts_at, ends_at FROM lessons l
+            JOIN lesson_students ls ON ls.lesson_id=l.id
+            WHERE ls.student_id=? AND l.status!='cancelled'
+            ORDER BY l.starts_at DESC LIMIT 1''', (student['id'],)).fetchone()
+        if row and row['starts_at'] and row['ends_at']:
+            try:
+                start = dt.datetime.fromisoformat(str(row['starts_at']))
+                end = dt.datetime.fromisoformat(str(row['ends_at']))
+                minutes = int((end - start).total_seconds() // 60)
+                if minutes > 0:
+                    return minutes
+            except (TypeError, ValueError, OSError):
+                pass
+        subject = student.get('subject_name') or student.get('course') or ''
+        kind = student.get('course_type_name') or ''
+        import teaching
+        if teaching.combo_subject(subject) or kind == '小班课':
+            return COMBO_MINUTES
+        return 60
+    except Exception:
+        logging.exception('lesson length failed for student %s', (student or {}).get('id') if isinstance(student, dict) else None)
+        return 60
 
 
 def _pack_amount_cents(batch):
-    if batch.get('cash_cents') is not None:
-        return int(batch['cash_cents'])
-    if batch.get('total_cents') is not None:
-        return int(batch['total_cents'])
-    return None
+    cash = _safe_int(batch.get('cash_cents'))
+    if cash is not None:
+        return cash
+    return _safe_int(batch.get('total_cents'))
 
 
 def _pack_prices(batch, minutes):
     """Per-lesson and hourly cents, using the same split as a taught lesson."""
-    pool = int(batch.get('purchased') or 0) + int(batch.get('gifted') or 0)
-    amount = _pack_amount_cents(batch)
-    if pool <= 0 or not minutes or amount is None:
+    try:
+        pool = (_safe_int(batch.get('purchased'), 0) or 0) + (_safe_int(batch.get('gifted'), 0) or 0)
+        amount = _pack_amount_cents(batch)
+        minutes = _safe_int(minutes, 0) or 0
+        if pool <= 0 or minutes <= 0 or amount is None:
+            return None, None
+        per_lesson = int((Decimal(amount) * Decimal(100) / Decimal(pool)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+        hourly = int((Decimal(per_lesson) * Decimal(60) / Decimal(minutes)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+        return per_lesson, hourly
+    except (InvalidOperation, TypeError, ValueError, ArithmeticError):
+        logging.exception('pack price failed for batch %s', batch.get('id') if isinstance(batch, dict) else None)
         return None, None
-    per_lesson = int((Decimal(amount) * Decimal(100) / Decimal(pool)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
-    hourly = int((Decimal(per_lesson) * Decimal(60) / Decimal(minutes)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
-    return per_lesson, hourly
 
 
 def _live_packs(c, student_id):
@@ -1456,7 +1481,11 @@ def list_course_rates(c, include_left=False):
             LEFT JOIN student_profiles p ON p.id=s.profile_id
             WHERE IFNULL(s.voided,0)=0 AND TRIM(COALESCE(s.course,''))!=''
             ORDER BY s.name, s.id'''):
-        item = course_rate(c, student)
+        try:
+            item = course_rate(c, student)
+        except Exception:
+            logging.exception('course rate failed for student %s', student['id'] if 'id' in student.keys() else None)
+            continue
         if item['left'] and not include_left:
             continue
         rows.append(item)
@@ -1471,7 +1500,15 @@ def apply_rate_visibility(c, user, people):
             for key in keys:
                 person.pop(key, None)
         return
-    by_student = {row['student_id']: row for row in list_course_rates(c, include_left=True)}
+    try:
+        rated = list_course_rates(c, include_left=True)
+    except Exception:
+        logging.exception('hourly rates were left off this page')
+        for person in people:
+            for key in keys:
+                person.pop(key, None)
+        return
+    by_student = {row['student_id']: row for row in rated}
     for person in people:
         if person.get('no_course'):
             for key in keys:

@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -338,6 +339,141 @@ def seed_portal_cast(c):
     teaching.ensure_catalogs(c)
     c.execute("INSERT INTO app_meta VALUES('portal_cast_v1','1')")
 
+def build_state(c, user):
+    """Owner, staff and parent payload for GET /api/state.
+
+    One bad course or teacher record is logged and skipped. It does not
+    take down the rest of the page.
+    """
+    condition = ''
+    params = ()
+    if user['role']=='teacher':
+        condition=' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN lessons tl ON ls.lesson_id=tl.id WHERE ls.student_id=s.id AND tl.teacher_id=?)'
+        params=(user['teacher_id'],)
+    elif user['role']=='parent':
+        profiles.schema(c)
+        condition=' WHERE '+profiles.linked_clause('s')
+        params=profiles.linked_params(user['id'])
+    students = [dict(x) for x in c.execute('''SELECT s.*,u.name parent_name,u.phone,u.contact_phone,
+        ct.name course_type_name, sb.name subject_name
+        FROM students s JOIN users u ON s.parent_id=u.id
+        LEFT JOIN course_types ct ON ct.id=s.course_type_id
+        LEFT JOIN subjects sb ON sb.id=s.subject_id'''+condition+' ORDER BY s.id',params)]
+    profiles.ensure_enrolment_columns(c)
+    extras = {row['id']: dict(row) for row in c.execute('SELECT * FROM student_profiles')}
+    for person in students:
+        extra = extras.get(person.get('profile_id')) or {}
+        for key, value in extra.items():
+            if key != 'id':
+                person[key] = value
+        pricing.annotate(person)
+    if user['role'] in ('owner','admin'):
+        profiles.schema(c)
+        for person in students:
+            person['parents']=profiles.parents_for(c, person.get('profile_id'), person.get('parent_id'))
+    if user['role'] not in ('owner','admin'):
+        for s in students: s.pop('notes',None)
+    credit_batches.enrich(c,students)
+    for person in students:
+        paid = person.get('paid_balance')
+        person['needs_renewal'] = (paid if paid is not None else person.get('balance') or 0) < 300
+    if user['role'] == 'owner':
+        for person in students:
+            try:
+                offer=pricing.legacy_price(c, person)
+            except Exception:
+                logging.exception('price label failed for student %s', person.get('id'))
+                offer={'legacy': False, 'legacy_subjects': [], 'list_hourly_cents': None, 'custom_hourly_cents': None}
+            person['legacy']=offer['legacy']
+            person['legacy_subjects']=offer['legacy_subjects']
+            person['list_hourly_cents']=offer['list_hourly_cents']
+            person['custom_hourly_cents']=offer['custom_hourly_cents']
+    if user['role'] == 'teacher':
+        for person in students:
+            for key in ('parent_email', 'phone', 'contact_phone', 'parent_name', 'legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents', 'balance', 'paid_balance', 'gift_balance', 'credit_batches', 'health_notes'):
+                person.pop(key, None)
+    if user['role'] == 'parent':
+        for person in students:
+            for key in ('legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents', 'phone', 'contact_phone'):
+                person.pop(key, None)
+            for batch in person.get('credit_batches') or []:
+                batch.pop('unit_fees', None)
+    covered={row.get('profile_id') for row in students}
+    shells=profiles.course_shells(c, students)+profiles.profiles_without_courses(c, covered, user)
+    staff=user['role'] in ('owner','admin')
+    archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
+    voided_students=[s for s in students if s['archived'] and s.get('voided')] if staff else []
+    withdrawn_ids=set()
+    if staff:
+        profiles.ensure_enrolment_columns(c)
+        withdrawn_ids={row['id'] for row in c.execute("SELECT id FROM student_profiles WHERE status='withdrawn'")}
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
+            for row in c.execute('''SELECT profile_id, action FROM (
+                SELECT s.profile_id, a.action, ROW_NUMBER() OVER (PARTITION BY s.profile_id ORDER BY a.id DESC) n
+                FROM profile_audit a JOIN students s ON s.id=a.student_id
+                WHERE s.profile_id IS NOT NULL AND a.action IN ('archived','reinstated')
+            ) WHERE n=1 AND action='archived' '''):
+                withdrawn_ids.add(row['profile_id'])
+    withdrawn_students=[]
+    for person in students:
+        if person.get('profile_id') in withdrawn_ids:
+            card=dict(person)
+            card['withdrawn']=True
+            withdrawn_students.append(card)
+    if not staff:
+        withdrawn_students=[]
+    students=[s for s in students if not s['archived']]+shells
+    left_students=[]
+    if staff:
+        left_ids={row['id'] for row in c.execute("SELECT id FROM student_profiles WHERE TRIM(COALESCE(left_on,''))!=''")}
+        left_students=[person for person in students if person.get('profile_id') in left_ids]
+        students=[person for person in students if person.get('profile_id') not in left_ids]
+        left_students+=profiles.profiles_without_courses(c, covered, user, include_left=True)
+    if user['role']=='owner':
+        deletion.annotate_blockers(c, [person for person in students if not person.get('no_course')])
+    if user['role']!='owner':
+        for person in students+archived_students+voided_students+withdrawn_students+left_students:
+            person.pop('helen_original', None)
+            person.pop('origin_override', None)
+            person.pop('created_on', None)
+    entry_condition=condition
+    if user['role']=='teacher':
+        entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
+    entries = [dict(x) for x in c.execute('''SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,pack.total_cents pack_cents,r.id reversed_by,
+        CASE WHEN EXISTS (SELECT 1 FROM vouchers v WHERE v.status='void' AND (v.ledger_id=l.id OR v.reversal_ledger_id=l.id)) THEN 1 ELSE 0 END voided_payment,
+        (SELECT v.id FROM vouchers v WHERE v.status='void' AND v.ledger_id=l.id LIMIT 1) void_voucher_id
+        FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN subjects sb ON sb.id=s.subject_id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id LEFT JOIN credit_batches pack ON pack.ledger_id=l.id'''+entry_condition+' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC',params)]
+    if user['role']=='teacher':
+        entries=[e for e in entries if e['kind']=='lesson']
+        for e in entries:
+            for key in ('cash_delta','payment_method','reference','pack_cents','request_id','reversal_of'):
+                e.pop(key, None)
+    if user['role']=='parent':
+        entries=[e for e in entries if e['kind'] in ('credit','refund') and not e['reversed_by'] and not e.get('voided_payment')]
+        for e in entries:
+            for key in ('request_id','reversal_of','version'):e.pop(key,None)
+    for person in students+archived_students+voided_students+withdrawn_students+left_students:
+        person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
+    pricing.apply_rate_visibility(c, user, students+archived_students+voided_students+withdrawn_students+left_students)
+    import timeline
+    try:
+        schedule = teaching.state_for(c, user)
+    except Exception:
+        logging.exception('schedule state failed')
+        schedule = {'lessons': [], 'teachers': [], 'course_types': [], 'subjects': [], 'recurrence_warnings': [], 'schedule_options': [], 'timezone': teaching.TIMEZONE, 'today': teaching.now_local().date().isoformat(), 'now': teaching.now_local().strftime('%Y-%m-%dT%H:%M')}
+    try:
+        events = timeline.for_staff(c) if staff else []
+    except Exception:
+        logging.exception('profile events failed')
+        events = []
+    try:
+        admins = accounting.administrators(c, user) if user['role']=='owner' else []
+    except Exception:
+        logging.exception('administrator list failed')
+        admins = []
+    return {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'left_students':left_students,'profile_events':events,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**schedule,'administrators':admins}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # Never log request bodies, passwords, or sessions.
@@ -572,114 +708,11 @@ class Handler(BaseHTTPRequestHandler):
                     if requested:
                         teaching.dt.date.fromisoformat(requested[0])
                 except (ValueError,OverflowError,IndexError):return self.response(400,{'error':'日期无效。'})
-                condition = ''
-                params = ()
-                if user['role']=='teacher':
-                    condition=' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN lessons tl ON ls.lesson_id=tl.id WHERE ls.student_id=s.id AND tl.teacher_id=?)'
-                    params=(user['teacher_id'],)
-                elif user['role']=='parent':
-                    profiles.schema(c)
-                    condition=' WHERE '+profiles.linked_clause('s')
-                    params=profiles.linked_params(user['id'])
-                students = [dict(x) for x in c.execute('''SELECT s.*,u.name parent_name,u.phone,u.contact_phone,
-                    ct.name course_type_name, sb.name subject_name
-                    FROM students s JOIN users u ON s.parent_id=u.id
-                    LEFT JOIN course_types ct ON ct.id=s.course_type_id
-                    LEFT JOIN subjects sb ON sb.id=s.subject_id'''+condition+' ORDER BY s.id',params)]
-                profiles.ensure_enrolment_columns(c)
-                extras = {row['id']: dict(row) for row in c.execute('SELECT * FROM student_profiles')}
-                for person in students:
-                    extra = extras.get(person.get('profile_id')) or {}
-                    for key, value in extra.items():
-                        if key != 'id':
-                            person[key] = value
-                    pricing.annotate(person)
-                if user['role'] in ('owner','admin'):
-                    profiles.schema(c)
-                    for person in students:
-                        person['parents']=profiles.parents_for(c, person.get('profile_id'), person.get('parent_id'))
-                if user['role'] not in ('owner','admin'):
-                    for s in students: s.pop('notes',None)
-                credit_batches.enrich(c,students)
-                for person in students:
-                    paid = person.get('paid_balance')
-                    person['needs_renewal'] = (paid if paid is not None else person.get('balance') or 0) < 300
-                if user['role'] == 'owner':
-                    for person in students:
-                        offer=pricing.legacy_price(c, person)
-                        person['legacy']=offer['legacy']
-                        person['legacy_subjects']=offer['legacy_subjects']
-                        person['list_hourly_cents']=offer['list_hourly_cents']
-                        person['custom_hourly_cents']=offer['custom_hourly_cents']
-                if user['role'] == 'teacher':
-                    for person in students:
-                        for key in ('parent_email', 'phone', 'contact_phone', 'parent_name', 'legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents', 'balance', 'paid_balance', 'gift_balance', 'credit_batches', 'health_notes'):
-                            person.pop(key, None)
-                if user['role'] == 'parent':
-                    for person in students:
-                        for key in ('legacy', 'legacy_subjects', 'list_hourly_cents', 'custom_hourly_cents', 'phone', 'contact_phone'):
-                            person.pop(key, None)
-                        for batch in person.get('credit_batches') or []:
-                            batch.pop('unit_fees', None)
-                covered={row.get('profile_id') for row in students}
-                shells=profiles.course_shells(c, students)+profiles.profiles_without_courses(c, covered, user)
-                staff=user['role'] in ('owner','admin')
-                archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
-                voided_students=[s for s in students if s['archived'] and s.get('voided')] if staff else []
-                withdrawn_ids=set()
-                if staff:
-                    profiles.ensure_enrolment_columns(c)
-                    withdrawn_ids={row['id'] for row in c.execute("SELECT id FROM student_profiles WHERE status='withdrawn'")}
-                    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
-                        for row in c.execute('''SELECT profile_id, action FROM (
-                            SELECT s.profile_id, a.action, ROW_NUMBER() OVER (PARTITION BY s.profile_id ORDER BY a.id DESC) n
-                            FROM profile_audit a JOIN students s ON s.id=a.student_id
-                            WHERE s.profile_id IS NOT NULL AND a.action IN ('archived','reinstated')
-                        ) WHERE n=1 AND action='archived' '''):
-                            withdrawn_ids.add(row['profile_id'])
-                withdrawn_students=[]
-                for person in students:
-                    if person.get('profile_id') in withdrawn_ids:
-                        card=dict(person)
-                        card['withdrawn']=True
-                        withdrawn_students.append(card)
-                if not staff:
-                    withdrawn_students=[]
-                students=[s for s in students if not s['archived']]+shells
-                left_students=[]
-                if staff:
-                    left_ids={row['id'] for row in c.execute("SELECT id FROM student_profiles WHERE TRIM(COALESCE(left_on,''))!=''")}
-                    left_students=[person for person in students if person.get('profile_id') in left_ids]
-                    students=[person for person in students if person.get('profile_id') not in left_ids]
-                    left_students+=profiles.profiles_without_courses(c, covered, user, include_left=True)
-                if user['role']=='owner':
-                    deletion.annotate_blockers(c, [person for person in students if not person.get('no_course')])
-                if user['role']!='owner':
-                    for person in students+archived_students+voided_students+withdrawn_students+left_students:
-                        person.pop('helen_original', None)
-                        person.pop('origin_override', None)
-                        person.pop('created_on', None)
-                entry_condition=condition
-                if user['role']=='teacher':
-                    entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
-                entries = [dict(x) for x in c.execute('''SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,pack.total_cents pack_cents,r.id reversed_by,
-                    CASE WHEN EXISTS (SELECT 1 FROM vouchers v WHERE v.status='void' AND (v.ledger_id=l.id OR v.reversal_ledger_id=l.id)) THEN 1 ELSE 0 END voided_payment,
-                    (SELECT v.id FROM vouchers v WHERE v.status='void' AND v.ledger_id=l.id LIMIT 1) void_voucher_id
-                    FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN subjects sb ON sb.id=s.subject_id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id LEFT JOIN credit_batches pack ON pack.ledger_id=l.id'''+entry_condition+' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC',params)]
-                if user['role']=='teacher':
-                    entries=[e for e in entries if e['kind']=='lesson']
-                    for e in entries:
-                        for key in ('cash_delta','payment_method','reference','pack_cents','request_id','reversal_of'):
-                            e.pop(key, None)
-                if user['role']=='parent':
-                    entries=[e for e in entries if e['kind'] in ('credit','refund') and not e['reversed_by'] and not e.get('voided_payment')]
-                    for e in entries:
-                        for key in ('request_id','reversal_of','version'):e.pop(key,None)
-                for person in students+archived_students+voided_students+withdrawn_students+left_students:
-                    person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
-                pricing.apply_rate_visibility(c, user, students+archived_students+voided_students+withdrawn_students+left_students)
-                import timeline
-                return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'left_students':left_students,'profile_events':timeline.for_staff(c) if staff else [],'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
+                try:
+                    return self.response(200, build_state(c, user))
+                except Exception:
+                    logging.exception('GET /api/state failed')
+                    return self.response(500, {'error':'暂时无法完成操作，请稍后重试。'})
         if path == '/robots.txt':
             return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
         student_page = re.fullmatch(r'/students/\d+(?:/lessons/\d+)?/?', path)
