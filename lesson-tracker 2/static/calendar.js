@@ -460,7 +460,7 @@ async function renderToday(){
  try{
   const data=await api('today?date='+encodeURIComponent(state.today));
   if(view!=='today') return;
-  const cards=[['今日营业额',boardMoney(data.today.turnover_cents),'今天已上的课'],['今日利润',boardMoney(data.today.profit_cents),'扣课酬和当天成本'],['本月营业额',boardMoney(data.month.turnover_cents),'本月已上的课'],['本月利润',boardMoney(data.month.profit_cents),'还没扣 Vincent 分成']];
+  const cards=[['今日机构收入',boardMoney(data.today.turnover_cents),'新学生已上的课'],['今日机构利润',boardMoney(data.today.profit_cents),'机构收入减去成本'],['本月机构收入',boardMoney(data.month.turnover_cents),'新学生已上的课'],['本月机构利润',boardMoney(data.month.profit_cents),'还没分 Vincent 的 30%']];
   $('#today-cards').innerHTML=cards.map((card,index)=>`<div class="card ${index%2?'good':''}"><div class="k">${card[0]}</div><div class="n">${card[1]}</div><div class="s">${card[2]}</div></div>`).join('');
   const low=(data.low_balance||[]).filter(row=>row.lessons_left<=3);
   const booked=data.arrears?.booked_without_credit||[];
