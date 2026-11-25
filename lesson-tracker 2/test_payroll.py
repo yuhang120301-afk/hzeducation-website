@@ -84,6 +84,31 @@ class PayCalculationTests(unittest.TestCase):
     def pay(self, start, end):
         return payroll.report(self.c, {'id': 1, 'role': 'owner'}, 'custom', None, start, end)
 
+    def test_small_class_uses_the_teachers_own_percent_and_warns(self):
+        tid = self.teacher('Kelsey')
+        known = self.student('知道价格')
+        unknown = self.student('不知道价格')
+        batch = self.package(known, 1, 10000)
+        kind = self.c.execute("SELECT id FROM course_types WHERE name='小班课'").fetchone()['id']
+        day = '2030-09-01'
+        lid = self.c.execute('''INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,status,created_by,request_id,course_type_id)
+            VALUES(?,?,?,?,100,'教室','completed',1,?,?)''', (tid, '小班课', day+'T16:00', day+'T17:00', uuid.uuid4().hex, kind)).lastrowid
+        self.c.execute('INSERT INTO lesson_students VALUES(?,?)', (lid, known))
+        self.c.execute('INSERT INTO lesson_students VALUES(?,?)', (lid, unknown))
+        ledger = self.c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,'上课',1,?)",
+            (known, -100, day, uuid.uuid4().hex)).lastrowid
+        self.c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,ledger_id,updated_by)
+            VALUES(?,?,100,'内容','作业','反馈',?,1)''', (lid, known, ledger))
+        self.c.execute('INSERT INTO credit_movements(ledger_id,batch_id,paid,gift,voided) VALUES(?,?,?,?,0)', (ledger, batch, -100, 0))
+        missing = self.c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,'上课',1,?)",
+            (unknown, -100, day, uuid.uuid4().hex)).lastrowid
+        self.c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,ledger_id,updated_by)
+            VALUES(?,?,100,'内容','作业','反馈',?,1)''', (lid, unknown, missing))
+        self.rule(tid, 'percent', 30)
+        lesson = next(item for item in self.pay(day, day)['teachers'][0]['lessons'] if item['lesson_id'] == lid)
+        self.assertEqual(lesson['pay_cents'], 3000)
+        self.assertIn('不知道价格', lesson['warnings'])
+
     def test_percent_of_lesson_fee(self):
         tid, sid = self.teacher('Angela'), self.student('学生甲')
         batch = self.package(sid, 10, 100000)
