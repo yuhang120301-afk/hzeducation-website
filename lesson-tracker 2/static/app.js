@@ -103,6 +103,10 @@ function applyRoute(){
   if(state.user && state.user.role==='parent'){view='overview'; profileId=''; lessonRecordId=''; payTeacherId=''; receiptId=''; if(location.pathname.startsWith('/students/')) history.replaceState({hz:1},'','/?view=overview'); return;}
   view='lesson-record'; profileId=lessonRecord[1]; lessonRecordId=lessonRecord[2]; payTeacherId=''; receiptId=''; return;}
  lessonRecordId='';
+ const personOnly=path.match(/^\/profiles\/(\d+)\/?$/);
+ if(personOnly){
+  if(state.user && state.user.role==='parent'){view='overview'; profileId=''; payTeacherId=''; receiptId=''; history.replaceState({hz:1},'','/?view=overview'); return;}
+  view='profile'; profileId='p'+personOnly[1]; payTeacherId=''; receiptId=''; return;}
  if(student){
   if(state.user && state.user.role==='parent'){view='overview'; profileId=''; payTeacherId=''; receiptId=''; if(location.pathname.startsWith('/students/')) history.replaceState({hz:1},'','/?view=overview'); return;}
   view='profile'; profileId=student[1]; payTeacherId=''; receiptId=''; return;}
@@ -250,19 +254,31 @@ function bookableStudents(extra){const ids=new Set((extra||[]).map(id=>String(id
 function lessonStudentHint(s){if(!s||s.archived) return '';if(s.no_course) return '还没有课程，不能扣课';if((s.study_status||'studying')==='graduated') return '已毕业';return '';}
 function parentCards(){return `<section class="child-cards">${state.students.length?studentGroups().map(group=>{const s=group[0];const empty=group.every(account=>account.no_course);const packs=group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label||batch.total_cents!=null);return `<article class="child-card"><div class="child-top"><span class="student-icon">${userHTML(nameInitial(s.name))}</span><div><h2>${userHTML(s.name)} ${studyTag(s)}</h2><p>${userHTML(shownLevel(s)||displayLevel(s.grade)||'')} · ${empty?'未选课':'各科余额独立计算'}</p></div></div>${empty?'<p class="muted">还没有在读的课。</p>':group.map(account=>`<section class="child-course"><h3>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}</h3><div class="child-balance"><div><strong>${(account.billing_unit||'lesson')==='hour'?`剩余 ${fmt(regularHours(account))} 小时`:`剩余 ${fmt(regularHours(account))} 节`}</strong><span class="credit-split">赠送${unitFor(account)} ${fmt(account.gift_balance||0)}</span></div></div>${(account.credit_batches||[]).filter(batch=>batch.total_cents!=null||batch.pack_label).map(batch=>`<p class="pack-now">${escapeHTML(batch.pack_label||'课时包')}${batch.total_cents!=null?` · ${typeof cashFmt==='function'?cashFmt(batch.total_cents):'$'+(batch.total_cents/100).toFixed(2)}`:''}</p>`).join('')}</section>`).join('')}${packs.length?'':''}</article>`;}).join(''):'<div class="panel empty">还没有关联的学生，请联系老师。</div>'}</section>`;}
 /* studentGroupById:start */
+function personKey(s){
+ const name=String(s.name||'').trim().toLowerCase().replace(/\s+/g,' ');
+ const ids=new Set();
+ if(s.parent_id) ids.add(String(s.parent_id));
+ (s.parents||[]).forEach(parent=>{if(parent&&parent.id) ids.add(String(parent.id));});
+ const parent=[...ids].sort().join(',');
+ if(name&&parent) return name+'|'+parent;
+ return 'profile:'+(s.profile_id||s.id);
+}
 function studentGroups(){
  const groups=new Map();
- state.students.forEach(s=>{const key=s.profile_id||s.id;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(s);});
+ state.students.forEach(s=>{const key=personKey(s);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(s);});
  return [...groups.values()];
 }
 function withdrawnGroups(){
  const groups=new Map();
- (state.withdrawn_students||[]).forEach(student=>{const key=student.profile_id||student.id; if(!groups.has(key)) groups.set(key,[]); groups.get(key).push(student);});
+ (state.withdrawn_students||[]).forEach(student=>{const key=personKey(student); if(!groups.has(key)) groups.set(key,[]); groups.get(key).push(student);});
  return [...groups.values()];
 }
 function studentGroupById(id){
- const key=String(id);
+ const raw=String(id||'');
+ const profileOnly=raw.startsWith('p');
+ const key=profileOnly?raw.slice(1):raw;
  const groups=studentGroups();
+ if(profileOnly) return groups.find(group=>group.some(student=>String(student.profile_id)===key))||null;
  const byEnrolment=groups.find(group=>group.some(student=>String(student.id)===key));
  if(byEnrolment) return byEnrolment;
  const byProfile=groups.find(group=>group.some(student=>String(student.profile_id)===key));
@@ -357,7 +373,7 @@ function bindProfileSections(){
 function profileLessonIds(id){
  const group=studentGroupById(id);
  const person=group?group[0]:null;
- const stopped=person?(state.archived_students||[]).concat(state.voided_students||[]).filter(account=>account.profile_id===person.profile_id):[];
+ const stopped=group?(state.archived_students||[]).concat(state.voided_students||[]).filter(account=>group.some(person=>String(person.profile_id)===String(account.profile_id))):[];
  const ids=new Set((group||[]).map(account=>String(account.id)).concat(stopped.map(account=>String(account.id))));
  if(!ids.size && id) ids.add(String(id));
  return ids;
@@ -371,8 +387,9 @@ function studentFold(group, admin){
  const person=group[0];
  const withdrawn=group.some(account=>account.withdrawn);
  const byId=(a,b)=>(b.id||0)-(a.id||0);
- const stopped=(withdrawn?group.filter(account=>account.archived&&!account.voided):(state.archived_students||[]).filter(account=>account.profile_id===person.profile_id)).sort(byId);
- const mistaken=(withdrawn?group.filter(account=>account.voided):(state.voided_students||[]).filter(account=>account.profile_id===person.profile_id)).sort(byId);
+ const inGroup=account=>group.some(person=>String(person.profile_id)===String(account.profile_id));
+ const stopped=(withdrawn?group.filter(account=>account.archived&&!account.voided):(state.archived_students||[]).filter(inGroup)).sort(byId);
+ const mistaken=(withdrawn?group.filter(account=>account.voided):(state.voided_students||[]).filter(inGroup)).sort(byId);
  const ids=profileLessonIds(person.id);
  const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(student=>ids.has(String(student.id))));
  const payments=(state.entries||[]).filter(entry=>ids.has(String(entry.student_id)) && ['credit','refund'].includes(entry.kind) && !entry.reversed_by && !entry.voided_payment).sort((a,b)=>(b.lesson_date||'').localeCompare(a.lesson_date||'')||(b.id||0)-(a.id||0));
@@ -380,7 +397,7 @@ function studentFold(group, admin){
  const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
  const methods=typeof paymentNames==='object'?paymentNames:{};
  const active=group.filter(account=>!account.no_course&&!account.archived&&!account.voided);
- const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">添加课程</button>${state.user.role==='owner'&&!withdrawn?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">退学</button>`:''}${state.user.role==='owner'&&withdrawn?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</div>`:'';
+ const actions=admin?`<div class="profile-actions"><button class="btn" data-profile="${person.id}" type="button">编辑资料</button><button class="btn" data-guardian="${person.id}" type="button">家长账号</button><button class="btn" data-add-course="${person.id}" type="button">${active.length?'添加课程':'开课'}</button>${state.user.role==='owner'&&!withdrawn?`<button class="btn refund-action" data-delete-student="${person.id}" type="button">退学</button>`:''}${state.user.role==='owner'&&withdrawn?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</div>`:'';
  const enrolments=active.map(account=>{
   const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money, account)).join('')||'<li>还没有课时包。</li>';
   const subjectLabel=account.subject_name||account.course||'本科目';
@@ -400,7 +417,7 @@ function studentFold(group, admin){
  const teacherView=state.user.role==='teacher';
  const parentView=state.user.role==='parent';
  const parked=stopped.concat(mistaken);
- const courseBody=`<div class="course-tabs" role="tablist"><button type="button" class="on" data-course-tab="current" aria-selected="true">在上</button><button type="button" data-course-tab="stopped" aria-selected="false">已停${parked.length?` (${parked.length})`:''}</button></div><div data-course-panel="current">${active.length?enrolments:'<p>未选课 / 请添加课程</p>'}</div><div data-course-panel="stopped" hidden>${parked.length?parked.map(stoppedRow).join(''):'<p class="muted">没有已停的课程。</p>'}</div>`;
+ const courseBody=`<div class="course-tabs" role="tablist"><button type="button" class="on" data-course-tab="current" aria-selected="true">在上</button><button type="button" data-course-tab="stopped" aria-selected="false">已停${parked.length?` (${parked.length})`:''}</button></div><div data-course-panel="current">${active.length?enrolments:'<p>暂无课程</p>'}</div><div data-course-panel="stopped" hidden>${parked.length?parked.map(stoppedRow).join(''):'<p class="muted">没有已停的课程。</p>'}</div>`;
  const events=(state.profile_events||[]).filter(event=>String(event.profile_id)===String(person.profile_id));
  const eventRow=event=>`<article class="trow"><div class="grow">${escapeHTML(eventWhen(event.created_at))} · ${userHTML(event.summary)}<small>${userHTML(event.actor_name||'')}</small></div></article>`;
  const showLog=['owner','admin'].includes(state.user.role);
@@ -417,7 +434,7 @@ function renderStudents(){
  const searching=String(search||'')!=='';
  const empty=studyFilter==='withdrawn'?'暂无退学学员。':(search||studentStatus!=='all'?'没有匹配的学生。':'还没有学生，点击「添加学生」开始。');
  $('#student-list').innerHTML=groups.length?(admin?yearLevelFolds(groups, searching):groups.map(group=>studentListCard(group, admin)).join('')):`<div class="panel empty">${empty}</div>`;
- document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; saveListPlace(card.dataset.openStudent); openDetail('/students/'+card.dataset.openStudent);});
+ document.querySelectorAll('#student-list .pay-card').forEach(card=>card.onclick=event=>{if(event.target.closest('button')) return; const openId=card.dataset.openStudent; saveListPlace(openId); openDetail(String(openId).startsWith('p')?'/profiles/'+String(openId).slice(1):'/students/'+card.dataset.openStudent);});
  document.querySelectorAll('#student-list [data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
  document.querySelectorAll('#student-list [data-add-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); addCourseModal(b.dataset.addCourse);});
 }
@@ -428,14 +445,14 @@ function studentListCard(group, admin){
  const withdrawn=group.some(account=>account.withdrawn);
  const active=group.filter(account=>!account.no_course&&!account.archived&&!account.voided);
  const listed=withdrawn?group.filter(account=>!account.no_course):active;
- const subjects=listed.length?listed.map(account=>[shownLevel(account), account.subject_name||account.course, account.voided?'加错了':account.course_type_name].filter(Boolean).join(' · ')).join('，'):(withdrawn?'已退学':'未选课 / 请添加课程');
+ const subjects=listed.length?listed.map(account=>[shownLevel(account), account.subject_name||account.course, account.voided?'加错了':account.course_type_name].filter(Boolean).join(' · ')).join('，'):(withdrawn?'已退学':'暂无课程');
  const teacherView=state.user.role==='teacher';
  const balance=teacherView?'':(active.length?active.map(account=>`${fmt(regularHours(account))} ${unitFor(account)}`).join(' · '):'—');
  const health=String(person.health_notes||'').trim();
  const legacy=legacyMark(group);
  const pack=teacherView?null:group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label).slice(-1)[0];
  const statusText=withdrawn?'退学':(active.length?(active.some(account=>accountStatus(account, active)==='欠费')?'欠费':active.some(needsRenewal)?'该续费':'正常'):'未选课');
- return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2><p class="muted">${userHTML(subjects)}</p><p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong></div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">添加课程</button>`):''}${withdrawn&&state.user.role==='owner'?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</article>`;
+ return `<article class="pay-card t-${tone}" data-open-student="${person.id}"><div class="avatar">${userHTML(nameInitial(person.name))}</div><div style="flex:1"><h2>${userHTML(person.name)} ${withdrawn?'<span class="study-tag is-graduated">退学</span>':studyTag(person)}${legacy?` ${legacy}`:''}${health?' <span class="health-badge">健康备注</span>':''}</h2>${listed.length?`<ul class="person-courses">${listed.map(account=>`<li>${userHTML([shownLevel(account), account.subject_name||account.course].filter(Boolean).join(' '))} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}</li>`).join('')}</ul>`:`<p class="muted">${userHTML(subjects)}</p>`}<p class="muted">${userHTML(teacher)}</p>${pack&&active.length?`<p class="pack-now">${escapeHTML(pack.pack_label)}</p>`:''}</div>${teacherView?'':`<div><div class="muted">${active.length?'剩余课时':'课程'}</div><strong>${withdrawn?'—':balance}</strong></div><div><div class="muted">状态</div><strong>${statusText}</strong></div>`}${admin&&!withdrawn?(active.length?`<button class="btn" data-credit="${person.id}" type="button">充值</button>`:`<button class="btn" data-add-course="${person.id}" type="button">开课</button>`):''}${withdrawn&&state.user.role==='owner'?`<button class="btn" data-reinstate="${person.id}" type="button">复学</button>`:''}</article>`;
 }
 const YEAR_LEVEL_ORDER=['Prep','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12'];
 function currentYearLabel(person){
@@ -562,10 +579,12 @@ async function undoLast(){
  }catch(error){toast(error.message);}
 }
 function addCourseModal(id){
- const s=state.students.find(s=>s.id==id),existing=state.students.filter(x=>x.profile_id===s.profile_id).map(x=>x.course);
+ const s=state.students.find(item=>String(item.id)===String(id));
+ if(!s) return;
+ const existing=state.students.filter(x=>personKey(x)===personKey(s)).map(x=>x.course);
  const choices=(state.subjects||[]).filter(o=>o.active&&!existing.includes(o.name));
  if(!choices.length){toast('没有可添加的科目。停用的科目可以在设置里重新打开。');return;}
- modal('添加学生科目',`<div class="form-context">${userHTML(s.name)} · Prep 到 Year 6 选小班课，科目会改成数学 + 英语。Year 7 及以上的小班课仍是单科。课时各自计算。新科目从 0 ${unitFor(s)}开始。如果以前停过同一科目，以后还没上的课会自动改挂到这门新课。</div><label class="field">科目<select name="subject_id" required><option value="">请选择科目</option>${choices.map(o=>`<option value="${o.id}">${escapeHTML(o.name)}</option>`).join('')}</select></label><label class="field">课型${catalogSelect(state.course_types,'course_type_id','','请选择课型')}</label>${studyLevelSelect('')}`,'添加科目',async data=>{const result=await api('students/course',{...data,student_id:s.id});toast(result.moved?`新科目已添加，${result.moved} 节以后的课已改挂过来。`:'新科目已添加，可单独充值课时。');});
+ modal('添加学生科目',`<div class="form-context">${userHTML(s.name)} · Prep 到 Year 6 选小班课，科目会改成数学 + 英语。Year 7 及以上的小班课仍是单科。课时各自计算。新科目从 0 ${unitFor(s)}开始。如果以前停过同一科目，以后还没上的课会自动改挂到这门新课。</div><label class="field">科目<select name="subject_id" required><option value="">请选择科目</option>${choices.map(o=>`<option value="${o.id}">${escapeHTML(o.name)}</option>`).join('')}</select></label><label class="field">课型${catalogSelect(state.course_types,'course_type_id','','请选择课型')}</label>${studyLevelSelect('')}`,'添加科目',async data=>{const payload=s.no_course?{...data,profile_id:s.profile_id}:{...data,student_id:s.id}; const result=await api('students/course',payload);toast(result.moved?`新科目已添加，${result.moved} 节以后的课已改挂过来。`:'新科目已添加，可单独充值课时。');});
  if(typeof limitSingaporeChoices==='function') limitSingaporeChoices();
  const sync=()=>syncPrimaryClass(s.level_code||s.level_calendar||'');
  document.querySelector('#modal [name=course_type_id]')?.addEventListener('change', sync);
@@ -758,8 +777,9 @@ async function showOffer(query, host){
  }catch(error){host.textContent=error.message;}
 }
 function profileModal(id){
- const s=state.students.find(s=>s.id==id);
- modal('编辑资料',`<label class="field">学生姓名<input name="name" required maxlength="40" value="${escapeHTML(s.name)}"></label>${profileFields(s)}${billingField(s)}<p class="footnote">数学和英语按年级价目。新加坡数学单独计价，也可以给这个报名单独填每小时价格。</p>`,'保存档案',async data=>{await api('students/profile',{...data,student_id:s.id});toast('学生档案已更新。');}); bindProfileFields();
+ const s=state.students.find(item=>String(item.id)===String(id));
+ if(!s) return;
+ modal('编辑资料',`<label class="field">学生姓名<input name="name" required maxlength="40" value="${escapeHTML(s.name)}"></label>${profileFields(s)}${billingField(s)}<p class="footnote">数学和英语按年级价目。新加坡数学单独计价，也可以给这个报名单独填每小时价格。</p>`,'保存档案',async data=>{await api('students/profile',s.no_course?{...data,profile_id:s.profile_id}:{...data,student_id:s.id});toast('学生档案已更新。');}); bindProfileFields();
 }
 function guardianEditor(item){
  const id=item.id;

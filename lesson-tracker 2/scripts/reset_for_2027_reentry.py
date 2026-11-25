@@ -211,6 +211,8 @@ def _move_course(c, source, target):
 
 
 def _delete_student(c, student_id):
+    import profiles
+    profiles.remember_person(c, student_id)
     for table in ('profile_events', 'profile_audit', 'lesson_students', 'lesson_reports',
             'lesson_absence_charges', 'arrears'):
         if has_table(c, table) and c.execute(f"SELECT 1 FROM pragma_table_info('{table}') WHERE name='student_id'").fetchone():

@@ -289,3 +289,5 @@ th.voucher-check,td.voucher-check{padding-left:16px;padding-right:8px}
 .absence-tag{display:inline-block;margin-top:2px;padding:0 5px;border-radius:4px;background:#B42318;color:#fff;font-style:normal;font-weight:700;font-size:11px;line-height:1.6}
 .badge.absent{background:#FDECEC;color:#B42318}
 .scope-actions{display:flex;flex-wrap:wrap;gap:10px}
+.person-courses{margin:4px 0 0;padding:0;list-style:none}
+.person-courses li{margin:0;color:#3c4c46;font-size:14px;line-height:1.45}

@@ -566,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
                             person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
-                shells=profiles.course_shells(c, students)
+                shells=profiles.course_shells(c, students)+profiles.profiles_without_courses(c, {row.get('profile_id') for row in students}, user)
                 staff=user['role'] in ('owner','admin')
                 archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
                 voided_students=[s for s in students if s['archived'] and s.get('voided')] if staff else []
@@ -938,6 +938,8 @@ class Handler(BaseHTTPRequestHandler):
                 password = secrets.token_urlsafe(18)
             pid = c.execute('INSERT INTO users(phone,name,password,role) VALUES(?,?,?,?)',(phone,text_value(data.get('parent_name') or name+'家长','家长姓名',40),password_hash(password),'parent')).lastrowid
         profile_id=c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+        profiles.ensure_identity(c)
+        c.execute('UPDATE student_profiles SET name=?,birthday=?,grade=?,notes=? WHERE id=?',(name,birthday,grade,notes,profile_id))
         profiles.save_enrolment(c, profile_id, data)
         sid = c.execute('INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',(name,course,pid,profile_id)).lastrowid
         c.execute('INSERT OR IGNORE INTO profile_parents(profile_id, user_id) VALUES(?,?)', (profile_id, pid))
