@@ -1301,3 +1301,192 @@ def normalize_purchase(c, user, data):
         'unit_fees': json.dumps(offer.get('unit_fees') or []),
         'cash_amount': f"{offer['total_cents'] / 100:.2f}"}
     return purchased
+
+
+def _aud(cents):
+    cents = int(cents)
+    sign = '-' if cents < 0 else ''
+    cents = abs(cents)
+    return f'{sign}${cents // 100}.{cents % 100:02d}'
+
+
+def _rate_minutes(c, student, batch):
+    student = dict(student)
+    if batch and int(batch.get('lesson_minutes') or 0) > 0:
+        return int(batch['lesson_minutes'])
+    row = c.execute('''SELECT starts_at, ends_at FROM lessons l
+        JOIN lesson_students ls ON ls.lesson_id=l.id
+        WHERE ls.student_id=? AND l.status!='cancelled'
+        ORDER BY l.starts_at DESC LIMIT 1''', (student['id'],)).fetchone()
+    if row and row['starts_at'] and row['ends_at']:
+        start = dt.datetime.fromisoformat(row['starts_at'])
+        end = dt.datetime.fromisoformat(row['ends_at'])
+        minutes = int((end - start).total_seconds() // 60)
+        if minutes > 0:
+            return minutes
+    subject = student.get('subject_name') or student.get('course') or ''
+    kind = student.get('course_type_name') or ''
+    import teaching
+    if teaching.combo_subject(subject) or kind == '小班课':
+        return COMBO_MINUTES
+    return 60
+
+
+def _pack_amount_cents(batch):
+    if batch.get('cash_cents') is not None:
+        return int(batch['cash_cents'])
+    if batch.get('total_cents') is not None:
+        return int(batch['total_cents'])
+    return None
+
+
+def _pack_prices(batch, minutes):
+    """Per-lesson and hourly cents, using the same split as a taught lesson."""
+    pool = int(batch.get('purchased') or 0) + int(batch.get('gifted') or 0)
+    amount = _pack_amount_cents(batch)
+    if pool <= 0 or not minutes or amount is None:
+        return None, None
+    per_lesson = int((Decimal(amount) * Decimal(100) / Decimal(pool)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    hourly = int((Decimal(per_lesson) * Decimal(60) / Decimal(minutes)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    return per_lesson, hourly
+
+
+def _live_packs(c, student_id):
+    cols = {row['name'] for row in c.execute('PRAGMA table_info(credit_batches)')}
+    status_sql = " AND IFNULL(b.status,'active') NOT IN ('voided','switched')" if 'status' in cols else ''
+    minutes_sql = 'b.lesson_minutes' if 'lesson_minutes' in cols else 'NULL'
+    payment_sql = 'b.payment_status' if 'payment_status' in cols else "''"
+    total_sql = 'b.total_cents' if 'total_cents' in cols else 'NULL'
+    return [dict(row) for row in c.execute(f'''SELECT b.id, b.purchased, b.gifted, b.paid_left, b.gift_left,
+        b.pack_label, {total_sql} total_cents, {minutes_sql} lesson_minutes, {payment_sql} payment_status,
+        l.note, cash.cash_delta cash_cents
+        FROM credit_batches b
+        LEFT JOIN ledger l ON l.id=b.ledger_id
+        LEFT JOIN cash_entries cash ON cash.ledger_id=b.ledger_id
+        WHERE b.student_id=? {status_sql} AND (IFNULL(b.paid_left,0)+IFNULL(b.gift_left,0))>0
+        ORDER BY b.id''', (student_id,))]
+
+
+def _pack_source(batch):
+    note = str(batch.get('note') or '')
+    if '补录' in note:
+        return '补录'
+    if batch.get('payment_status') == 'unpaid':
+        return '挂账'
+    label = str(batch.get('pack_label') or '').strip()
+    return ('课时包 · ' + label) if label else '课时包'
+
+
+def course_rate(c, student):
+    """Hourly price of the next lesson on this course. Boss display only."""
+    student = dict(student)
+    packs = _live_packs(c, student['id'])
+    minutes = _rate_minutes(c, student, packs[0] if packs else None)
+    chosen = None
+    hint = ''
+    for pack in packs:
+        per_lesson, hourly = _pack_prices(pack, _rate_minutes(c, student, pack))
+        if hourly is None:
+            continue
+        if chosen is None:
+            chosen = {'per_lesson': per_lesson, 'hourly': hourly, 'minutes': _rate_minutes(c, student, pack),
+                'source': _pack_source(pack)}
+            continue
+        if hourly != chosen['hourly'] and not hint:
+            hint = f'后面还有一包 {_aud(hourly)}/小时'
+    left_units = sum(int(pack['paid_left'] or 0) + int(pack['gift_left'] or 0) for pack in packs)
+    if not packs:
+        left_units = int(student.get('balance') or 0)
+    value = 0
+    valued = False
+    for pack in packs:
+        per_lesson, _hourly = _pack_prices(pack, _rate_minutes(c, student, pack))
+        if per_lesson is None:
+            continue
+        valued = True
+        left = int(pack['paid_left'] or 0) + int(pack['gift_left'] or 0)
+        value += int((Decimal(left) * Decimal(per_lesson) / Decimal(100)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    if not valued:
+        value = None
+    if chosen is None:
+        hourly = price_for(c, student)
+        if hourly is not None:
+            per_lesson = per_lesson_cents(int(hourly), minutes)
+            chosen = {'per_lesson': per_lesson, 'hourly': int(hourly), 'minutes': minutes, 'source': '报价'}
+            if value is None:
+                value = int((Decimal(left_units) * Decimal(per_lesson) / Decimal(100)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    teacher = c.execute('''SELECT u.name FROM lessons l
+        JOIN lesson_students ls ON ls.lesson_id=l.id
+        JOIN teachers t ON t.id=l.teacher_id JOIN users u ON u.id=t.user_id
+        WHERE ls.student_id=? AND l.status!='cancelled'
+        ORDER BY l.starts_at DESC LIMIT 1''', (student['id'],)).fetchone()
+    priced = chosen is not None
+    return {
+        'student_id': student['id'],
+        'student_name': student.get('name') or '',
+        'course': student.get('subject_name') or student.get('course') or '',
+        'course_type': student.get('course_type_name') or '',
+        'teacher': teacher['name'] if teacher else '待定',
+        'minutes': chosen['minutes'] if chosen else minutes,
+        'minutes_label': length_label(chosen['minutes'] if chosen else minutes),
+        'hourly_cents': chosen['hourly'] if chosen else None,
+        'hourly_label': f"{_aud(chosen['hourly'])}/小时" if chosen else '未定价',
+        'per_lesson_cents': chosen['per_lesson'] if chosen else None,
+        'per_lesson_label': f"{_aud(chosen['per_lesson'])}/节" if chosen else '',
+        'remaining_units': left_units,
+        'remaining_label': f'{left_units / 100:g}',
+        'remaining_cents': value,
+        'remaining_money': _aud(value) if value is not None else '—',
+        'source': chosen['source'] if chosen else '未定价',
+        'hint': hint,
+        'priced': priced,
+        'left': bool(str(student.get('left_on') or '').strip() or student.get('profile_status') == 'withdrawn' or int(student.get('archived') or 0)),
+    }
+
+
+def list_course_rates(c, include_left=False):
+    import profiles
+    profiles.ensure_enrolment_columns(c)
+    rows = []
+    for student in c.execute('''SELECT s.*, ct.name course_type_name, sb.name subject_name,
+            p.left_on, p.status profile_status
+            FROM students s
+            LEFT JOIN course_types ct ON ct.id=s.course_type_id
+            LEFT JOIN subjects sb ON sb.id=s.subject_id
+            LEFT JOIN student_profiles p ON p.id=s.profile_id
+            WHERE IFNULL(s.voided,0)=0 AND TRIM(COALESCE(s.course,''))!=''
+            ORDER BY s.name, s.id'''):
+        item = course_rate(c, student)
+        if item['left'] and not include_left:
+            continue
+        rows.append(item)
+    return rows
+
+
+def apply_rate_visibility(c, user, people):
+    """Hourly rates exist only on the boss payload. Other roles never receive them."""
+    keys = ('rate_label', 'rate_hint', 'hourly_label', 'per_lesson_label')
+    if not user or user.get('role') != 'owner':
+        for person in people:
+            for key in keys:
+                person.pop(key, None)
+        return
+    by_student = {row['student_id']: row for row in list_course_rates(c, include_left=True)}
+    for person in people:
+        if person.get('no_course'):
+            for key in keys:
+                person.pop(key, None)
+            continue
+        rate = by_student.get(person.get('id'))
+        if not rate:
+            person['rate_label'] = ''
+            person['rate_hint'] = ''
+            continue
+        person['rate_label'] = rate['hourly_label']
+        person['rate_hint'] = rate['hint']
+
+
+def unit_price_page(c, user, include_left=False):
+    import accounting
+    accounting.require_owner(user)
+    return {'rows': list_course_rates(c, include_left=include_left)}

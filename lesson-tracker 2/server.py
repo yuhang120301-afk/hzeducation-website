@@ -511,6 +511,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200,result)
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/unit-prices':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    include_left = params.get('include_left', ['0'])[0] in ('1', 'true', 'yes')
+                    return self.response(200, pricing.unit_price_page(c, user, include_left))
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/api/vouchers':
             with connect() as c:
                 user=self.current(c)
@@ -667,6 +677,7 @@ class Handler(BaseHTTPRequestHandler):
                         for key in ('request_id','reversal_of','version'):e.pop(key,None)
                 for person in students+archived_students+voided_students+withdrawn_students+left_students:
                     person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
+                pricing.apply_rate_visibility(c, user, students+archived_students+voided_students+withdrawn_students+left_students)
                 import timeline
                 return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'left_students':left_students,'profile_events':timeline.for_staff(c) if staff else [],'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         if path == '/robots.txt':
