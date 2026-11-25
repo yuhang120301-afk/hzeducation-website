@@ -775,7 +775,7 @@ function guardianModal(id){
 }
 
 function regularHours(s){return s.paid_balance??s.balance;}
-function needsRenewal(s){return regularHours(s)<300;}
+function needsRenewal(s){if(typeof s.needs_renewal==='boolean') return s.needs_renewal; return regularHours(s)<300;}
 function balanceSplit(s){return `<span class="credit-split">${unitFor(s)} ${fmt(regularHours(s))} · 赠送${unitFor(s)} ${fmt(s.gift_balance||0)}</span>`;}
 function creditBreakdown(e){if(!e.split_known)return '';return `<small class="credit-split">${unitFor(e)} ${signedUnits(e.paid_delta)} · 赠送${unitFor(e)} ${signedUnits(e.gift_delta)}${e.gift_void?` · ${e.gift_void>0?'作废赠课':'恢复赠课'} ${fmt(Math.abs(e.gift_void))}`:''}</small>`;}
 

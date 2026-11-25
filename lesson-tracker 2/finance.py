@@ -81,12 +81,21 @@ def arrears_rows(c):
     return {'debts': owed, 'booked_without_credit': booked}
 
 
+def paid_units(c, student_id):
+    """Renewal looks at paid hours left on packs, not gift hours and not the balance cache."""
+    row = c.execute('SELECT COALESCE(SUM(paid_left),0) n FROM credit_batches WHERE student_id=?', (student_id,)).fetchone()
+    return int(row['n'] if row else 0)
+
+
 def low_balance(c):
     rows = []
-    for student in c.execute('''SELECT id, profile_id, name, course, balance, billing_unit, grade, level_code
-        FROM students WHERE archived=0 AND balance<=300 ORDER BY balance, name, id'''):
+    for student in c.execute('''SELECT s.id, s.profile_id, s.name, s.course, s.balance, s.billing_unit, s.grade, s.level_code,
+        COALESCE((SELECT SUM(paid_left) FROM credit_batches b WHERE b.student_id=s.id),0) paid_left
+        FROM students s WHERE s.archived=0
+        AND COALESCE((SELECT SUM(paid_left) FROM credit_batches b WHERE b.student_id=s.id),0)<300
+        ORDER BY paid_left, s.name, s.id'''):
         item = dict(student)
-        item['lessons_left'] = student['balance'] / 100
+        item['lessons_left'] = item['paid_left'] / 100
         rows.append(item)
     return rows
 

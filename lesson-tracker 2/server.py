@@ -518,6 +518,9 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
+                for person in students:
+                    paid = person.get('paid_balance')
+                    person['needs_renewal'] = (paid if paid is not None else person.get('balance') or 0) < 300
                 if user['role'] == 'owner':
                     for person in students:
                         offer=pricing.legacy_price(c, person)
