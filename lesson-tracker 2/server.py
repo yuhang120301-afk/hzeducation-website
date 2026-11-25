@@ -65,6 +65,25 @@ def phone_value(raw):
         raise ValueError('请输入完整手机号，可包含国家区号。')
     return phone
 
+def _lesson_count(raw_units):
+    value = int(raw_units or 0)
+    if value % 100 == 0:
+        return str(value // 100)
+    return f'{value / 100:.2f}'.rstrip('0').rstrip('.')
+
+
+def _backdated_gift_units(data):
+    """Gift lessons still unused on a back-dated pack.
+
+    还剩赠送几节 wins when the form sent it. An older page, or a gift typed in
+    赠送课时 before that box was hidden, only sends gift_amount. Missing must
+    not be turned into zero, or the gift she entered is thrown away.
+    """
+    if 'gift_remaining' in data and str(data.get('gift_remaining')).strip() != '':
+        return _units_or_zero(data.get('gift_remaining'), '还剩赠送几节')
+    return credit_batches.zero_units(data.get('gift_amount', 0), units)
+
+
 def _units_or_zero(raw, label):
     text = str(raw if raw is not None else '').strip()
     if text in ('',):
@@ -1037,7 +1056,7 @@ class Handler(BaseHTTPRequestHandler):
             if backdated:
                 paid_units = units(data.get('amount'))
                 remaining_units = _units_or_zero(data.get('remaining'), '还剩几节')
-                gift_left = _units_or_zero(data.get('gift_remaining') or 0, '还剩赠送几节')
+                gift_left = _backdated_gift_units(data)
                 if remaining_units > paid_units:
                     raise ValueError('还剩几节不能多于总节数。')
                 data['amount'] = paid_units / 100
@@ -1046,7 +1065,8 @@ class Handler(BaseHTTPRequestHandler):
             delta = (credit_batches.zero_units(data.get('amount'),units)+credit_batches.zero_units(data.get('gift_amount',0),units)) if kind=='credit' else -units(data.get('amount'))
             note = str(data.get('note','')).strip()
             if backdated:
-                note = (note + ' · ' if note else '') + '补录以前的包'
+                gift_label = _lesson_count(gift_left)
+                note = (note + ' · ' if note else '') + f'补录以前的包 · 还剩赠送 {gift_label} 节'
             if len(note)>300:
                 raise ValueError('备注不能超过 300 个字。')
             unpaid = kind=='credit' and str(data.get('payment_status') or 'paid') in ('unpaid', '挂账')
@@ -1068,6 +1088,11 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError('学生已归档，请先恢复档案。')
         if student['balance']+delta<0:
             raise ValueError('剩余余额不足，无法完成此次操作。')
+        if backdated:
+            import auditlog
+            auditlog.hint(c, '补录以前的包 总节数 %s 还剩 %s 还剩赠送 %s' % (
+                data.get('amount'), data.get('remaining'), _lesson_count(gift_left)))
+            auditlog.begin(c)
         lid=c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id,reversal_of) VALUES(?,?,?,?,?,?,?,?)',(sid,delta,kind,day,note,user['id'],request_id,reversal_of)).lastrowid
         breakdown=credit_batches.apply(c,lid,kind,data,units,original if reversal_of else None)
         if cash:accounting.record_cash(c,lid,*cash,user['id'])
@@ -1083,7 +1108,13 @@ class Handler(BaseHTTPRequestHandler):
             _consume_prior_hours(c, user, sid, lid, day, int(data['backdated_used']), request_id)
         if kind=='credit' and not reversal_of:
             import timeline
-            timeline.record(c, user, sid, 'top_up', '补录以前的包' if backdated else ('挂账充值，钱还没到' if unpaid else f"充值 {student['course']}"))
+            gift_text = ''
+            if backdated:
+                gift_text = '，还剩赠送 %s 节' % (data.get('gift_amount') if data.get('gift_amount') not in (None, '') else 0)
+            timeline.record(c, user, sid, 'top_up', ('补录以前的包' + gift_text) if backdated else ('挂账充值，钱还没到' if unpaid else f"充值 {student['course']}"))
+        if backdated:
+            import auditlog
+            auditlog.finish(c, user)
         c.commit()
         return self.response(201,{'ok':True,**breakdown})
 
