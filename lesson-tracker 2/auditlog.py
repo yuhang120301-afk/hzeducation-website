@@ -21,6 +21,7 @@ RANK = {
     'cost_entries': 40,
     'expense_categories': 30,
     'monthly_costs': 35,
+    'student_profiles': 42,
     'students': 50,
     'profile_parents': 45,
     'lessons': 60,
@@ -37,6 +38,7 @@ RANK = {
     'profile_events': 97,
 }
 PRIMARY = {
+    'student_profiles': ('id',),
     'students': ('id',),
     'profile_parents': ('profile_id', 'user_id'),
     'ledger': ('id',),

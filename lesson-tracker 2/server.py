@@ -566,7 +566,8 @@ class Handler(BaseHTTPRequestHandler):
                             person.pop(key, None)
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
-                shells=profiles.course_shells(c, students)+profiles.profiles_without_courses(c, {row.get('profile_id') for row in students}, user)
+                covered={row.get('profile_id') for row in students}
+                shells=profiles.course_shells(c, students)+profiles.profiles_without_courses(c, covered, user)
                 staff=user['role'] in ('owner','admin')
                 archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
                 voided_students=[s for s in students if s['archived'] and s.get('voided')] if staff else []
@@ -590,10 +591,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not staff:
                     withdrawn_students=[]
                 students=[s for s in students if not s['archived']]+shells
+                left_students=[]
+                if staff:
+                    left_ids={row['id'] for row in c.execute("SELECT id FROM student_profiles WHERE TRIM(COALESCE(left_on,''))!=''")}
+                    left_students=[person for person in students if person.get('profile_id') in left_ids]
+                    students=[person for person in students if person.get('profile_id') not in left_ids]
+                    left_students+=profiles.profiles_without_courses(c, covered, user, include_left=True)
                 if user['role']=='owner':
                     deletion.annotate_blockers(c, [person for person in students if not person.get('no_course')])
                 if user['role']!='owner':
-                    for person in students+archived_students+voided_students+withdrawn_students:
+                    for person in students+archived_students+voided_students+withdrawn_students+left_students:
                         person.pop('helen_original', None)
                         person.pop('origin_override', None)
                         person.pop('created_on', None)
@@ -612,10 +619,10 @@ class Handler(BaseHTTPRequestHandler):
                     entries=[e for e in entries if e['kind'] in ('credit','refund') and not e['reversed_by'] and not e.get('voided_payment')]
                     for e in entries:
                         for key in ('request_id','reversal_of','version'):e.pop(key,None)
-                for person in students+archived_students+voided_students+withdrawn_students:
+                for person in students+archived_students+voided_students+withdrawn_students+left_students:
                     person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
                 import timeline
-                return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'profile_events':timeline.for_staff(c) if staff else [],'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
+                return self.response(200, {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'left_students':left_students,'profile_events':timeline.for_staff(c) if staff else [],'entries':entries,'demo':DEMO,'organization':ORG_NAME,**teaching.state_for(c,user),'administrators':accounting.administrators(c,user) if user['role']=='owner' else []})
         if path == '/robots.txt':
             return self.response(200, b'User-agent: *\nDisallow: /\n', content_type='text/plain; charset=utf-8')
         student_page = re.fullmatch(r'/students/\d+(?:/lessons/\d+)?/?', path)
@@ -704,6 +711,16 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/students/course/settle':
                     c.execute('BEGIN IMMEDIATE')
                     result=deletion.settle_course(c,user,data)
+                    c.commit()
+                    return self.response(200, result)
+                if self.path == '/api/students/leave':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=profiles.mark_left(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
+                if self.path == '/api/students/return':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=profiles.mark_returned(c, user, data)
                     c.commit()
                     return self.response(200, result)
                 if self.path == '/api/students/course/stop':

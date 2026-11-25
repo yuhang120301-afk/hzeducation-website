@@ -53,6 +53,10 @@ def ensure_enrolment_columns(c):
         c.execute("ALTER TABLE student_profiles ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
     if 'withdrawn_on' not in cols:
         c.execute("ALTER TABLE student_profiles ADD COLUMN withdrawn_on TEXT NOT NULL DEFAULT ''")
+    if 'left_on' not in cols:
+        c.execute("ALTER TABLE student_profiles ADD COLUMN left_on TEXT NOT NULL DEFAULT ''")
+    if 'left_reason' not in cols:
+        c.execute("ALTER TABLE student_profiles ADD COLUMN left_reason TEXT NOT NULL DEFAULT ''")
     ensure_identity(c)
 
 
@@ -583,7 +587,7 @@ def billing_unit(value):
     return value
 
 
-def profiles_without_courses(c, covered_ids, user):
+def profiles_without_courses(c, covered_ids, user, include_left=False):
     """People who still have an account after every course row is gone."""
     if not user or user['role'] == 'teacher':
         return []
@@ -591,6 +595,10 @@ def profiles_without_courses(c, covered_ids, user):
     shells = []
     for profile in c.execute('SELECT * FROM student_profiles ORDER BY id'):
         if profile['id'] in covered_ids or (profile['status'] or '') == 'withdrawn':
+            continue
+        if str(profile['left_on'] or '').strip() and user['role'] in ('owner', 'admin') and not include_left:
+            continue
+        if include_left and not str(profile['left_on'] or '').strip():
             continue
         if not str(profile['name'] or '').strip():
             continue
@@ -605,6 +613,7 @@ def profiles_without_courses(c, covered_ids, user):
             'gift_balance': 0, 'credit_batches': [], 'archived': 0, 'voided': 0, 'no_course': True,
             'birthday': profile['birthday'] or '', 'grade': profile['grade'] or '', 'notes': profile['notes'] or '',
             'study_status': profile['study_status'] or 'studying', 'billing_unit': 'lesson', 'level_code': '',
+            'left_on': profile['left_on'] or '', 'left_reason': profile['left_reason'] or '',
             'parent_id': parent['id'] if parent else None, 'parent_name': parent['name'] if parent else '',
             'phone': parent['phone'] if parent else '', 'contact_phone': (parent['contact_phone'] if parent else '') or '',
             'legacy': False, 'legacy_subjects': []}
@@ -693,3 +702,69 @@ def apply_merge(c, plan):
                 c.execute('UPDATE profile_events SET profile_id=? WHERE profile_id=?', (keeper, donor))
             c.execute('DELETE FROM student_profiles WHERE id=? AND NOT EXISTS (SELECT 1 FROM students WHERE profile_id=?)', (donor, donor))
         ensure_identity(c)
+
+
+def _profile_from(c, data):
+    ensure_enrolment_columns(c)
+    if data.get('profile_id') and not data.get('student_id'):
+        profile = c.execute('SELECT * FROM student_profiles WHERE id=?', (int(data['profile_id']),)).fetchone()
+    else:
+        row = student(c, data)
+        profile = c.execute('SELECT * FROM student_profiles WHERE id=?', (row['profile_id'],)).fetchone()
+    if not profile:
+        raise ValueError('学生不存在，请刷新页面。')
+    return profile
+
+
+def future_active_lessons(c, profile_id):
+    """Scheduled lessons still ahead on a course that has not been stopped."""
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lessons'").fetchone():
+        return []
+    now = now_local().strftime('%Y-%m-%dT%H:%M')
+    return [dict(row) for row in c.execute('''SELECT l.id lesson_id, l.starts_at, l.title, s.id student_id, s.course, s.name
+        FROM lessons l
+        JOIN lesson_students ls ON ls.lesson_id=l.id
+        JOIN students s ON s.id=ls.student_id
+        WHERE s.profile_id=? AND s.archived=0 AND IFNULL(s.voided,0)=0
+          AND l.status='scheduled' AND l.starts_at>=?
+        ORDER BY l.starts_at, l.id''', (profile_id, now))]
+
+
+def mark_left(c, user, data):
+    """The person stops studying. Courses, history and money stay."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以标记不再上课。')
+    profile = _profile_from(c, data)
+    if str(profile['left_on'] or '').strip():
+        raise ValueError('这位学生已经不再上课。')
+    lessons = future_active_lessons(c, profile['id'])
+    if lessons:
+        return {'ok': False, 'blocked': True, 'lessons': lessons}
+    reason = str(data.get('reason') or '').strip()
+    if len(reason) > 200:
+        raise ValueError('原因最多 200 个字。')
+    import auditlog
+    auditlog.begin(c)
+    today = now_local().date().isoformat()
+    c.execute('UPDATE student_profiles SET left_on=?, left_reason=? WHERE id=?', (today, reason, profile['id']))
+    hint = '不再上课：%s' % (profile['name'] or '学生')
+    if reason:
+        hint += '（%s）' % reason
+    auditlog.hint(c, hint)
+    auditlog.finish(c, user)
+    return {'ok': True, 'left_on': today}
+
+
+def mark_returned(c, user, data):
+    """Bring a person who left back to the active list. Courses are not reopened."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以恢复学生。')
+    profile = _profile_from(c, data)
+    if not str(profile['left_on'] or '').strip():
+        raise ValueError('这位学生还在上课名单里。')
+    import auditlog
+    auditlog.begin(c)
+    c.execute("UPDATE student_profiles SET left_on='', left_reason='' WHERE id=?", (profile['id'],))
+    auditlog.hint(c, '恢复：%s' % (profile['name'] or '学生'))
+    auditlog.finish(c, user)
+    return {'ok': True}
