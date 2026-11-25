@@ -124,10 +124,12 @@ def reverse_receipt(c, ledger_id):
 
 def outstanding(c):
     schema(c)
+    import switches
+    switches.schema(c)
     rows = []
     for row in c.execute('''SELECT b.*, s.name student_name, s.course, s.profile_id
         FROM credit_batches b JOIN students s ON s.id=b.student_id
-        WHERE b.payment_status='unpaid' AND IFNULL(s.voided,0)=0
+        WHERE b.payment_status='unpaid' AND IFNULL(b.status,'active')!='voided' AND IFNULL(s.voided,0)=0
         ORDER BY b.credited_on, b.id'''):
         owed = owed_cents(row)
         if owed <= 0:

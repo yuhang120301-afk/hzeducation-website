@@ -29,12 +29,13 @@ async function renderVouchers(){
  <label class="field">从<input id="voucher-start" type="date" value="${escapeHTML(voucherStart)}"></label>
  <label class="field">到<input id="voucher-end" type="date" value="${escapeHTML(voucherEnd)}"></label>
  <label class="search">搜索<input id="voucher-q" value="${escapeHTML(voucherQuery)}" placeholder="单号、学生、备注"></label></div>
- <div class="panel table-wrap voucher-tools"><table><thead><tr><th class="voucher-check"><label><input id="voucher-all" type="checkbox" aria-label="全选"> 全选</label></th><th>单号</th><th>日期</th><th>学生 / 科目</th><th>类型</th><th>课时</th><th>金额</th><th>状态</th></tr></thead><tbody>${(data.vouchers||[]).map(row=>`<tr class="${row.status==='void'?'voucher-void':''}" data-voucher="${row.id}"><td class="voucher-check">${row.status==='pending'?`<input class="voucher-pick" type="checkbox" value="${row.id}" aria-label="选择 ${escapeHTML(row.number)}">`:''}</td><td>${escapeHTML(row.number)}</td><td>${escapeHTML(row.lesson_date)}</td><td>${userHTML(row.student_name)}<div class="muted">${userHTML(row.course)}</div></td><td>${escapeHTML(row.kind_label)}</td><td>${escapeHTML(voucherUnits(row))}</td><td>${voucherMoney(row.amount_cents)}</td><td>${escapeHTML(row.status_label)}</td></tr>`).join('')||'<tr><td colspan="8">没有单据。</td></tr>'}</tbody></table></div>`;
+ <div class="panel table-wrap voucher-tools"><table><thead><tr><th class="voucher-check"><label><input id="voucher-all" type="checkbox" aria-label="全选"> 全选</label></th><th>单号</th><th>日期</th><th>学生 / 科目</th><th>类型</th><th>课时</th><th>金额</th><th>状态</th></tr></thead><tbody>${(data.vouchers||[]).map(row=>`<tr class="${row.status==='void'?'voucher-void':''}" data-voucher="${row.id}"><td class="voucher-check">${row.status==='pending'?`<input class="voucher-pick" type="checkbox" value="${row.id}" aria-label="选择 ${escapeHTML(row.number)}">`:''}</td><td>${escapeHTML(row.number)}</td><td>${escapeHTML(row.lesson_date)}</td><td>${userHTML(row.student_name)}<div class="muted">${userHTML(row.course)}</div></td><td>${escapeHTML(row.kind_label)}</td><td>${escapeHTML(voucherUnits(row))}</td><td>${voucherMoney(row.amount_cents)}</td><td>${escapeHTML(row.status_label)}${row.status==='void'?` <button class="btn" type="button" data-unvoid="${row.id}" data-mistake="${Number(row.course_voided)===1||row.course_void_reason==='加错了'?'1':'0'}">取消作废</button>`:''}</td></tr>`).join('')||'<tr><td colspan="8">没有单据。</td></tr>'}</tbody></table></div>`;
  const reload=()=>{voucherStudent=$('#voucher-student').value; voucherKind=$('#voucher-kind').value; voucherStatus=$('#voucher-status').value; voucherStart=$('#voucher-start').value; voucherEnd=$('#voucher-end').value; voucherQuery=$('#voucher-q').value; renderVouchers();};
  $('#voucher-student').onchange=reload; $('#voucher-kind').onchange=reload; $('#voucher-status').onchange=reload;
  $('#voucher-start').onchange=reload; $('#voucher-end').onchange=reload;
  $('#voucher-q').onchange=reload;
- document.querySelectorAll('[data-voucher]').forEach(row=>row.onclick=event=>{if(event.target.closest('.voucher-check')) return; if(typeof openDetail==='function') openDetail('/receipts/'+row.dataset.voucher);});
+ document.querySelectorAll('[data-voucher]').forEach(row=>row.onclick=event=>{if(event.target.closest('.voucher-check, [data-unvoid]')) return; if(typeof openDetail==='function') openDetail('/receipts/'+row.dataset.voucher);});
+ document.querySelectorAll('[data-unvoid]').forEach(button=>button.onclick=event=>{event.stopPropagation(); unvoidVoucher(button.dataset.unvoid, '', button.dataset.mistake==='1');});
  bindVoucherBulk();
 }
 function bindVoucherBulk(){
@@ -81,7 +82,7 @@ function voucherSheet(row){
  <div class="voucher-actions"><button class="btn" id="voucher-print" type="button">打印</button>
  ${row.status==='pending'?`<button class="btn primary" id="voucher-approve" type="button">审核</button><button class="btn" id="voucher-edit" type="button">修改</button>`:''}
  ${row.status==='approved'?`<button class="btn" id="voucher-unapprove" type="button">撤销审核</button>`:''}
- ${row.status!=='void'?`<button class="btn refund-action" id="voucher-void" type="button">作废</button>`:''}</div>
+ ${row.status!=='void'?`<button class="btn refund-action" id="voucher-void" type="button">作废</button>`:`<button class="btn" id="voucher-unvoid" type="button">取消作废</button>`}</div>
  <div id="voucher-log" class="footnote">正在读取修改记录…</div></article>`;
 }
 function bindVoucher(row){
@@ -89,11 +90,16 @@ function bindVoucher(row){
  if($('#voucher-approve')) $('#voucher-approve').onclick=async()=>{await api('vouchers/approve',{id:row.id}); toast('已审核。余额没有再变动。'); renderReceipt();};
  if($('#voucher-unapprove')) $('#voucher-unapprove').onclick=async()=>{await api('vouchers/unapprove',{id:row.id}); toast('已改回待审核。'); renderReceipt();};
  if($('#voucher-void')) $('#voucher-void').onclick=()=>modal('作废这张单据？',`<div class="form-context">${escapeHTML(row.number)}<br>作废会冲回这张单据的课时和金额，单据本身仍保留。</div>`,'确认作废',async()=>{await api('vouchers/void',{id:row.id}); toast('单据已作废。');},true);
+ if($('#voucher-unvoid')) $('#voucher-unvoid').onclick=()=>unvoidVoucher(row.id, row.number, Number(row.course_voided)===1||row.course_void_reason==='加错了');
  if($('#voucher-edit')) $('#voucher-edit').onclick=()=>voucherEdit(row);
  api('vouchers?id='+row.id).then(data=>{
   const host=$('#voucher-log'); if(!host) return;
   host.innerHTML=(data.events||[]).map(event=>`${escapeHTML(event.created_at.slice(0,16).replace('T',' '))} ${userHTML(event.actor_name||'')} ${escapeHTML(event.action)} ${escapeHTML(event.detail||'')}`).join('<br>')||'还没有修改记录。';
  }).catch(()=>{});
+}
+function unvoidVoucher(id, number, mistake){
+ const offer=mistake?'<label class="field"><input type="checkbox" name="restore_course" checked> 同时恢复这门课（已按加错了删除）</label>':'';
+ modal('取消作废？',`<div class="form-context">${number?escapeHTML(number)+'<br>':''}会把作废冲掉的课时和金额重新记上。单据回到作废前的状态。</div>${offer}`,'取消作废',async data=>{await api('vouchers/unvoid',{id:Number(id), restore_course: mistake ? !!data.restore_course : false}); toast(mistake && data.restore_course?'已取消作废，并恢复这门课。':'已取消作废。');});
 }
 function voucherEdit(row){
  const methods=typeof paymentNames==='object'?paymentNames:{bank:'银行转账'};

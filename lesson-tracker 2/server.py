@@ -608,7 +608,8 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role']=='teacher':
                     entry_condition=' WHERE EXISTS (SELECT 1 FROM lesson_reports lr JOIN lessons tl ON lr.lesson_id=tl.id WHERE lr.ledger_id=l.id AND tl.teacher_id=?)'
                 entries = [dict(x) for x in c.execute('''SELECT l.*,s.name student_name,s.course,sb.name subject_name,s.billing_unit,u.name actor_name,cash.cash_delta,cash.payment_method,cash.reference,pack.total_cents pack_cents,r.id reversed_by,
-                    CASE WHEN EXISTS (SELECT 1 FROM vouchers v WHERE v.status='void' AND (v.ledger_id=l.id OR v.reversal_ledger_id=l.id)) THEN 1 ELSE 0 END voided_payment
+                    CASE WHEN EXISTS (SELECT 1 FROM vouchers v WHERE v.status='void' AND (v.ledger_id=l.id OR v.reversal_ledger_id=l.id)) THEN 1 ELSE 0 END voided_payment,
+                    (SELECT v.id FROM vouchers v WHERE v.status='void' AND v.ledger_id=l.id LIMIT 1) void_voucher_id
                     FROM ledger l JOIN students s ON l.student_id=s.id JOIN users u ON l.actor_id=u.id LEFT JOIN subjects sb ON sb.id=s.subject_id LEFT JOIN ledger r ON r.reversal_of=l.id LEFT JOIN cash_entries cash ON cash.ledger_id=l.id LEFT JOIN credit_batches pack ON pack.ledger_id=l.id'''+entry_condition+' ORDER BY l.lesson_date DESC, l.created_at DESC, l.id DESC',params)]
                 if user['role']=='teacher':
                     entries=[e for e in entries if e['kind']=='lesson']
@@ -678,10 +679,11 @@ class Handler(BaseHTTPRequestHandler):
                     c.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
                     c.commit()
                     return self.response(200,{'ok':True})
-                if self.path in ('/api/vouchers/approve','/api/vouchers/approve-bulk','/api/vouchers/unapprove','/api/vouchers/edit','/api/vouchers/void'):
+                if self.path in ('/api/vouchers/approve','/api/vouchers/approve-bulk','/api/vouchers/unapprove','/api/vouchers/edit','/api/vouchers/void','/api/vouchers/unvoid'):
                     c.execute('BEGIN IMMEDIATE')
                     import vouchers
                     if self.path == '/api/vouchers/approve-bulk': result=vouchers.approve_many(c,user,data.get('ids'))
+                    elif self.path == '/api/vouchers/unvoid': result=vouchers.unvoid(c,user,data.get('id'),units,restore_course=data.get('restore_course') in (True,1,'1','true','on','yes'))
                     elif self.path.endswith('/approve'): result=vouchers.approve(c,user,data.get('id'))
                     elif self.path.endswith('/unapprove'): result=vouchers.unapprove(c,user,data.get('id'))
                     elif self.path.endswith('/edit'): result=vouchers.edit(c,user,data,units,text_value)

@@ -14,6 +14,7 @@ ACTIONS = {
     'withdraw': '退学',
     'reinstate': '复学',
     'void': '作废单据',
+    'unvoid': '取消作废',
     'receipt': '挂账收款',
 }
 
@@ -49,7 +50,13 @@ def record(c, user, student_id, action, summary):
 
 def for_staff(c):
     schema(c)
-    return [dict(row) for row in c.execute('''SELECT e.id, e.profile_id, e.student_id, e.action, e.summary,
-        e.created_at, u.name actor_name
+    voucher_join = ''
+    voucher_cols = ', NULL voucher_id, NULL voucher_status'
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vouchers'").fetchone():
+        voucher_cols = ', v.id voucher_id, v.status voucher_status'
+        voucher_join = "LEFT JOIN vouchers v ON e.action='void' AND e.summary=('作废单据 '||v.number)"
+    return [dict(row) for row in c.execute(f'''SELECT e.id, e.profile_id, e.student_id, e.action, e.summary,
+        e.created_at, u.name actor_name{voucher_cols}
         FROM profile_events e LEFT JOIN users u ON u.id=e.actor_id
+        {voucher_join}
         ORDER BY e.id DESC LIMIT 2000''')]

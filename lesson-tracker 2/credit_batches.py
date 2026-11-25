@@ -46,7 +46,7 @@ def enrich(c,students):
         s['paid_balance']=sum(b['paid_left'] for b in batches)
         s['gift_balance']=sum(b['gift_left'] for b in batches)
         s['legacy_balance']=sum(b['paid_left'] for b in batches if b['legacy'])
-        s['owed_cents']=sum(max(0, int(b.get('receivable_cents') or 0) - int(b.get('paid_cents') or 0)) for b in batches if b.get('payment_status')=='unpaid')
+        s['owed_cents']=sum(max(0, int(b.get('receivable_cents') or 0) - int(b.get('paid_cents') or 0)) for b in batches if b.get('payment_status')=='unpaid' and b.get('status')!='voided')
 
 def move(c,lid,bid,paid,gift,voided=0):
     b=c.execute('SELECT * FROM credit_batches WHERE id=?',(bid,)).fetchone()
