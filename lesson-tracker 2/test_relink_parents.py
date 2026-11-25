@@ -1,6 +1,9 @@
 """Relinking parents moves the named courses and leaves everyone else, and the books, alone."""
+import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 import uuid
@@ -128,6 +131,65 @@ class RelinkParentTests(unittest.TestCase):
     def profile(self, c, student_ids):
         sid = student_ids[0] if isinstance(student_ids, list) else student_ids
         return c.execute('SELECT profile_id FROM students WHERE id=?', (sid,)).fetchone()['profile_id']
+
+
+class RelinkApplyCommandTests(unittest.TestCase):
+    def test_apply_through_main_on_a_sqlite_file(self):
+        import accounting
+        import auditlog
+        import profiles
+        import teaching
+        db = Path(tempfile.mkdtemp()) / 'relink-apply.sqlite3'
+        c = sqlite3.connect(db)
+        c.row_factory = sqlite3.Row
+        server._create_base_tables(c)
+        teaching.schema(c)
+        profiles.schema(c)
+        accounting.schema(c)
+        auditlog.schema(c)
+        owner = c.execute("INSERT INTO users(phone,name,password,role) VALUES('0455000091','Helen','x','admin')").lastrowid
+        c.execute('INSERT INTO organization_owners(user_id) VALUES(?)', (owner,))
+        linjing = c.execute("INSERT INTO users(phone,name,password,role) VALUES('0470702742','林静','x','parent')").lastrowid
+        jeffery = c.execute("INSERT INTO users(phone,name,password,role) VALUES('0449917255','Jeffery家长','x','parent')").lastrowid
+        profile = c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+        joanna = c.execute(
+            'INSERT INTO students(name,course,parent_id,profile_id) VALUES(?,?,?,?)',
+            ('Joanna', '数学', linjing, profile)).lastrowid
+        c.execute('INSERT OR IGNORE INTO profile_parents(profile_id, user_id) VALUES(?,?)', (profile, linjing))
+        c.execute(
+            "INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,100,'credit','2026-11-01','充值',?,?)",
+            (joanna, owner, uuid.uuid4().hex))
+        c.commit()
+        c.close()
+        mapping = Path(tempfile.mkdtemp()) / 'map.json'
+        mapping.write_text(json.dumps({
+            'source_parent': {'id': linjing, 'name': '林静', 'phone': '0470702742'},
+            'moves': [{
+                'student_ids': [joanna],
+                'names': {str(joanna): 'Joanna'},
+                'parent': jeffery,
+                'parent_name': 'Jeffery家长',
+                'parent_phone': '0449917255',
+            }],
+        }))
+        script = Path(__file__).with_name('scripts') / 'relink_parents.py'
+        result = subprocess.run(
+            [sys.executable, str(script), '--db', str(db), '--map', str(mapping), '--apply'],
+            cwd=str(Path(__file__).resolve().parent), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertIn('APPLY', result.stdout)
+        self.assertIn('已写入', result.stdout)
+        check = sqlite3.connect(db)
+        check.row_factory = sqlite3.Row
+        self.assertEqual(check.execute('SELECT parent_id FROM students WHERE id=?', (joanna,)).fetchone()['parent_id'], jeffery)
+        self.assertIsNone(check.execute(
+            'SELECT 1 FROM profile_parents WHERE profile_id=? AND user_id=?', (profile, linjing)).fetchone())
+        self.assertIsNotNone(check.execute(
+            'SELECT 1 FROM profile_parents WHERE profile_id=? AND user_id=?', (profile, jeffery)).fetchone())
+        self.assertEqual(check.execute('SELECT COUNT(*) n FROM ledger').fetchone()['n'], 1)
+        self.assertEqual(check.execute('SELECT COUNT(*) n FROM students').fetchone()['n'], 1)
+        self.assertIsNotNone(check.execute("SELECT 1 FROM audit_log WHERE summary LIKE '%林静%'").fetchone())
+        check.close()
 
 
 if __name__ == '__main__':
