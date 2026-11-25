@@ -2,6 +2,7 @@
 import datetime as dt
 import json
 import hashlib
+import secrets
 import credit_batches
 import recurrence
 import os
@@ -61,6 +62,15 @@ def schema(c):
         c.execute("ALTER TABLE lessons ADD COLUMN color TEXT NOT NULL DEFAULT 'green'")
     if 'updated_at' not in {r['name'] for r in c.execute('PRAGMA table_info(lessons)')}:
         c.execute("ALTER TABLE lessons ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+    # Existing rows stay scheduled and uncharged. Defaults do not rewrite them.
+    _add_column(c, 'lessons', 'absent', 'absent INTEGER NOT NULL DEFAULT 0')
+    _add_column(c, 'lessons', 'absent_charge', 'absent_charge INTEGER NOT NULL DEFAULT 0')
+    c.execute('''CREATE TABLE IF NOT EXISTS lesson_absence_charges (
+        lesson_id INTEGER NOT NULL,
+        student_id INTEGER NOT NULL,
+        ledger_id INTEGER NOT NULL UNIQUE,
+        PRIMARY KEY(lesson_id, student_id)
+    )''')
     if 'subjects' not in {r['name'] for r in c.execute('PRAGMA table_info(teachers)')}:
         c.execute("ALTER TABLE teachers ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
     _add_column(c, 'teachers', 'duty', 'duty TEXT')
@@ -415,6 +425,33 @@ def lesson_recorded(lesson):
     return any(report_written(report) for report in lesson.get('reports') or [])
 
 
+def is_absent(lesson):
+    """True when this lesson was marked 请假. A database from before the column is not absent."""
+    if not lesson:
+        return False
+    try:
+        flag = lesson['absent']
+    except (KeyError, IndexError, TypeError):
+        return False
+    try:
+        return int(flag or 0) == 1
+    except (TypeError, ValueError):
+        return False
+
+
+def lesson_charge_units(lesson, billing_unit, units):
+    """The same quantity an attended lesson deducts for this student.
+
+    Hourly students use the lesson length. Other students use the planned amount.
+    """
+    if (billing_unit or 'lesson') == 'hour':
+        start = dt.datetime.fromisoformat(lesson['starts_at'])
+        end = dt.datetime.fromisoformat(lesson['ends_at'])
+        hours = round((end - start).total_seconds() / 3600, 2)
+        return units(hours)
+    return units(lesson['planned_units'] / 100)
+
+
 def state_for(c,user):
     role=user['role']
     where, params=('',())
@@ -440,7 +477,10 @@ def state_for(c,user):
                 for report in lesson['reports']:
                     report.pop('fee_cents', None)
                     report.pop('fee_overridden', None)
-        lesson['recorded'] = lesson_recorded(lesson)
+        lesson['absent'] = 1 if is_absent(lesson) else 0
+        lesson['absent_charge'] = 1 if lesson['absent'] and int(lesson.get('absent_charge') or 0) else 0
+        # An absence is not a lesson record, even if a draft was saved earlier.
+        lesson['recorded'] = False if lesson['absent'] else lesson_recorded(lesson)
         lesson['subject_name'] = canonical_subject(lesson.get('subject_name') or '')
         lesson['teacher_name'] = display_person(lesson.get('teacher_name'))
     teachers=[]
@@ -533,6 +573,8 @@ def save_lesson(c,user,data,units,text_value):
     if lesson_id:
         old=allowed_lesson(c,user,lesson_id)
         check_version(old,data)
+        if is_absent(old):
+            raise ValueError('已请假的课程请先取消请假，再调整排课。')
         if old['status']!='scheduled' and user['role']!='owner':
             raise ValueError('已完成或取消课程仅老板可以编辑。')
     else:
@@ -611,6 +653,8 @@ def cancel_lesson(c,user,data,text_value):
     check_version(lesson,data)
     if lesson['status']!='scheduled':
         raise ValueError('只能取消未完成的课程。已完成的课时请通过账本撤销。')
+    if is_absent(lesson):
+        raise ValueError('已请假的课程请先取消请假。')
     scope=data.get('scope','single')
     if scope not in ('single','future'):raise ValueError('取消范围无效。')
     if scope=='future':
@@ -629,6 +673,102 @@ def cancel_lesson(c,user,data,text_value):
     if not data.get('waive_leave'):
         apply_late_leave(c, lesson)
     return {'ok':True}
+
+def _absence_columns(c):
+    cols = {r['name'] for r in c.execute('PRAGMA table_info(lessons)')}
+    return 'absent' in cols and 'absent_charge' in cols
+
+def _reverse_absence_ledger(c, user, ledger_id):
+    """Put a 请假 deduction back. A second undo finds the reversal and does nothing."""
+    original = c.execute('SELECT * FROM ledger WHERE id=?', (ledger_id,)).fetchone()
+    if not original or original['kind'] == 'reversal':
+        return
+    if c.execute('SELECT 1 FROM ledger WHERE reversal_of=?', (original['id'],)).fetchone():
+        return
+    request_id = 'undo-absent-%s-%s' % (original['id'], secrets.token_hex(8))
+    lid = c.execute(
+        "INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id,reversal_of) VALUES(?,?,?,?,?,?,?,?)",
+        (original['student_id'], -int(original['delta'] or 0), 'reversal', now_local().date().isoformat(),
+         '取消请假，退回课时', user['id'], request_id, original['id'])).lastrowid
+    credit_batches.apply(c, lid, 'reversal', {}, lambda raw: 0, original)
+
+def release_absence(c, user, lesson_id, student_id=None, clear=False):
+    """Reverse absence deductions. clear=True also returns the lesson to a normal schedule row.
+
+    Callers that cancel or drop the lesson pass clear=True for a lesson with no
+    remaining students. One student leaving a shared lesson only reverses that student.
+    """
+    if not _absence_columns(c):
+        return 0
+    lesson = c.execute('SELECT id, absent FROM lessons WHERE id=?', (lesson_id,)).fetchone()
+    if not lesson:
+        return 0
+    table = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lesson_absence_charges'").fetchone()
+    if student_id is None:
+        rows = list(c.execute('SELECT * FROM lesson_absence_charges WHERE lesson_id=?', (lesson_id,))) if table else []
+    else:
+        rows = list(c.execute('SELECT * FROM lesson_absence_charges WHERE lesson_id=? AND student_id=?', (lesson_id, student_id))) if table else []
+    if not int(lesson['absent'] or 0) and not rows:
+        return 0
+    for row in rows:
+        _reverse_absence_ledger(c, user, row['ledger_id'])
+        c.execute('DELETE FROM lesson_absence_charges WHERE lesson_id=? AND student_id=?', (row['lesson_id'], row['student_id']))
+    if clear:
+        c.execute('UPDATE lessons SET absent=0, absent_charge=0 WHERE id=?', (lesson_id,))
+    elif table and not c.execute('SELECT 1 FROM lesson_absence_charges WHERE lesson_id=?', (lesson_id,)).fetchone():
+        c.execute('UPDATE lessons SET absent_charge=0 WHERE id=?', (lesson_id,))
+    return len(rows)
+
+def mark_absent(c, user, data, units):
+    """Mark one scheduled lesson 请假. charge is chosen for this lesson alone.
+
+    A charged absence deducts each student's balance the same way an attended
+    lesson does, and does not create a lesson report. Teacher pay is not
+    decided here; see payroll.absence_pay_clause.
+    """
+    require_scheduler(c, user, data)
+    lesson = allowed_lesson(c, user, data['lesson_id'])
+    check_version(lesson, data)
+    if lesson['status'] != 'scheduled':
+        raise ValueError('只能为未完成的课程请假。')
+    if is_absent(lesson):
+        raise ValueError('这节课已经请假。')
+    charge = data.get('charge')
+    if type(charge) is not bool:
+        raise ValueError('请选择扣课时或不扣课时。')
+    members = [dict(row) for row in c.execute(
+        'SELECT s.id, s.name, s.balance, s.billing_unit FROM lesson_students ls JOIN students s ON s.id=ls.student_id WHERE ls.lesson_id=? ORDER BY s.id',
+        (lesson['id'],))]
+    charges = []
+    if charge:
+        for student in members:
+            amount = lesson_charge_units(lesson, student['billing_unit'], units)
+            available = c.execute('SELECT COALESCE(SUM(paid_left+gift_left),0) AS n FROM credit_batches WHERE student_id=?', (student['id'],)).fetchone()['n']
+            if student['balance'] < amount or available < amount:
+                raise ValueError(student['name'] + '的剩余课时不足。本次没有扣除任何学生的课时。')
+            charges.append((student['id'], amount))
+    for sid, amount in charges:
+        request_id = 'absent-%s-student-%s-v%s' % (lesson['id'], sid, lesson['version'])
+        ledger_id = c.execute(
+            "INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,?,?,?)",
+            (sid, -amount, lesson['starts_at'][:10], (lesson['title'] or '课程') + ' · 请假扣课时', user['id'], request_id)).lastrowid
+        credit_batches.apply(c, ledger_id, 'lesson', {}, units)
+        c.execute('INSERT INTO lesson_absence_charges(lesson_id,student_id,ledger_id) VALUES(?,?,?)', (lesson['id'], sid, ledger_id))
+    c.execute(
+        "UPDATE lessons SET absent=1, absent_charge=?, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+        (1 if charge else 0, lesson['id']))
+    return {'ok': True, 'absent': True, 'charged': charge}
+
+def undo_absent(c, user, data):
+    """Return one absence to a normal scheduled lesson and reverse any deduction."""
+    require_scheduler(c, user, data)
+    lesson = allowed_lesson(c, user, data['lesson_id'])
+    check_version(lesson, data)
+    if lesson['status'] != 'scheduled' or not is_absent(lesson):
+        raise ValueError('这节课没有请假。' if lesson['status'] == 'scheduled' else '只能取消仍在课表上的请假。')
+    release_absence(c, user, lesson['id'], clear=True)
+    c.execute("UPDATE lessons SET absent=0, absent_charge=0, version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (lesson['id'],))
+    return {'ok': True, 'absent': False}
 
 def apply_late_leave(c, lesson):
     """A cancellation inside 48 hours uses one lesson when the balance allows. Otherwise it is recorded as arrears and the balance stays put."""
@@ -672,6 +812,8 @@ def apply_late_leave(c, lesson):
 
 def save_reports(c,user,data,units,action):
     lesson=allowed_lesson(c,user,data['lesson_id'])
+    if is_absent(lesson):
+        raise ValueError('已请假的课程不用填写课后记录。需要上课请先取消请假。')
     closing=action in ('complete','close')
     if closing and lesson['status']=='completed':
         return {'ok':True,'duplicate':True}

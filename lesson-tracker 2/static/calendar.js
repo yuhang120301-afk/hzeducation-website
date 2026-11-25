@@ -104,6 +104,7 @@ function lessonIsOpen(lesson){
  return /待定|试听/.test(blob);
 }
 function lessonDone(lesson){
+ if(Number(lesson&&lesson.absent)) return false;
  const status=String(lesson.status||'').toLowerCase();
  if(['completed','attended','done','redeemed','已完成','已上了'].includes(status)) return true;
  if(lesson.recorded) return true;
@@ -142,8 +143,9 @@ function cardHeadline(lesson){
 function cardMarkup(lesson, compact, extra){
  const headline=escapeHTML(cardHeadline(lesson));
  const when=escapeHTML(timeRange(lesson, compact));
- if(compact) return `<strong>${headline}, ${when}</strong>${extra||''}`;
- return `<strong>${headline}</strong><span>${when}</span>${extra||''}`;
+ const tag=Number(lesson.absent)?'<em class="absence-tag">请假</em>':'';
+ if(compact) return `<strong>${headline}, ${when}</strong>${tag}${extra||''}`;
+ return `<strong>${headline}</strong><span>${when}</span>${tag}${extra||''}`;
 }
 function gcalEvent(item){
  const lesson = item.lesson;
@@ -162,7 +164,7 @@ function gcalEvent(item){
  const compact=height<40;
  const hover=`${cardHeadline(lesson)}, ${timeRange(lesson, false)}`;
  const done=lessonDone(lesson);
- return `<button type="button" class="gcal-event ${compact?'is-compact':''} ${lesson.status}${done?' completed':''} t-${teacherTone(lesson.teacher_name)}${!done&&lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(hover)}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)">${cardMarkup(lesson, compact, '<i class="gcal-resize" aria-hidden="true"></i>')}</button>`;
+ return `<button type="button" class="gcal-event ${compact?'is-compact':''} ${lesson.status}${Number(lesson.absent)?' absent':''}${done?' completed':''} t-${teacherTone(lesson.teacher_name)}${!done&&lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(hover)}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px)">${cardMarkup(lesson, compact, '<i class="gcal-resize" aria-hidden="true"></i>')}</button>`;
 }
 let calendarLayout='grid';
 function renderSchedule(){
@@ -304,7 +306,7 @@ function renderMonth(){
  for(let n=1;n<=Number(end.slice(8));n++){
   const day=start.slice(0,8)+String(n).padStart(2,'0');
   const items=lessons.filter(lesson=>lesson.starts_at.slice(0,10)===day).sort((a,b)=>a.starts_at.localeCompare(b.starts_at));
-  cells.push(`<div class="month-day ${day===state.today?'is-today':''}" data-month-day="${day}"><button type="button" class="month-num">${n}</button>${items.slice(0,3).map(lesson=>{const done=lessonDone(lesson);return `<button type="button" class="month-chip gcal-event is-compact t-${teacherTone(lesson.teacher_name)} ${lesson.status}${done?' completed':''}${!done&&lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(cardHeadline(lesson)+', '+timeRange(lesson, false))}">${cardMarkup(lesson, true)}</button>`;}).join('')}${items.length>3?`<span class="month-more">还有 ${items.length-3} 节</span>`:''}</div>`);
+  cells.push(`<div class="month-day ${day===state.today?'is-today':''}" data-month-day="${day}"><button type="button" class="month-num">${n}</button>${items.slice(0,3).map(lesson=>{const done=lessonDone(lesson);return `<button type="button" class="month-chip gcal-event is-compact t-${teacherTone(lesson.teacher_name)} ${lesson.status}${Number(lesson.absent)?' absent':''}${done?' completed':''}${!done&&lessonIsOpen(lesson)?' is-open':''}" data-lesson-detail="${lesson.id}" title="${escapeHTML(cardHeadline(lesson)+', '+timeRange(lesson, false))}">${cardMarkup(lesson, true)}</button>`;}).join('')}${items.length>3?`<span class="month-more">还有 ${items.length-3} 节</span>`:''}</div>`);
  }
  $('#surface').innerHTML=`<div class="calendar-toolbar"><label class="calendar-search"><input id="calendar-search" type="search" placeholder="搜索学生或老师" value="${escapeHTML(calendarSearch)}"></label><div class="week-switch"><button class="btn icon-button" id="prev-week" aria-label="上个月">‹</button><strong>${start.slice(0,4)}年${Number(start.slice(5,7))}月<small>${lessons.length} 节</small></strong><button class="btn icon-button" id="next-week" aria-label="下个月">›</button><button class="btn" id="this-week">本月</button></div>${miniPickerButton()}<div class="calendar-filters"><div class="period-switch" role="group" aria-label="日周月"><button type="button" id="span-day">日</button><button type="button" id="span-week">周</button><button type="button" id="span-month" class="selected">月</button></div><select id="teacher-filter" aria-label="按老师筛选"><option value="">全部老师</option>${state.teachers.map(teacher=>`<option value="${teacher.id}" ${teacherFilter==teacher.id?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select></div></div><div class="month-grid"><div class="month-head">${['周一','周二','周三','周四','周五','周六','周日'].map(name=>`<span>${name}</span>`).join('')}</div><div class="month-days">${cells.join('')}</div></div>`;
  bindWeekButton('prev-week', ()=>stepCalendar(-1));
@@ -327,7 +329,7 @@ function initTimeGrid(){
  document.querySelectorAll('.gcal-event').forEach(button=>{
   const lesson = lessonById(button.dataset.lessonDetail);
   button.onclick = event=>{event.stopPropagation();if(Date.now()<calendarClickSuppressedUntil) return;lessonDetail(lesson.id);};
-  if(!fine || lesson.status!=='scheduled') return;
+  if(!fine || lesson.status!=='scheduled' || Number(lesson.absent)) return;
   let drag=null;
   button.onpointerdown = event=>{
    if(event.button!==0) return;
@@ -435,7 +437,9 @@ async function renderToday(){
   const kind=lesson.course_type_name||'';
   const mine=(lesson.teacher_name||'').toLowerCase().includes('helen')?'本人 · ':'';
   const done=lessonDone(lesson);
-  return `<article class="today-lesson ${done?'done':''} t-${tone}"><time>${lesson.starts_at.slice(11,16)}<small>${durationLabel(lesson)}</small></time><div class="who2"><span class="mark">${userHTML((lesson.teacher_name||'?').slice(0,1))}</span><div>${userHTML(who)}<span>${userHTML(lesson.teacher_name)} · ${mine}${userHTML(kind)}</span></div></div><div class="taps">${done?'<button type="button" class="go" disabled>已上了</button>':`<button type="button" class="go" data-today-done="${lesson.id}">上了</button><button type="button" data-today-leave="${lesson.id}">请假</button>`}</div></article>`;
+  const absent=!!Number(lesson.absent);
+  const taps=absent?`<button type="button" data-today-undo="${lesson.id}">取消请假</button>`:done?'<button type="button" class="go" disabled>已上了</button>':`<button type="button" class="go" data-today-done="${lesson.id}">上了</button><button type="button" data-today-leave="${lesson.id}">请假</button>`;
+  return `<article class="today-lesson ${done?'done':''}${absent?' absent':''} t-${tone}"><time>${lesson.starts_at.slice(11,16)}<small>${durationLabel(lesson)}</small></time><div class="who2"><span class="mark">${userHTML((lesson.teacher_name||'?').slice(0,1))}</span><div>${userHTML(who)}<span>${userHTML(lesson.teacher_name)} · ${mine}${userHTML(kind)}${absent?' · 请假':''}</span></div></div><div class="taps">${taps}</div></article>`;
  }).join('')||'<p class="muted">今天还没有课。</p>'}</div><div class="section"><h2>要处理</h2><div class="today-actions" id="today-actions"><div class="today-action"><h3>正在读取</h3></div></div></div></div>`;
  const box=$('#today-search'), hits=$('#today-hits');
  box.oninput=()=>{
@@ -449,12 +453,8 @@ async function renderToday(){
   hits.querySelectorAll('[data-open-teacher]').forEach(button=>button.onclick=()=>{teacherFilter=button.dataset.openTeacher; if(typeof showView==='function') showView('schedule'); else {view='schedule'; render();}});
  };
  document.querySelectorAll('[data-today-done]').forEach(button=>button.onclick=()=>quickCloseModal(lessonById(button.dataset.todayDone)));
- document.querySelectorAll('[data-today-leave]').forEach(button=>button.onclick=async()=>{
-  const lesson=lessonById(button.dataset.todayLeave);
-  const scope=await askSeriesScope(lesson);
-  if(!scope) return;
-  try{await api('lessons/cancel',{lesson_id:lesson.id,version:lesson.version,series_version:lesson.series_version,scope,reason:'学生请假'});toast('已请假，没有扣课时。');}catch(error){toast(error.message);}
- });
+ document.querySelectorAll('[data-today-leave]').forEach(button=>button.onclick=()=>markAbsent(lessonById(button.dataset.todayLeave)));
+ document.querySelectorAll('[data-today-undo]').forEach(button=>button.onclick=()=>undoAbsent(lessonById(button.dataset.todayUndo)).catch(error=>toast(error.message)));
  try{
   const data=await api('today?date='+encodeURIComponent(state.today));
   if(view!=='today') return;

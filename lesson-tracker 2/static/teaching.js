@@ -1,11 +1,12 @@
 let weekStart='', teacherFilter='', scheduleStatus='all', profileId='', lessonRecordId='', payTeacherId='', recordTeacher='', recordQuery='';
 const statusName={scheduled:'待上课',completed:'已完成',cancelled:'已取消'};
+function lessonIsAbsent(lesson){return !!Number(lesson&&lesson.absent);}
 const datePlus=(day,n)=>{const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
 const monday=day=>{const n=new Date(day+'T12:00:00Z').getUTCDay();return datePlus(day,-((n+6)%7));};
 const lessonById=id=>state.lessons.find(l=>l.id==id);
 const isStaff=()=>state.user.role!=='parent';
 const formatDate=day=>day.slice(5).replace('-',' / ');
-const lessonStatus=l=>l.status==='cancelled'?statusName.cancelled:(typeof lessonDone==='function'&&lessonDone(l)?'已完成':l.status==='scheduled'&&l.ends_at<state.now?'待写课后记录':statusName[l.status]);
+const lessonStatus=l=>lessonIsAbsent(l)?'请假':l.status==='cancelled'?statusName.cancelled:(typeof lessonDone==='function'&&lessonDone(l)?'已完成':l.status==='scheduled'&&l.ends_at<state.now?'待写课后记录':statusName[l.status]);
 function navigationItems(){
  const role=state.user.role;
  if(role==='owner') return [
@@ -164,13 +165,13 @@ const lessonColors=[['green','绿色'],['blue','蓝色'],['purple','紫色'],['p
 function lessonCard(l){
  const owner=state.user.role==='owner',color=lessonColors.some(([v])=>v===l.color)?l.color:'green',names=l.students.map(s=>s.name),students=names.map(userHTML).join(' · ');
  const subject=l.subject_name && !names.includes(l.subject_name)?l.subject_name:'';
- return `<button class="lesson-card ${l.status}${typeof lessonDone==='function'&&lessonDone(l)?' completed':''} ${owner?'owner-lesson color-'+color:''}" data-lesson-detail="${l.id}" ${owner&&l.status==='scheduled'?'draggable="true" title="拖动到其他日期可调整课程"':''}>${owner?`<strong class="lesson-students">${students||'还没有学生'}</strong>`:''}<div class="lesson-time">${l.starts_at.slice(11)}–${l.ends_at.slice(11)} ${typeBadge(l.course_type_name)}</div><strong class="lesson-subject">${userHTML(subject||l.course_type_name||'')}</strong><span>${userHTML(l.teacher_name)}</span>${owner?'':`<span class="lesson-students">${students}</span>`}<div class="lesson-card-foot"><span class="lesson-state">${lessonStatus(l)}</span><span>${lessonChargeLabel(l)}</span></div></button>`;
+ return `<button class="lesson-card ${l.status}${lessonIsAbsent(l)?' absent':''}${typeof lessonDone==='function'&&lessonDone(l)?' completed':''} ${owner?'owner-lesson color-'+color:''}" data-lesson-detail="${l.id}" ${owner&&l.status==='scheduled'&&!lessonIsAbsent(l)?'draggable="true" title="拖动到其他日期可调整课程"':''}>${owner?`<strong class="lesson-students">${students||'还没有学生'}</strong>`:''}<div class="lesson-time">${l.starts_at.slice(11)}–${l.ends_at.slice(11)} ${typeBadge(l.course_type_name)}</div><strong class="lesson-subject">${userHTML(subject||l.course_type_name||'')}</strong>${lessonIsAbsent(l)?'<em class="absence-tag">请假</em>':''}<span>${userHTML(l.teacher_name)}</span>${owner?'':`<span class="lesson-students">${students}</span>`}<div class="lesson-card-foot"><span class="lesson-state">${lessonStatus(l)}</span><span>${lessonIsAbsent(l)?(Number(l.absent_charge)?'已扣课时':'未扣课时'):lessonChargeLabel(l)}</span></div></button>`;
 }
 function lessonColorPicker(l){return `<fieldset class="lesson-color-picker"><legend>课程颜色</legend>${lessonColors.map(([v,label])=>`<label class="color-choice color-${v}" title="${label}"><input type="radio" name="color" value="${v}" ${(l?.color||'green')===v?'checked':''}><span>${label}</span></label>`).join('')}</fieldset>`;}
 
 function bindLessons(){document.querySelectorAll('[data-lesson-detail]').forEach(b=>b.onclick=()=>lessonDetail(b.dataset.lessonDetail));}
 function renderTeachers(){
- $('#surface').innerHTML=`<section class="teacher-grid">${state.teachers.map(t=>{const upcoming=state.lessons.filter(l=>l.teacher_id===t.id&&l.status==='scheduled'&&!(typeof lessonDone==='function'&&lessonDone(l))).length,managed=t.account_role!=='teacher',canEdit=!managed||state.user.role==='owner';const dutyLabel=String(t.duty||'').trim();return `<article class="teacher-card"><div class="child-top"><span class="student-icon">${userHTML(t.name.slice(0,1))}</span><div><h2>${userHTML(t.name)}</h2><p>${userHTML(t.subjects.join('、'))}</p><p>${userHTML(dutyLabel||(managed?'管理员 / 任课老师':'任课老师'))} · ${t.active?'在职':'已离职 / 停用'}</p></div></div><p class="teacher-phone">${userHTML(t.phone)}</p>${!t.active&&upcoming?'<p class="error">仍有未完成课程，请查看课表并调整任课老师。</p>':''}<div class="profile-actions">${canEdit?`<button class="btn" data-teacher-edit="${t.id}">${managed?'编辑教学科目':'编辑老师'}</button>`:''}${!managed?`${state.user.role==='owner'?`<button class="btn refund-action" data-delete-teacher="${t.id}">删除档案</button>`:''}<button class="btn" data-teacher-status="${t.id}">${t.active?'离职 / 停用':'恢复在职'}</button>`:''}</div><div class="teacher-bottom"><span>待完成 <strong>${upcoming}</strong> 节</span><button class="action" data-teacher-calendar="${t.id}">查看课表 →</button></div></article>`;}).join('')}</section><p class="footnote">离职停用后无法登录或接受新排课，历史课程和课后记录保留。</p>`;
+ $('#surface').innerHTML=`<section class="teacher-grid">${state.teachers.map(t=>{const upcoming=state.lessons.filter(l=>l.teacher_id===t.id&&l.status==='scheduled'&&!lessonIsAbsent(l)&&!(typeof lessonDone==='function'&&lessonDone(l))).length,managed=t.account_role!=='teacher',canEdit=!managed||state.user.role==='owner';const dutyLabel=String(t.duty||'').trim();return `<article class="teacher-card"><div class="child-top"><span class="student-icon">${userHTML(t.name.slice(0,1))}</span><div><h2>${userHTML(t.name)}</h2><p>${userHTML(t.subjects.join('、'))}</p><p>${userHTML(dutyLabel||(managed?'管理员 / 任课老师':'任课老师'))} · ${t.active?'在职':'已离职 / 停用'}</p></div></div><p class="teacher-phone">${userHTML(t.phone)}</p>${!t.active&&upcoming?'<p class="error">仍有未完成课程，请查看课表并调整任课老师。</p>':''}<div class="profile-actions">${canEdit?`<button class="btn" data-teacher-edit="${t.id}">${managed?'编辑教学科目':'编辑老师'}</button>`:''}${!managed?`${state.user.role==='owner'?`<button class="btn refund-action" data-delete-teacher="${t.id}">删除档案</button>`:''}<button class="btn" data-teacher-status="${t.id}">${t.active?'离职 / 停用':'恢复在职'}</button>`:''}</div><div class="teacher-bottom"><span>待完成 <strong>${upcoming}</strong> 节</span><button class="action" data-teacher-calendar="${t.id}">查看课表 →</button></div></article>`;}).join('')}</section><p class="footnote">离职停用后无法登录或接受新排课，历史课程和课后记录保留。</p>`;
  document.querySelectorAll('[data-teacher-calendar]').forEach(b=>b.onclick=()=>{teacherFilter=b.dataset.teacherCalendar; showView('schedule');});
  document.querySelectorAll('[data-delete-teacher]').forEach(b=>b.onclick=()=>deleteProfileModal('teacher',state.teachers.find(t=>t.id==b.dataset.deleteTeacher)));
  document.querySelectorAll('[data-teacher-edit]').forEach(b=>b.onclick=()=>teacherModal(state.teachers.find(t=>t.id==b.dataset.teacherEdit)));
@@ -217,13 +218,48 @@ function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
  initScheduleTimes();
  if(!l){const repeat=$('[name=repeat]'),ending=$('[name=repeat_end]');const updateRepeat=()=>{const enabled=repeat.value!=='none',count=enabled&&ending.value==='count';$('#repeat-end-field').hidden=!enabled;ending.disabled=!enabled;$('#repeat-count-field').hidden=!count;$('[name=repeat_count]').disabled=!count;$('#repeat-help').hidden=!enabled;};repeat.onchange=updateRepeat;ending.onchange=updateRepeat;}
 }
+function askAbsenceCharge(){
+ return new Promise(resolve=>{
+  let settled=false;
+  const finish=value=>{if(settled) return; settled=true; resolve(value); if($('#modal').open) $('#modal').close();};
+  $('#modal').classList.remove('wide');
+  $('#modal-body').innerHTML=`<div class="modal-inner scope-dialog"><div class="modal-head"><h2 id="modal-title">请假</h2><button type="button" class="close" aria-label="关闭">×</button></div><p>请选择这节课是否扣课时。只影响这一次。</p><div class="scope-actions"><button type="button" class="btn primary" id="absence-charge">扣课时</button><button type="button" class="btn" id="absence-free">不扣课时</button><button type="button" class="btn" id="absence-cancel">取消</button></div></div>`;
+  $('.close').onclick=()=>finish(null);
+  $('#absence-charge').onclick=()=>finish(true);
+  $('#absence-free').onclick=()=>finish(false);
+  $('#absence-cancel').onclick=()=>finish(null);
+  $('#modal').addEventListener('close', ()=>finish(null), {once:true});
+  $('#modal').showModal();
+ });
+}
+async function markAbsent(lesson, reopen){
+ const charge=await askAbsenceCharge();
+ if(charge==null){if(reopen) lessonDetail(lesson.id); return;}
+ try{
+  await api('lessons/absent',{lesson_id:lesson.id,version:lesson.version,charge});
+  if($('#modal')?.open) $('#modal').close();
+  await refresh();
+  toast(charge?'已标记请假，并扣除课时。':'已标记请假，未扣课时。');
+ }catch(error){
+  toast(error.message);
+  if(reopen) lessonDetail(lesson.id);
+ }
+}
+async function undoAbsent(lesson){
+ await api('lessons/absent/undo',{lesson_id:lesson.id,version:lesson.version});
+ if($('#modal')?.open) $('#modal').close();
+ await refresh();
+ toast(Number(lesson.absent_charge)?'已取消请假，课时已退回。':'已取消请假。');
+}
 function lessonDetail(id){
  if(Date.now()<calendarClickSuppressedUntil)return;
- const l=lessonById(id),admin=['owner','admin'].includes(state.user.role),staff=isStaff();lastFocus=document.activeElement;$('#modal').classList.add('wide');
- $('#modal-body').innerHTML=`<div class="modal-inner"><div class="modal-head"><h2 id="modal-title">${userHTML(l.subject_name||l.title)} ${typeBadge(l.course_type_name)}</h2><button type="button" class="close" aria-label="关闭">×</button></div><div class="lesson-detail-meta"><span class="badge ${l.status==='scheduled'?'low':''}">${lessonStatus(l)}</span><p>${escapeHTML(l.starts_at.replace('T',' '))} — ${l.ends_at.slice(11)}<br>${userHTML(l.teacher_name)} · ${escapeHTML(l.location||'地点未填写')}</p><p>${l.students.map(s=>userHTML(s.name)).join('、')} · 预计 ${lessonChargeLabel(l)}</p>${l.title_note&&l.title_note!==l.title?`<p class="footnote">原名称：${userHTML(l.title_note)}</p>`:''}</div>${l.status==='cancelled'?`<div class="form-context">取消原因：${userHTML(l.cancel_reason)}<br>本次课程未扣课时。</div>`:l.status==='completed'?l.reports.map(r=>reportCard(l,r,false)).join(''):`<div class="form-context">${staff?(l.reports.length?'已保存课后记录草稿，家长暂不可见。':'完成课程后，填写学习内容、作业和反馈，再确认扣课。'):'课程结束后，老师会在这里发布学习内容、作业与反馈。'}</div>`}<div class="detail-actions">${admin&&(l.status==='scheduled'||state.user.role==='owner')?'<button class="btn" id="edit-schedule">调整排课</button>':''}${admin&&l.status==='scheduled'?'<button class="btn" id="cancel-schedule">取消课程</button>':''}${admin&&l.status==='scheduled'&&l.ends_at<=state.now?'<button class="btn primary" id="quick-close">这节课已上</button>':''}${staff&&l.status!=='cancelled'?`<button class="btn" id="write-report">${l.status==='completed'?'修改课后记录':'填写作业和反馈'}</button>`:''}<button class="btn" id="close-detail">关闭</button></div></div>`;
+ const l=lessonById(id),absent=lessonIsAbsent(l),admin=['owner','admin'].includes(state.user.role),staff=isStaff();lastFocus=document.activeElement;$('#modal').classList.add('wide');
+ $('#modal-body').innerHTML=`<div class="modal-inner"><div class="modal-head"><h2 id="modal-title">${userHTML(l.subject_name||l.title)} ${typeBadge(l.course_type_name)}</h2><button type="button" class="close" aria-label="关闭">×</button></div><div class="lesson-detail-meta"><span class="badge ${absent?'absent':l.status==='scheduled'?'low':''}">${lessonStatus(l)}</span><p>${escapeHTML(l.starts_at.replace('T',' '))} — ${l.ends_at.slice(11)}<br>${userHTML(l.teacher_name)} · ${escapeHTML(l.location||'地点未填写')}</p><p>${l.students.map(s=>userHTML(s.name)).join('、')} · 预计 ${lessonChargeLabel(l)}</p>${l.title_note&&l.title_note!==l.title?`<p class="footnote">原名称：${userHTML(l.title_note)}</p>`:''}</div>${absent?`<div class="form-context">${Number(l.absent_charge)?'这节课已请假。已扣课时。不需要填写课后记录。':'这节课已请假。未扣课时。不需要填写课后记录。'}</div>`:l.status==='cancelled'?`<div class="form-context">取消原因：${userHTML(l.cancel_reason)}<br>本次课程未扣课时。</div>`:l.status==='completed'?l.reports.map(r=>reportCard(l,r,false)).join(''):`<div class="form-context">${staff?(l.reports.length?'已保存课后记录草稿，家长暂不可见。':'完成课程后，填写学习内容、作业和反馈，再确认扣课。'):'课程结束后，老师会在这里发布学习内容、作业与反馈。'}</div>`}<div class="detail-actions">${admin&&!absent&&(l.status==='scheduled'||state.user.role==='owner')?'<button class="btn" id="edit-schedule">调整排课</button>':''}${admin&&l.status==='scheduled'&&!absent?'<button class="btn" id="cancel-schedule">取消课程</button><button class="btn" id="mark-absent">请假</button>':''}${admin&&absent?'<button class="btn" id="undo-absent">取消请假</button>':''}${admin&&l.status==='scheduled'&&!absent&&l.ends_at<=state.now?'<button class="btn primary" id="quick-close">这节课已上</button>':''}${staff&&l.status!=='cancelled'&&!absent?`<button class="btn" id="write-report">${l.status==='completed'?'修改课后记录':'填写作业和反馈'}</button>`:''}<button class="btn" id="close-detail">关闭</button></div></div>`;
  const close=()=>$('#modal').close();$('.close').onclick=close;$('#close-detail').onclick=close;
  if($('#edit-schedule'))$('#edit-schedule').onclick=()=>{close();scheduleModal(l);};
  if($('#cancel-schedule'))$('#cancel-schedule').onclick=()=>{close();cancelModal(l);};
+ if($('#mark-absent'))$('#mark-absent').onclick=()=>markAbsent(l,true);
+ if($('#undo-absent'))$('#undo-absent').onclick=()=>undoAbsent(l).catch(error=>toast(error.message));
  if($('#quick-close'))$('#quick-close').onclick=()=>{close();quickCloseModal(l);};
  if($('#write-report'))$('#write-report').onclick=()=>{close();reportModal(l);};
  $('#modal').showModal();
@@ -269,7 +305,7 @@ function renderFeedback(){
  const done=lesson=>typeof lessonDone==='function'&&lessonDone(lesson);
  const published=state.lessons.filter(done).sort((a,b)=>b.starts_at.localeCompare(a.starts_at));
  const rows=published.flatMap(lesson=>lesson.reports.filter(report=>(!selected||report.student_id==selected)&&recordMatches(lesson, report)).map(report=>({l:lesson,r:report})));
- const waiting=isStaff()?state.lessons.filter(lesson=>lesson.status!=='cancelled'&&!done(lesson)&&lesson.ends_at<=state.now&&recordMatches(lesson)):[];
+ const waiting=isStaff()?state.lessons.filter(lesson=>!lessonIsAbsent(lesson)&&lesson.status!=='cancelled'&&!done(lesson)&&lesson.ends_at<=state.now&&recordMatches(lesson)):[];
  const teacherPick=['owner','admin'].includes(state.user.role)?`<select id="record-teacher" class="select-filter" aria-label="按老师筛选"><option value="">全部老师</option>${(state.teachers||[]).map(teacher=>`<option value="${teacher.id}" ${String(recordTeacher)===String(teacher.id)?'selected':''}>${escapeHTML(teacher.name)}</option>`).join('')}</select>`:'';
  $('#surface').innerHTML=`${waiting.length?`<section class="pending-lessons"><h2>待填写记录 <span class="count">${waiting.length}</span></h2>${waiting.map(l=>`<button class="pending-row" data-lesson-detail="${l.id}"><span><strong>${userHTML(l.title)}</strong><small>${l.starts_at.replace('T',' ')} · ${userHTML(l.teacher_name)} · ${l.students.map(s=>userHTML(s.name)).join('、')}</small></span><span>填写记录 →</span></button>`).join('')}</section>`:''}<div class="section-head record-tools"><h2>已发布记录 <span class="count">${rows.length}</span></h2><label class="calendar-search"><input id="record-search" type="search" placeholder="搜索学生或记录" aria-label="搜索学生或记录" value="${escapeHTML(recordQuery)}"></label>${teacherPick}${studentFilter()}</div><section class="feedback-grid">${rows.length?rows.map(({l,r})=>reportCard(l,r)).join(''):'<div class="panel empty">没有匹配的课后记录。</div>'}</section>`;
  if($('#record-teacher')) $('#record-teacher').onchange=event=>{recordTeacher=event.target.value;renderFeedback();};
