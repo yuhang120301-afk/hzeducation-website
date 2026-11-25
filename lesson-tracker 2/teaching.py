@@ -781,6 +781,8 @@ def cancel_lesson(c,user,data,text_value):
     reason=str(data.get('reason') or '').strip()
     if len(reason)>250:
         raise ValueError('取消原因不能超过 250 个字。')
+    import auditlog
+    auditlog.begin(c)
     c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",(reason,lesson['id']))
     if scope=='future':
         c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1 WHERE series_id=? AND occurrence_index>? AND status='scheduled'",(reason,lesson['series_id'],lesson['occurrence_index']))
@@ -789,6 +791,8 @@ def cancel_lesson(c,user,data,text_value):
         c.execute('UPDATE lesson_series SET version=version+1 WHERE id=?',(lesson['series_id'],))
     if data.get('charge') is True:
         apply_late_leave(c, lesson)
+    auditlog.hint(c, '取消课程' + ('并扣课时' if data.get('charge') is True else ''))
+    auditlog.finish(c, user)
     return {'ok':True}
 
 def _absence_columns(c):

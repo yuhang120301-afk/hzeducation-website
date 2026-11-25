@@ -100,6 +100,8 @@ def withdraw_student(c, user, data):
         raise ValueError('学生档案不存在，请刷新页面。')
     if profiles.profile_withdrawn(c, student['profile_id']):
         raise ValueError('学生已经退学，请在退学学员里查看。')
+    import auditlog
+    auditlog.begin(c)
     courses = list(c.execute('SELECT * FROM students WHERE profile_id=? AND voided=0', (student['profile_id'],)))
     supplied = data.get('courses')
     choices = {}
@@ -134,6 +136,8 @@ def withdraw_student(c, user, data):
     c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'], user['id'], 'archived'))
     import timeline
     timeline.record(c, user, student['id'], 'withdraw', f"退学 {student['name']}")
+    auditlog.hint(c, f"退学 {student['name']}")
+    auditlog.finish(c, user)
     return {'ok': True}
 
 
@@ -150,6 +154,8 @@ def settle_course(c, user, data):
         raise ValueError('还有余额，请选择退款、保留余额或作废。')
     if reason not in ('refund', 'keep', 'void'):
         reason = 'keep'
+    import auditlog
+    auditlog.begin(c)
     if reason == 'refund':
         _settle_refund(c, user, course, data)
     elif reason == 'void':
@@ -164,6 +170,8 @@ def settle_course(c, user, data):
     c.execute('UPDATE vouchers SET note=? WHERE id=?', (note, vid))
     import timeline
     timeline.record(c, user, course['id'], 'stop', f"{note} {course['course']}")
+    auditlog.hint(c, f"{note} {course['name']} {course['course']}")
+    auditlog.finish(c, user)
     return {'ok': True, 'reason': reason, 'voucher_id': vid}
 
 

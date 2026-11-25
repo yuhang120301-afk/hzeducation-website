@@ -9,6 +9,7 @@ os.environ['LESSON_DB'] = str(DB)
 os.environ['LESSON_DEMO'] = '0'
 os.environ['LESSON_SECURE_COOKIE'] = '0'
 
+import auditlog
 import deletion
 import server
 
@@ -40,6 +41,8 @@ class SettleCourseTests(unittest.TestCase):
             self.assertIsNotNone(c.execute("SELECT 1 FROM profile_events WHERE student_id=? AND action='stop'", (voided,)).fetchone())
             deletion.settle_course(c, owner, {'student_id': kept, 'reason': 'keep'})
             self.assertEqual(c.execute('SELECT balance, archived FROM students WHERE id=?', (kept,)).fetchone()['balance'], 150)
+            last = auditlog.last_for(c, owner)
+            self.assertIn('停课，余额保留', last['entry']['summary'])
 
 
 if __name__ == '__main__':
