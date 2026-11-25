@@ -440,6 +440,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200, finance.monthly(c, user, params.get('month', [''])[0]))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/expenses':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    import expenses
+                    params=parse_qs(urlsplit(self.path).query)
+                    return self.response(200, expenses.page(c, user, params.get('month', [''])[0]))
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path in ('/api/finance', '/api/finance.xlsx', '/api/finance.pdf'):
             with connect() as c:
                 user=self.current(c)
@@ -718,6 +728,12 @@ class Handler(BaseHTTPRequestHandler):
                     blob = backup.snapshot_bytes(DB_PATH)
                     name = 'lessons-'+teaching.now_local().date().isoformat()+'.sqlite3'
                     return self.response(200, blob, content_type='application/vnd.sqlite3', extra=[('Content-Disposition', f'attachment; filename="{name}"')])
+                if self.path.split('?')[0].startswith('/api/expenses'):
+                    import expenses
+                    c.execute('BEGIN IMMEDIATE')
+                    result=expenses.handle_post(c, user, self.path.split('?')[0], data)
+                    c.commit()
+                    return self.response(200, result)
                 if self.path.startswith('/api/pay/'):
                     c.execute('BEGIN IMMEDIATE')
                     result=payroll.handle_post(c,user,self.path,data)
