@@ -23,18 +23,22 @@ RANK = {
     'lessons': 60,
     'ledger': 70,
     'credit_batches': 80,
+    'vouchers': 85,
     'lesson_students': 80,
     'arrears': 80,
     'lesson_reports': 90,
     'credit_movements': 95,
     'cash_entries': 95,
+    'voucher_events': 96,
 }
 PRIMARY = {
     'students': ('id',),
     'ledger': ('id',),
     'credit_batches': ('id',),
+    'vouchers': ('id',),
     'credit_movements': ('ledger_id', 'batch_id'),
     'cash_entries': ('ledger_id',),
+    'voucher_events': ('id',),
     'lessons': ('id',),
     'lesson_students': ('lesson_id', 'student_id'),
     'lesson_reports': ('lesson_id', 'student_id'),
@@ -225,6 +229,18 @@ def undo(c, user, audit_id):
     for op in sorted((item for item in ops if item['op'] == 'delete'), key=lambda item: item['rank']):
         _write(c, op['table'], op['before'].keys(), op['before'])
     return {'ok': True, 'undone': row['id']}
+
+
+def last_for(c, user):
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以撤销上一步。')
+    row = c.execute('''SELECT * FROM audit_log WHERE actor_id=? AND undone_by IS NULL
+        ORDER BY id DESC LIMIT 1''', (user['id'],)).fetchone()
+    if not row:
+        return {'entry': None}
+    ops = json.loads(row['ops_json'] or '[]')
+    money = any(op.get('table') in ('ledger', 'cash_entries') for op in ops)
+    return {'entry': {'id': row['id'], 'summary': row['summary'], 'money': money}}
 
 
 def mark_undone(c, audit_id, undone_by):

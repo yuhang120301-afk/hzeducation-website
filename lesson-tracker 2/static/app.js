@@ -259,7 +259,7 @@ function studentFold(group, admin){
   const packs=(account.credit_batches||[]).map(batch=>packLine(batch, money, account)).join('')||'<li>还没有课时包。</li>';
   const subjectLabel=account.subject_name||account.course||'本科目';
   const price=state.user.role==='owner'&&account.course_type_name?`<form class="legacy-price" data-legacy-form="${account.id}"><p class="footnote">${account.legacy?`<span class="legacy-badge">老学员 · ${userHTML(subjectLabel)}</span> `:''}2027 价目 ${account.list_hourly_cents==null?'还没有':'$'+(account.list_hourly_cents/100).toFixed(2)+' / 小时'}。留空并保存，这一科就改回价目。</p><label class="field">${userHTML(subjectLabel)} 每小时价格 AUD<input name="hourly" inputmode="decimal" value="${account.custom_hourly_cents==null?'':(account.custom_hourly_cents/100).toFixed(2)}" placeholder="用 2027 价目"></label><button class="btn" type="submit">保存价格</button></form>`:'';
-  return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}</small></div><div class="num">${accountStatus(account, group)}</div></article>${price}<ul class="pack-list">${packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button><button class="btn" data-relink-course="${account.id}" type="button">把已停课的以后课移过来</button>${state.user.role==='owner'?`<button class="btn refund-action" data-stop-course="${account.id}" type="button">停课/删除这门课</button>`:''}</p>`:''}`;
+  return `<article class="trow"><div class="grow"><b>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)}</b> ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}<small>剩余 ${fmt(regularHours(account))} ${unitFor(account)} · 赠送 ${fmt(account.gift_balance||0)}</small></div><div class="num">${accountStatus(account, group)}</div></article>${price}<ul class="pack-list">${packs}</ul>${admin?`<p class="profile-actions"><button class="btn" data-credit="${account.id}" type="button">充值</button><button class="btn" data-refund="${account.id}" type="button">退课退款</button><button class="btn" data-lesson="${account.id}" type="button">排课</button><button class="btn" data-study-level="${account.id}" type="button">学习年级</button><button class="btn" data-relink-course="${account.id}" type="button">把已停课的以后课移过来</button>${state.user.role==='owner'?`<button class="btn refund-action" data-remove-course="${account.id}" type="button">删除</button>`:''}</p>`:''}`;
  }).join('');
  const lessonRow=lesson=>`<article class="trow t-${studentToneName(lesson.teacher_name)}"><div class="grow">${escapeHTML(lesson.starts_at.replace('T',' '))} ${typeof typeBadge==='function'?typeBadge(lesson.course_type_name):''}<small>${userHTML(lesson.subject_name||lesson.title)} · ${userHTML(lesson.teacher_name)}</small></div><div class="num">${lesson.status==='completed'?'已上了':lesson.status==='cancelled'?'已取消':'待上课'}</div></article>`;
  const payRow=entry=>`<article class="trow"><div class="grow">${escapeHTML(entry.lesson_date)} · ${entry.kind==='credit'?'收款':'退款'}<small>${userHTML(entry.note||entry.subject_name||entry.course||'')}</small></div><div class="num">${entryMoney(entry)}<small>${escapeHTML(methods[entry.payment_method]||'')}</small></div></article>`;
@@ -306,7 +306,7 @@ function bindProfileActions(){
  document.querySelectorAll('[data-relink-course]').forEach(b=>b.onclick=async event=>{event.stopPropagation(); try{const result=await api('students/course/relink',{student_id:Number(b.dataset.relinkCourse)}); toast(result.moved?`已把 ${result.moved} 节以后的课移到这门课。`:'没有可以移动的以后的课。'); if(result.moved) await refresh();}catch(error){toast(error.message);}});
  document.querySelectorAll('[data-refund]').forEach(b=>b.onclick=event=>{event.stopPropagation(); refundModal(b.dataset.refund);});
  document.querySelectorAll('[data-credit]').forEach(b=>b.onclick=event=>{event.stopPropagation(); entryModal('credit',b.dataset.credit);});
- document.querySelectorAll('[data-stop-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); stopCourseModal(b.dataset.stopCourse);});
+ document.querySelectorAll('[data-remove-course]').forEach(b=>b.onclick=event=>{event.stopPropagation(); removeCourseModal(b.dataset.removeCourse);});
  document.querySelectorAll('[data-switch-pack]').forEach(b=>b.onclick=event=>{event.stopPropagation(); switchCourseModal(b.dataset.switchStudent, b.dataset.switchPack);});
  document.querySelectorAll('[data-legacy-form]').forEach(form=>form.onsubmit=async event=>{
   event.preventDefault();
@@ -317,12 +317,34 @@ function bindProfileActions(){
  document.querySelectorAll('[data-history]').forEach(b=>b.onclick=event=>{event.stopPropagation(); selected=b.dataset.history; history.pushState({hz:1},'','/?view=records'); render();});
  document.querySelectorAll('[data-vouchers]').forEach(b=>b.onclick=event=>{event.stopPropagation(); voucherStudent=b.dataset.vouchers; history.pushState({hz:1},'','/?view=vouchers'); render();});
 }
-function stopCourseModal(id){
- const account=state.students.find(s=>s.id==id);
+function courseBlockers(account){
+ const id=String(account.id);
+ const lessons=(state.lessons||[]).filter(lesson=>(lesson.students||[]).some(student=>String(student.id)===id));
+ const attended=lessons.filter(lesson=>lesson.status==='completed'||(lesson.reports||[]).some(report=>String(report.student_id)===id&&(report.ledger_id||report.content||report.homework||report.feedback)));
+ const entries=(state.entries||[]).filter(entry=>String(entry.student_id)===id&&!entry.reversed_by);
+ const charged=entries.filter(entry=>entry.kind==='lesson');
+ const money=entries.filter(entry=>entry.cash_delta);
+ const reasons=[];
+ if(attended.length) reasons.push(`已经上过或写过记录（${attended.length}）`);
+ if(charged.length) reasons.push(`已经扣过课时（${charged.length} 笔）`);
+ if(money.length) reasons.push('有收过或退过的钱');
+ return reasons;
+}
+function removeCourseModal(id){
+ const account=state.students.find(item=>item.id==id);
  if(!account) return;
- const left=account.balance||0;
- const warn=left>0?`<p class="error">这门课还剩 ${fmt(left)} ${unitFor(account)}。可以先退费（退款金额可以填 0），也可以直接停课。余额会留在这门已停的课上。</p>`:'';
- modal('停课/删除这门课',`<div class="form-context">${userHTML(account.name)} · ${userHTML(account.subject_name||account.course)}<br>同一学生的其他科目不受影响。已上的课、课后记录和账目保留，以后还没上的课会取消。没有任何记录的课会直接删除。</div>${warn}`,'确认停课',async()=>{const result=await api('students/course/stop',{student_id:account.id}); toast(result.deleted?'这门课已删除。':'这门课已停，历史记录还在。');},true);
+ const reasons=courseBlockers(account);
+ const withdrawOnly=reasons.length>0;
+ modal('删除这门课',`<div class="form-context">${userHTML(account.name)} · ${userHTML(account.subject_name||account.course)}<br>不选原因时按「加错了」处理：删掉这门课、课时包和还没上的课，不写退课单据。${withdrawOnly?`<br><span class="error">这门课只能退课：${reasons.map(escapeHTML).join('；')}。</span>`:''}</div><label class="field">原因<select name="reason">${withdrawOnly?'':'<option value="mistake" selected>加错了</option>'}<option value="withdraw" ${withdrawOnly?'selected':''}>退课</option>${withdrawOnly?'':'<option value="other">其他</option>'}</select></label><label class="field">说明（选「其他」时必填）<textarea name="note" maxlength="200"></textarea></label>`,'删除',async data=>{const result=await api('students/course/remove',{student_id:account.id,reason:data.reason||'mistake',note:data.note||''}); toast(result.voided?'已按加错了删除，没有退课单据。':result.deleted?'这门课已删除。':'已退课，单据已记下。');},true);
+}
+async function undoLast(){
+ try{
+  const data=await api('audit/last',{});
+  if(!data.entry){toast('没有可以撤销的操作。');return;}
+  const run=async()=>{const result=await api('audit/undo',{id:data.entry.id}); toast('已撤销：'+(result.summary||data.entry.summary));};
+  if(data.entry.money) modal('撤销上一步',`<div class="form-context">上一步是「${escapeHTML(data.entry.summary)}」，里面有金额。确定要撤销吗？</div>`,'确认撤销',run,true);
+  else{await run(); await refresh();}
+ }catch(error){toast(error.message);}
 }
 function addCourseModal(id){
  const s=state.students.find(s=>s.id==id),existing=state.students.filter(x=>x.profile_id===s.profile_id).map(x=>x.course);

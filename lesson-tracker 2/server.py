@@ -161,6 +161,7 @@ def _create_base_tables(c):
             c.execute("INSERT INTO app_meta VALUES('teaching_demo_v1','1')")
         accounting.schema(c, demo_seed_allowed())
         profiles.schema(c)
+        deletion.schema(c)
         credit_batches.schema(c)
         record_edits.schema(c)
         if demo_seed_allowed() and not c.execute("SELECT 1 FROM app_meta WHERE key='owner_demo_v1'").fetchone():
@@ -515,7 +516,7 @@ class Handler(BaseHTTPRequestHandler):
                         for batch in person.get('credit_batches') or []:
                             batch.pop('unit_fees', None)
                 shells=profiles.course_shells(c, students)
-                archived_students=[s for s in students if s['archived']] if user['role']=='owner' else []
+                archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
                 students=[s for s in students if not s['archived']]+shells
                 if user['role']!='owner':
                     for person in students+archived_students:
@@ -597,6 +598,13 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/students/course/switch':
                     c.execute('BEGIN IMMEDIATE')
                     result = switches.apply_switch(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
+                if self.path == '/api/audit/last':
+                    return self.response(200, auditlog.last_for(c, user))
+                if self.path == '/api/students/course/remove':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=deletion.remove_course(c,user,data)
                     c.commit()
                     return self.response(200, result)
                 if self.path == '/api/students/course/stop':
@@ -716,6 +724,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/audit/undo':
                     c.execute('BEGIN IMMEDIATE')
                     result=auditlog.undo(c,user,int(data.get('id') or 0))
+                    auditlog.mark_undone(c, result['undone'], user['id'])
+                    summary=c.execute('SELECT summary FROM audit_log WHERE id=?', (result['undone'],)).fetchone()
+                    result['summary']=summary['summary'] if summary else ''
                     c.commit()
                     return self.response(200,result)
                 if self.path in ('/api/entries','/api/reverse','/api/refunds'):
