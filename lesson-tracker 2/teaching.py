@@ -375,6 +375,9 @@ def state_for(c,user):
         member_where=' AND '+profiles.linked_clause('s') if role=='parent' else ''
         member_params=(lesson['id'],*profiles.linked_params(user['id'])) if role=='parent' else (lesson['id'],)
         lesson['students']=[dict(x) for x in c.execute('SELECT s.id,s.name,s.course,s.balance,s.billing_unit,s.grade FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=?'+member_where+' ORDER BY s.id',member_params)]
+        if role=='teacher':
+            for student in lesson['students']:
+                student.pop('balance', None)
         if role=='parent' and lesson['status']!='completed':
             lesson['reports']=[]
         else:
@@ -643,7 +646,12 @@ def save_reports(c,user,data,units,action):
             raise ValueError('请填写学习内容、今日作业和课后反馈；没有作业可填写“今日无作业”。')
         account=c.execute('SELECT billing_unit FROM students WHERE id=?',(sid,)).fetchone()
         default_amount=round((dt.datetime.fromisoformat(lesson['ends_at'])-dt.datetime.fromisoformat(lesson['starts_at'])).total_seconds()/3600,2) if account['billing_unit']=='hour' else lesson['planned_units']/100
+        planned=units(default_amount)
         amount=units(item.get('amount',default_amount))
+        if user['role']=='teacher' and amount!=planned:
+            raise AccessError('老师不能修改课时数量。')
+        if user['role']!='owner':
+            item['fee_amount']=None
         old=c.execute('SELECT * FROM lesson_reports WHERE lesson_id=? AND student_id=?',(lesson['id'],sid)).fetchone()
         if action=='edit' and (not old or (amount!=old['amount'] and user['role']!='owner')):
             raise ValueError('修改反馈不会改变课时。需要调整扣费请由管理员在账本中处理。')
