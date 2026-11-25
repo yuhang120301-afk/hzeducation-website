@@ -19,6 +19,7 @@ import accounting
 from teaching import SINGAPORE_SUBJECT, AccessError, now_local
 
 SEED_KEY = 'pay_seed_v1'
+HELEN_PAY_KEY = 'helen_pay_40_v1'
 # Name fragment, rule type, percent in basis points, hourly floor cents or None.
 SEED_RULES = (
     ('helen', 'percent', 4000, None),
@@ -92,6 +93,7 @@ def schema(c):
         if 'shared' not in {r['name'] for r in c.execute(f'PRAGMA table_info({table})')}:
             c.execute(f'ALTER TABLE {table} ADD COLUMN shared INTEGER NOT NULL DEFAULT 0')
     seed_if_needed(c)
+    apply_helen_percent(c)
 
 
 def seed_if_needed(c):
@@ -114,6 +116,23 @@ def seed_if_needed(c):
             c.execute('''INSERT INTO partner_share_rules(teacher_id,percent_bp,effective_from,note,created_by)
                 VALUES(?,?,?,?,?)''', (vincent, 3000, '2000-01-01', '新学生课酬减去共同成本后的分成', actor_id))
     c.execute('INSERT INTO app_meta(key,value) VALUES(?,?)', (SEED_KEY, '1'))
+
+
+def apply_helen_percent(c):
+    """One-time: Helen's existing 0% rule becomes 40%. A later edit is left alone."""
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_meta'").fetchone():
+        return
+    if c.execute('SELECT 1 FROM app_meta WHERE key=?', (HELEN_PAY_KEY,)).fetchone():
+        return
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pay_rules'").fetchone():
+        rows = c.execute('''SELECT r.id FROM pay_rules r
+            JOIN teachers t ON t.id=r.teacher_id
+            JOIN users u ON u.id=t.user_id
+            WHERE r.rule_type='percent' AND IFNULL(r.percent_bp, 0)=0
+              AND instr(lower(u.name), 'helen')>0''').fetchall()
+        for row in rows:
+            c.execute('UPDATE pay_rules SET percent_bp=4000 WHERE id=?', (row['id'],))
+    c.execute('INSERT INTO app_meta(key,value) VALUES(?,?)', (HELEN_PAY_KEY, '1'))
 
 
 def require_owner(user):

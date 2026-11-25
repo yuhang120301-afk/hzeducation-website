@@ -327,6 +327,19 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(partner['percent_bp'], 3000)
         self.assertEqual(self.c.execute('SELECT COUNT(*) FROM pay_rules').fetchone()[0], 5)
 
+    def test_existing_helen_zero_percent_becomes_forty_once(self):
+        uid = self.user('Helen', 'admin')
+        tid = self.c.execute('INSERT INTO teachers(user_id,subject) VALUES(?,?)', (uid, '数学')).lastrowid
+        actor = self.c.execute('SELECT id FROM users ORDER BY id LIMIT 1').fetchone()['id']
+        rule = self.c.execute('''INSERT INTO pay_rules(teacher_id,rule_type,percent_bp,hourly_floor_cents,hourly_rate_cents,effective_from,note,created_by)
+            VALUES(?,?,?,?,?,?,?,?)''', (tid, 'percent', 0, None, None, '2000-01-01', '旧规则', actor)).lastrowid
+        self.c.execute("DELETE FROM app_meta WHERE key='helen_pay_40_v1'")
+        payroll.apply_helen_percent(self.c)
+        self.assertEqual(self.c.execute('SELECT percent_bp FROM pay_rules WHERE id=?', (rule,)).fetchone()['percent_bp'], 4000)
+        self.c.execute('UPDATE pay_rules SET percent_bp=0 WHERE id=?', (rule,))
+        payroll.apply_helen_percent(self.c)
+        self.assertEqual(self.c.execute('SELECT percent_bp FROM pay_rules WHERE id=?', (rule,)).fetchone()['percent_bp'], 0)
+
     def test_schema_does_not_drop_students(self):
         sid = self.student('保留学生')
         payroll.schema(self.c)
