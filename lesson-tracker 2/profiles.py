@@ -398,8 +398,9 @@ def same_subject(left_name, left_subject, right_name, right_subject):
     """
     def token(name, subject):
         blob = f'{subject or ""} {name or ""}'
-        if '数学加英语' in blob:
-            return '数学加英语'
+        import teaching
+        if teaching.combo_subject(blob):
+            return teaching.COMBO_SUBJECT
         for part in (subject, name, blob):
             found = vce_subject(part) or singapore_subject(part)
             if found:

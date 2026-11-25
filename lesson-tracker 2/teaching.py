@@ -98,7 +98,7 @@ DEFAULT_COURSE_TYPES = ('一对一', '一对二', '小班课')
 DEFAULT_SUBJECTS = ('数学', '英语', '科学', '物理', '化学', '中文', '写作', '高数', '中数')
 VCE_SUBJECTS = ('VCE 中数', 'VCE 低数', 'VCE 高数')
 SINGAPORE_SUBJECT = '新加坡数学'
-COMBO_SUBJECT = '数学加英语'
+COMBO_SUBJECT = '数学 + 英语'
 OFFERED_SUBJECTS = ('数学', '英语', *VCE_SUBJECTS, SINGAPORE_SUBJECT, COMBO_SUBJECT)
 OFFERED_TYPES = ('一对一', '一对二', '小班课')
 TYPE_ALIASES = {
@@ -118,7 +118,8 @@ SUBJECT_ALIASES = {
     'general mathematics': 'VCE 低数', 'specialist mathematics': 'VCE 高数',
     '新加坡数学': '新加坡数学',
     'singapore maths': '新加坡数学', 'singapore math': '新加坡数学', 'singapore mathematics': '新加坡数学',
-    '数学加英语': '数学加英语', 'maths and english': '数学加英语', 'math and english': '数学加英语',
+    '数学加英语': '数学 + 英语', '数学 + 英语': '数学 + 英语', '数学/英语': '数学 + 英语',
+    'maths and english': '数学 + 英语', 'math and english': '数学 + 英语',
 }
 # Longer English names first, so "math methods" is not swallowed by the generic "math" prefix.
 VCE_ALIASES = (
@@ -168,6 +169,19 @@ def singapore_subject(name):
     return ''
 
 
+def combo_subject(name):
+    """数学 + 英语 is the one primary small class. 数学加英语 and 数学/英语 are the same course."""
+    text = str(name or '').strip()
+    if not text:
+        return ''
+    compact = ''.join(text.split()).replace('＋', '+').replace('／', '/')
+    if '数学加英语' in compact or '数学+英语' in compact or '数学/英语' in compact:
+        return COMBO_SUBJECT
+    if text.casefold() in ('maths and english', 'math and english', 'maths + english', 'math + english'):
+        return COMBO_SUBJECT
+    return ''
+
+
 def canonical_subject(name):
     """Science and 科学 display as the same Chinese subject. Stored labels are not rewritten.
 
@@ -178,7 +192,7 @@ def canonical_subject(name):
     text = str(name or '').strip()
     if not text:
         return ''
-    named = vce_subject(text) or singapore_subject(text)
+    named = combo_subject(text) or vce_subject(text) or singapore_subject(text)
     if named:
         return named
     key = text.casefold()
@@ -265,6 +279,7 @@ def ensure_catalogs(c):
     activate_vce_subjects(c)
     activate_singapore_maths(c)
     activate_combo_subject(c)
+    merge_combo_subject(c)
     ensure_type_products(c)
 
 
@@ -338,7 +353,7 @@ def activate_singapore_maths(c):
 
 
 def activate_combo_subject(c):
-    """Add 数学加英语 as one subject. It keeps its own price and is not 数学 plus 英语."""
+    """Add 数学 + 英语 as one subject. It keeps its own price and is not 数学 plus 英语."""
     if c.execute("SELECT 1 FROM app_meta WHERE key='catalog_combo_v1'").fetchone():
         return
     sort = (OFFERED_SUBJECTS.index(COMBO_SUBJECT) + 1) * 10
@@ -348,6 +363,49 @@ def activate_combo_subject(c):
         c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (COMBO_SUBJECT,))
         c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (COMBO_SUBJECT,))
     c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_combo_v1', '1')")
+
+
+def merge_combo_subject(c):
+    """Fold the seeded 数学加英语 catalog row into Helen's 数学 + 英语. Leave her name as it is.
+
+    A second startup does nothing. If the duplicate was never created, this only records that.
+    References move first. The duplicate row is deleted only after nothing still points at it.
+    """
+    if c.execute("SELECT 1 FROM app_meta WHERE key='combo_name_v1'").fetchone():
+        return
+    sort = (OFFERED_SUBJECTS.index(COMBO_SUBJECT) + 1) * 10
+    c.execute('INSERT OR IGNORE INTO subjects(name, sort_order, active) VALUES(?,?,1)', (COMBO_SUBJECT, sort))
+    c.execute('UPDATE subjects SET active=1 WHERE name=?', (COMBO_SUBJECT,))
+    canonical = c.execute('SELECT id FROM subjects WHERE name=?', (COMBO_SUBJECT,)).fetchone()
+    aliases = ('数学加英语',)
+    for alias in aliases:
+        row = c.execute('SELECT id FROM subjects WHERE name=? AND id!=?', (alias, canonical['id'])).fetchone()
+        if not row:
+            continue
+        old_id = row['id']
+        for table in ('students', 'lessons', 'lesson_series'):
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() and c.execute(f"SELECT 1 FROM pragma_table_info('{table}') WHERE name='subject_id'").fetchone():
+                c.execute(f'UPDATE {table} SET subject_id=? WHERE subject_id=?', (canonical['id'], old_id))
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='student_subject_prices'").fetchone():
+            c.execute('UPDATE student_subject_prices SET subject=? WHERE subject=?', (COMBO_SUBJECT, alias))
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
+            c.execute("UPDATE schedule_options SET active=0 WHERE kind='course' AND name=?", (alias,))
+        c.execute('DELETE FROM subjects WHERE id=?', (old_id,))
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='course_types'").fetchone():
+        extra = c.execute("SELECT id FROM course_types WHERE name='数学加英语'").fetchone()
+        if extra:
+            kept = c.execute("SELECT id FROM course_types WHERE name IN ('数学 + 英语', '小班课') ORDER BY CASE name WHEN '数学 + 英语' THEN 0 ELSE 1 END LIMIT 1").fetchone()
+            if kept and kept['id'] != extra['id']:
+                for table in ('students', 'lessons', 'lesson_series', 'price_rows'):
+                    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() and c.execute(f"SELECT 1 FROM pragma_table_info('{table}') WHERE name='course_type_id'").fetchone():
+                        c.execute(f'UPDATE {table} SET course_type_id=? WHERE course_type_id=?', (kept['id'], extra['id']))
+                c.execute('DELETE FROM course_types WHERE id=?', (extra['id'],))
+            elif not kept:
+                c.execute("UPDATE course_types SET name='小班课' WHERE id=? AND NOT EXISTS(SELECT 1 FROM course_types WHERE name='小班课')", (extra['id'],))
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
+        c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (COMBO_SUBJECT,))
+        c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (COMBO_SUBJECT,))
+    c.execute("INSERT INTO app_meta(key, value) VALUES('combo_name_v1', '1')")
 
 
 def ensure_type_products(c):
@@ -740,7 +798,7 @@ def save_lesson(c,user,data,units,text_value):
             year = enrolled['level_code'] if enrolled and 'level_code' in enrolled.keys() else ''
             mapped = pricing.align_primary_class(subject_name['name'], type_name['name'], year)
             if mapped != subject_name['name']:
-                raise ValueError('小学小班课是数学加英语，不能单独排数学或英语。')
+                raise ValueError('小学小班课是数学 + 英语，不能单独排数学或英语。')
     if subject_name and subject_name['name'] == SINGAPORE_SUBJECT:
         if not type_name or type_name['name'] not in ('一对一', '小班课'):
             raise ValueError('新加坡数学只有一对一和小班课。')

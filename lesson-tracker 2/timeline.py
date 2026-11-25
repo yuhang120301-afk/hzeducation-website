@@ -14,6 +14,7 @@ ACTIONS = {
     'withdraw': '退学',
     'reinstate': '复学',
     'void': '作废单据',
+    'receipt': '挂账收款',
 }
 
 

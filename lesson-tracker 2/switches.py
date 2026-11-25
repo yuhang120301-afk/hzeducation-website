@@ -1,3 +1,5 @@
+import sqlite3
+
 """Move the remaining value of one lesson pack onto another course.
 
 The old pack stays, marked 已换课. The new pack points back at it. No cash
@@ -92,12 +94,12 @@ def _each_millis(c, student, product, subject, minutes, level, manual):
         if hourly is None:
             raise ValueError('新加坡数学还没有价格。')
         return pricing.per_lesson_cents(hourly, int(minutes)) * 10, source
-    if subject == pricing.COMBO_SUBJECT:
-        if str(level) not in pricing.PRIMARY_CLASS_LEVELS:
-            raise ValueError('数学加英语只开到 Year 6。')
+    if teaching.combo_subject(subject) or subject == pricing.COMBO_SUBJECT:
+        if not pricing.level_is_primary(level):
+            raise ValueError('数学 + 英语只开到 Year 6。')
         table = pricing.table_on(c, now_local().date().isoformat())
         rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
-        band = pricing.matching_row(rows, 'term', str(level))
+        band = pricing.matching_row(rows, 'term', pricing.COMBO_LEVEL)
         if not band:
             raise ValueError('这个年级还没有价目。')
         return pricing.per_lesson_cents(band['hourly_cents'], int(band['lesson_minutes'] or pricing.COMBO_MINUTES)) * 10, 'catalog'
@@ -113,8 +115,12 @@ def _each_millis(c, student, product, subject, minutes, level, manual):
 
 
 def _choice(c, data, student):
-    subject = str(data.get('subject') or '').strip()
+    import teaching
+    raw = str(data.get('subject') or '').strip()
+    subject = teaching.combo_subject(raw) or raw
     if not c.execute('SELECT 1 FROM subjects WHERE name=? AND active=1', (subject,)).fetchone():
+        if teaching.combo_subject(raw):
+            raise ValueError('请先在设置里启用数学 + 英语。')
         raise ValueError(SUBJECT_REQUIRED)
     type_id = int(data.get('course_type_id') or 0)
     kind = c.execute('SELECT id, name, product FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone()
@@ -160,27 +166,93 @@ def _choice(c, data, student):
     }
 
 
+def _ensure_profile(c, student):
+    """A course with no profile cannot be matched to the child's other courses."""
+    if student['profile_id']:
+        return c.execute('SELECT * FROM students WHERE id=?', (student['id'],)).fetchone()
+    found = c.execute('''SELECT DISTINCT profile_id FROM students
+        WHERE name=? AND parent_id=? AND profile_id IS NOT NULL''', (student['name'], student['parent_id'])).fetchall()
+    if len(found) > 1:
+        raise ValueError('这门课没有挂到唯一的学生档案，请先在资料里保存学生再换课。')
+    if found:
+        profile_id = found[0]['profile_id']
+    else:
+        profile_id = c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+    c.execute('UPDATE students SET profile_id=? WHERE id=? AND profile_id IS NULL', (profile_id, student['id']))
+    c.execute('UPDATE students SET profile_id=? WHERE profile_id IS NULL AND name=? AND parent_id=?',
+        (profile_id, student['name'], student['parent_id']))
+    return c.execute('SELECT * FROM students WHERE id=?', (student['id'],)).fetchone()
+
+
+def _person_rows(c, student):
+    rows = []
+    seen = set()
+    if student['profile_id']:
+        found = c.execute('SELECT * FROM students WHERE profile_id=?', (student['profile_id'],)).fetchall()
+    else:
+        found = []
+    found += c.execute('SELECT * FROM students WHERE name=? AND parent_id=?', (student['name'], student['parent_id'])).fetchall()
+    for row in found:
+        if row['id'] in seen:
+            continue
+        seen.add(row['id'])
+        rows.append(row)
+    return rows
+
+
+def _row_matches(c, row, subject):
+    import profiles
+    named = ''
+    if row['subject_id']:
+        found = c.execute('SELECT name FROM subjects WHERE id=?', (row['subject_id'],)).fetchone()
+        named = found['name'] if found else ''
+    return profiles.same_subject(row['course'], named, subject, subject) or (row['course'] or '') == subject
+
+
+def _active_course(c, student, subject):
+    for row in _person_rows(c, student):
+        if row['archived']:
+            continue
+        if 'voided' in row.keys() and int(row['voided'] or 0):
+            continue
+        if _row_matches(c, row, subject):
+            return row
+    return None
+
+
 def _target_student(c, source, choice):
-    row = c.execute('''SELECT * FROM students WHERE profile_id=? AND subject_id=(SELECT id FROM subjects WHERE name=?) AND archived=0 ORDER BY id LIMIT 1''',
-        (source['profile_id'], choice['subject'])).fetchone()
-    if row:
-        return row
-    archived = c.execute('''SELECT * FROM students WHERE profile_id=? AND subject_id=(SELECT id FROM subjects WHERE name=?) AND archived=1 ORDER BY id LIMIT 1''',
-        (source['profile_id'], choice['subject'])).fetchone()
-    if archived:
-        c.execute('UPDATE students SET archived=0, course_type_id=? WHERE id=?', (choice['type_id'], archived['id']))
-        return c.execute('SELECT * FROM students WHERE id=?', (archived['id'],)).fetchone()
+    source = _ensure_profile(c, source)
+    existing = _active_course(c, source, choice['subject'])
+    if existing:
+        c.execute('UPDATE students SET course_type_id=? WHERE id=? AND course_type_id IS NULL', (choice['type_id'], existing['id']))
+        return c.execute('SELECT * FROM students WHERE id=?', (existing['id'],)).fetchone()
     subject = c.execute('SELECT id FROM subjects WHERE name=?', (choice['subject'],)).fetchone()
     if not subject:
         raise ValueError(SUBJECT_REQUIRED)
+    clash = c.execute('''SELECT id FROM students WHERE profile_id=? AND course=? AND archived=0 AND IFNULL(voided,0)=0''',
+        (source['profile_id'], choice['subject'])).fetchone()
+    if clash:
+        return c.execute('SELECT * FROM students WHERE id=?', (clash['id'],)).fetchone()
     shown, _past = pricing.calendar_level(pricing.stored_level(dict(source)), now_local().date())
     study = choice['level'] if shown in pricing.LEVELS and pricing.LEVELS.index(choice['level']) > pricing.LEVELS.index(shown) else ''
-    sid = c.execute('''INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes,billing_unit,subject_id,course_type_id,level_code,level_year,study_level)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
-        source['name'], choice['subject'], source['parent_id'], source['profile_id'], source['birthday'], source['grade'],
-        source['notes'], source['billing_unit'] if 'billing_unit' in source.keys() else 'lesson', subject['id'], choice['type_id'],
-        source['level_code'] if 'level_code' in source.keys() else '', source['level_year'] if 'level_year' in source.keys() else 0, study)).lastrowid
+    try:
+        sid = c.execute('''INSERT INTO students(name,course,parent_id,profile_id,birthday,grade,notes,billing_unit,subject_id,course_type_id,level_code,level_year,study_level)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
+            source['name'], choice['subject'], source['parent_id'], source['profile_id'], source['birthday'], source['grade'],
+            source['notes'], source['billing_unit'] if 'billing_unit' in source.keys() else 'lesson', subject['id'], choice['type_id'],
+            source['level_code'] if 'level_code' in source.keys() else '', source['level_year'] if 'level_year' in source.keys() else 0, study)).lastrowid
+    except sqlite3.IntegrityError as exc:
+        raise ValueError('这名学生已经有一门同名的在读课，换课没有再开一门。请改选已有的那门课。') from exc
     return c.execute('SELECT * FROM students WHERE id=?', (sid,)).fetchone()
+
+
+def _follow_ids(c, source, target_subject):
+    """The course being switched, plus archived rows of that course or the destination, including a NULL profile."""
+    ids = []
+    for row in _person_rows(c, source):
+        if row['id'] == source['id'] or _row_matches(c, row, source['course']) or _row_matches(c, row, target_subject):
+            ids.append(row['id'])
+    return ids
 
 
 def quote_switch(c, user, data):
@@ -240,9 +312,16 @@ def apply_switch(c, user, data):
         raise ValueError('换课后的节数无效。')
     batch = c.execute('SELECT * FROM credit_batches WHERE id=?', (preview['batch_id'],)).fetchone()
     source = c.execute('SELECT * FROM students WHERE id=?', (batch['student_id'],)).fetchone()
+    source = _ensure_profile(c, source)
     choice = _choice(c, data, source)
+    leaving = int(batch['paid_left'] or 0) + int(batch['gift_left'] or 0)
+    if int(source['balance'] or 0) < leaving:
+        raise ValueError('这门课的余额少于课时包里剩下的课时，换课停住了。请先把余额和课时包核对一致。')
     auditlog.begin(c)
-    target = _target_student(c, source, choice)
+    try:
+        target = _target_student(c, source, choice)
+    except sqlite3.IntegrityError as exc:
+        raise ValueError('这名学生已经有一门同名的在读课，换课没有再开一门。请改选已有的那门课。') from exc
     day = now_local().date().isoformat()
     out_id = c.execute('''INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id)
         VALUES(?,0,'switch',?,?,?,?)''', (source['id'], day, '换课转出 ' + preview['old_label'], user['id'], uuid.uuid4().hex)).lastrowid
@@ -265,7 +344,9 @@ def apply_switch(c, user, data):
     import timeline
     timeline.record(c, user, source['id'], 'switch', f"换课 {source['course']} → {choice['subject']}")
     import profiles
-    profiles.move_future_lessons(c, source['id'], target['id'])
+    for sid in _follow_ids(c, source, choice['subject']):
+        if sid != target['id']:
+            profiles.move_future_lessons(c, sid, target['id'])
     auditlog.hint(c, f"换课：{source['name']} {preview['old_label']} → {label}，{preview['new_lessons']} 节，结余 {preview['leftover']}")
     audit_id = auditlog.finish(c, user)
     return {**preview, 'new_batch_id': new_id, 'target_student_id': target['id'], 'audit_id': audit_id}

@@ -177,7 +177,7 @@ async function renderPrices(){
    }
    return `20×1小时 $${(hour*20).toFixed(2)} · 20×1.5小时 $${(hour*30).toFixed(2)} · 另赠 1 节`;
   };
-  $('#surface').innerHTML=`<p class="mock-sub">2027 价目，不含 GST。价格按年级和课程类型锁定。一对一、一对二买 20 节赠 1 节；小班课按学期，不赠课。Prep 到 Year 6 的小班课是数学加英语，每节 2.5 小时，$45 / 小时。有效期可以先空着。</p><label class="field">课时包有效期（未定可留空）<input id="price-validity" maxlength="80" value="${escapeHTML(table.validity_note||'')}" placeholder="Helen 还没定"></label><button class="btn" id="save-validity" type="button">保存有效期</button>${rows.map(row=>`<article class="trow"><span class="pill">${labels[row.product]||row.product}</span><div class="grow">${escapeHTML(displayLevel(row.level_from))}–${escapeHTML(displayLevel(row.level_to))} · $${(row.hourly_cents/100).toFixed(2)} / 小时<small>${packNote(row)}</small></div><button class="btn" data-price-row="${row.id}" data-hourly="${row.hourly_cents/100}" type="button">改这一档</button></article>`).join('')}`;
+  $('#surface').innerHTML=`<p class="mock-sub">2027 价目，不含 GST。价格按年级和课程类型锁定。一对一、一对二买 20 节赠 1 节；小班课按学期，不赠课。Prep 到 Year 6 的小班课是数学 + 英语，每节 2.5 小时，$45 / 小时。有效期可以先空着。</p><label class="field">课时包有效期（未定可留空）<input id="price-validity" maxlength="80" value="${escapeHTML(table.validity_note||'')}" placeholder="Helen 还没定"></label><button class="btn" id="save-validity" type="button">保存有效期</button>${rows.map(row=>`<article class="trow"><span class="pill">${labels[row.product]||row.product}</span><div class="grow">${escapeHTML(displayLevel(row.level_from))}–${escapeHTML(displayLevel(row.level_to))} · $${(row.hourly_cents/100).toFixed(2)} / 小时<small>${packNote(row)}</small></div><button class="btn" data-price-row="${row.id}" data-hourly="${row.hourly_cents/100}" type="button">改这一档</button></article>`).join('')}`;
   $('#save-validity').onclick=async()=>{try{await api('prices/validity',{validity_note:$('#price-validity').value}); toast('有效期已保存。');}catch(error){toast(error.message);}};
   document.querySelectorAll('[data-price-row]').forEach(button=>button.onclick=()=>modal('修改这一档的时薪',`<p class="footnote">只改这一年级、这一课型。不含 GST。学生充值会按改后的价自动带出课时包。</p><label class="field">每小时 AUD<input name="hourly" type="number" min="0" step="0.01" value="${escapeHTML(button.dataset.hourly)}" required></label>`,'保存',async form=>{await api('prices/row',{id:Number(button.dataset.priceRow),hourly:form.hourly}); toast('这一档已保存。'); renderPrices();}));
  }catch(error){if(view==='prices') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`;}
@@ -197,9 +197,22 @@ async function renderMonth(){
   ['还剩的课时', ((data.outstanding_units||0)/100).toFixed(2)+' · '+money(data.outstanding_value_cents)],
   ['老师工资', money(data.teacher_pay_cents)],
   ['作废余额', ((data.forfeit_units||0)/100).toFixed(2)+' 课时'],
+  ['挂账应收', money(data.receivable_cents)],
  ];
  const problems=(data.exceptions||[]).map(item=>`<li>${escapeHTML(item)}</li>`).join('');
  $('#surface').innerHTML=`${backBar()}<div class="mock-top"><div><h1 class="mock-title">月度对账</h1><p class="mock-sub">${escapeHTML(data.month||month)}</p></div></div><div class="sums">${lines.map(([name,value])=>`<div class="card"><div class="k">${name}</div><div class="n">${value}</div></div>`).join('')}</div><section class="panel" style="margin-top:18px;padding:18px"><h2>对不上的</h2>${problems?`<ul>${problems}</ul>`:'<p class="muted">这个月对得上。</p>'}</section>`;
+ bindBack('/?view=finance');
+}
+async function renderReceivable(){
+ $('#surface').innerHTML='<div class="panel empty">正在读取挂账…</div>';
+ let data;
+ try{ data=await api('receivables'); }
+ catch(error){ if(view==='receivable') $('#surface').innerHTML=`<div class="error">${escapeHTML(error.message)}</div>`; return; }
+ if(view!=='receivable') return;
+ const money=cents=>typeof cashFmt==='function'?cashFmt(cents):'$'+((cents||0)/100).toFixed(2);
+ const rows=data.rows||[];
+ $('#surface').innerHTML=`${backBar()}<div class="mock-top"><div><h1 class="mock-title">挂账 / 欠款</h1><p class="mock-sub">还欠 ${money(data.owed_cents)}。课时已经可以用，这里的钱不是收入。</p></div></div>${rows.length?rows.map(row=>`<article class="trow"><div class="grow"><b>${userHTML(row.student_name)}</b> ${userHTML(row.course)}<small>${escapeHTML(row.pack_label)} · 从 ${escapeHTML(row.since||'')} 挂账</small></div><div class="num">还欠 ${money(row.owed_cents)}<small>总额 ${money(row.total_cents)} · 已收 ${money(row.paid_cents)}</small></div><button class="btn" type="button" data-collect-pack="${row.batch_id}" data-collect-student="${row.student_id}">收款</button></article>`).join(''):'<div class="panel empty">现在没有挂账。</div>'}`;
+ document.querySelectorAll('[data-collect-pack]').forEach(button=>button.onclick=()=>{ if(typeof collectPackModal==='function') collectPackModal(button.dataset.collectStudent, button.dataset.collectPack); });
  bindBack('/?view=finance');
 }
 async function renderFinance(){

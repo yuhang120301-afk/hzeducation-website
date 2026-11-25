@@ -422,6 +422,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200, pricing.list_prices(c, user))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/receivables':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    import receivables
+                    return self.response(200, {'rows': receivables.outstanding(c), 'owed_cents': receivables.total_owed(c)})
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path == '/api/reports/monthly':
             with connect() as c:
                 user=self.current(c)
@@ -662,6 +671,12 @@ class Handler(BaseHTTPRequestHandler):
                     else: result=vouchers.void(c,user,data.get('id'),units)
                     c.commit()
                     return self.response(200,result)
+                if self.path == '/api/packs/collect':
+                    import receivables
+                    c.execute('BEGIN IMMEDIATE')
+                    result = receivables.collect(c, user, data)
+                    c.commit()
+                    return self.response(200, result)
                 if self.path == '/api/students/course/switch/preview':
                     return self.response(200, switches.quote_switch(c, user, data))
                 if self.path == '/api/students/course/switch':
@@ -953,13 +968,18 @@ class Handler(BaseHTTPRequestHandler):
             note = str(data.get('note','')).strip()
             if len(note)>300:
                 raise ValueError('备注不能超过 300 个字。')
-            if kind in ('credit','refund'):
+            unpaid = kind=='credit' and str(data.get('payment_status') or 'paid') in ('unpaid', '挂账')
+            if kind in ('credit','refund') and not unpaid:
                 cents,method,reference=accounting.cash_details(data, c)
                 if kind=='credit' and method=='gift' and credit_batches.zero_units(data.get('amount'),units)>0:
                     raise ValueError('纯赠课请将付费课时填 0，并在赠送课时中填写数量。')
                 if kind=='refund':
                     note='退课退款：'+text_value(data.get('note'),'退款原因',250)
                 cash=(cents if kind=='credit' else -cents,method,reference)
+            elif unpaid:
+                if data.get('total_cents') in (None, ''):
+                    data['total_cents'] = accounting.money(data.get('cash_amount') or 0)
+                note = (note + ' · ' if note else '') + '挂账，课时先用，钱还没到'
         student = c.execute('SELECT * FROM students WHERE id=?',(sid,)).fetchone()
         if not student:
             raise ValueError('学生不存在。')
@@ -970,6 +990,9 @@ class Handler(BaseHTTPRequestHandler):
         lid=c.execute('INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id,reversal_of) VALUES(?,?,?,?,?,?,?,?)',(sid,delta,kind,day,note,user['id'],request_id,reversal_of)).lastrowid
         breakdown=credit_batches.apply(c,lid,kind,data,units,original if reversal_of else None)
         if cash:accounting.record_cash(c,lid,*cash,user['id'])
+        elif kind=='credit' and str(data.get('payment_status') or 'paid') in ('unpaid', '挂账'):
+            import receivables
+            receivables.open_on_ledger(c, lid)
         import vouchers
         if reversal_of:
             vouchers.attach_reversal(c,user,reversal_of,lid)
@@ -977,7 +1000,7 @@ class Handler(BaseHTTPRequestHandler):
             vouchers.issue_ledger(c,user,lid)
         if kind=='credit' and not reversal_of:
             import timeline
-            timeline.record(c, user, sid, 'top_up', f"充值 {student['course']}")
+            timeline.record(c, user, sid, 'top_up', '挂账充值，钱还没到' if unpaid else f"充值 {student['course']}")
         c.commit()
         return self.response(201,{'ok':True,**breakdown})
 
