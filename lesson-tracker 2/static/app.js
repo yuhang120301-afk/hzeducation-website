@@ -189,11 +189,20 @@ function studyLevelSelect(current){const chosen=current||'';return `<label class
 function bookableStudents(extra){const ids=new Set((extra||[]).map(id=>String(id)));return (state.students||[]).filter(s=>ids.has(String(s.id))||!s.archived);}
 function lessonStudentHint(s){if(!s||s.archived) return '';if(s.no_course) return '还没有课程，不能扣课';if((s.study_status||'studying')==='graduated') return '已毕业';return '';}
 function parentCards(){return `<section class="child-cards">${state.students.length?studentGroups().map(group=>{const s=group[0];const empty=group.every(account=>account.no_course);const packs=group.flatMap(account=>account.credit_batches||[]).filter(batch=>batch.pack_label||batch.total_cents!=null);return `<article class="child-card"><div class="child-top"><span class="student-icon">${userHTML(nameInitial(s.name))}</span><div><h2>${userHTML(s.name)} ${studyTag(s)}</h2><p>${userHTML(shownLevel(s)||s.grade||'')} · ${empty?'未选课':'各科余额独立计算'}</p></div></div>${empty?'<p class="muted">还没有在读的课。</p>':group.map(account=>`<section class="child-course"><h3>${userHTML(shownLevel(account))} ${userHTML(account.subject_name||account.course)} ${typeof typeBadge==='function'?typeBadge(account.course_type_name):''}</h3><div class="child-balance"><div><strong>${(account.billing_unit||'lesson')==='hour'?`剩余 ${fmt(regularHours(account))} 小时`:`剩余 ${fmt(regularHours(account))} 节`}</strong><span class="credit-split">赠送${unitFor(account)} ${fmt(account.gift_balance||0)}</span></div></div>${(account.credit_batches||[]).filter(batch=>batch.total_cents!=null||batch.pack_label).map(batch=>`<p class="pack-now">${escapeHTML(batch.pack_label||'课时包')}${batch.total_cents!=null?` · ${typeof cashFmt==='function'?cashFmt(batch.total_cents):'$'+(batch.total_cents/100).toFixed(2)}`:''}</p>`).join('')}</section>`).join('')}${packs.length?'':''}</article>`;}).join(''):'<div class="panel empty">还没有关联的学生，请联系老师。</div>'}</section>`;}
+/* studentGroupById:start */
 function studentGroups(){
  const groups=new Map();
  state.students.forEach(s=>{const key=s.profile_id||s.id;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(s);});
  return [...groups.values()];
 }
+function studentGroupById(id){
+ const key=String(id);
+ const groups=studentGroups();
+ const byEnrolment=groups.find(group=>group.some(student=>String(student.id)===key));
+ if(byEnrolment) return byEnrolment;
+ return groups.find(group=>group.some(student=>String(student.profile_id)===key))||null;
+}
+/* studentGroupById:end */
 function studentToneName(name){
  if(typeof teacherTone==='function') return teacherTone(name);
  const n=(name||'').toLowerCase();
@@ -276,7 +285,7 @@ function bindProfileSections(){
  });
 }
 function profileLessonIds(id){
- const group=studentGroups().find(item=>item.some(student=>String(student.id)===String(id)||String(student.profile_id)===String(id)));
+ const group=studentGroupById(id);
  const person=group?group[0]:null;
  const stopped=person?(state.archived_students||[]).filter(account=>account.profile_id===person.profile_id):[];
  const ids=new Set((group||[]).map(account=>String(account.id)).concat(stopped.map(account=>String(account.id))));
@@ -362,7 +371,7 @@ function yearLevelFolds(groups, searching){
  return [...buckets.values()].sort((a,b)=>a.rank-b.rank||a.label.localeCompare(b.label,'en')).map(section=>`<details class="year-fold"${searching?' open':''}><summary><span class="year-fold-chevron" aria-hidden="true"></span><span class="year-fold-label">${escapeHTML(section.label)}</span><span class="year-fold-count">${section.groups.length} 位</span></summary><div class="year-fold-students">${section.groups.map(group=>studentListCard(group, true)).join('')}</div></details>`).join('');
 }
 function renderStudentProfile(){
- const group=studentGroups().find(item=>item.some(student=>String(student.id)===String(profileId)||String(student.profile_id)===String(profileId)));
+ const group=studentGroupById(profileId);
  const admin=['owner','admin'].includes(state.user.role);
  if(!group){$('#surface').innerHTML=`${backBar()}<div class="panel empty">找不到这位学生。</div>`; bindBack('/?view=overview'); return;}
  $('#surface').innerHTML=`${backBar()}${studentFold(group, admin)}`;
