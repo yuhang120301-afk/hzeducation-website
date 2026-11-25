@@ -19,9 +19,10 @@ import accounting
 from teaching import SINGAPORE_SUBJECT, AccessError, now_local
 
 SEED_KEY = 'pay_seed_v1'
+HELEN_PAY_KEY = 'helen_pay_40_v1'
 # Name fragment, rule type, percent in basis points, hourly floor cents or None.
 SEED_RULES = (
-    ('helen', 'percent', 0, None),
+    ('helen', 'percent', 4000, None),
     ('angela', 'percent', 4000, 3500),
     ('kelsey', 'percent', 4000, None),
     ('ethan', 'percent', 4000, None),
@@ -92,6 +93,7 @@ def schema(c):
         if 'shared' not in {r['name'] for r in c.execute(f'PRAGMA table_info({table})')}:
             c.execute(f'ALTER TABLE {table} ADD COLUMN shared INTEGER NOT NULL DEFAULT 0')
     seed_if_needed(c)
+    apply_helen_percent(c)
 
 
 def seed_if_needed(c):
@@ -114,6 +116,23 @@ def seed_if_needed(c):
             c.execute('''INSERT INTO partner_share_rules(teacher_id,percent_bp,effective_from,note,created_by)
                 VALUES(?,?,?,?,?)''', (vincent, 3000, '2000-01-01', '新学生课酬减去共同成本后的分成', actor_id))
     c.execute('INSERT INTO app_meta(key,value) VALUES(?,?)', (SEED_KEY, '1'))
+
+
+def apply_helen_percent(c):
+    """One-time: Helen's existing 0% rule becomes 40%. A later edit is left alone."""
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_meta'").fetchone():
+        return
+    if c.execute('SELECT 1 FROM app_meta WHERE key=?', (HELEN_PAY_KEY,)).fetchone():
+        return
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pay_rules'").fetchone():
+        rows = c.execute('''SELECT r.id FROM pay_rules r
+            JOIN teachers t ON t.id=r.teacher_id
+            JOIN users u ON u.id=t.user_id
+            WHERE r.rule_type='percent' AND IFNULL(r.percent_bp, 0)=0
+              AND instr(lower(u.name), 'helen')>0''').fetchall()
+        for row in rows:
+            c.execute('UPDATE pay_rules SET percent_bp=4000 WHERE id=?', (row['id'],))
+    c.execute('INSERT INTO app_meta(key,value) VALUES(?,?)', (HELEN_PAY_KEY, '1'))
 
 
 def require_owner(user):
@@ -332,19 +351,24 @@ def build_lessons(c, rows, rules_by_teacher):
         item['unknown_fee_count'] = sum(1 for line in item['lines'] if not line['fee_known'])
         item['rule'] = public_rule(rule)
         floor_cents = mul_div(rule['hourly_floor_cents'], item['minutes'], 60) if rule and rule['hourly_floor_cents'] else 0
-        boss_singapore = item.get('subject_name') == SINGAPORE_SUBJECT and item['teacher_id'] in owner_teachers
-        if item['course_type_name'] == '小班课' and item['fee_known'] and not boss_singapore:
+        warnings = [line['student_name'] for line in item['lines'] if not line['fee_known']]
+        item['warnings'] = warnings
+        percent_bp = int(rule['percent_bp'] or 0) if rule and rule['rule_type'] == 'percent' else 0
+        if item['course_type_name'] == '小班课' and rule and rule['rule_type'] == 'percent':
             percent_cents = 0
             for line in item['lines']:
+                if not line['fee_known']:
+                    continue
                 millis = line['fee_millis'] if line['fee_millis'] is not None else (line['fee_cents'] or 0) * 10
-                percent_cents += (int(millis) * 4000 + 50000) // 100000
+                percent_cents += (int(millis) * percent_bp + 50000) // 100000
             if floor_cents > percent_cents:
                 pay, basis = floor_cents, 'floor'
             else:
                 pay, basis = percent_cents, 'percent'
         else:
-            pay, basis = lesson_pay(rule, item['minutes'], item['fee_cents'])
-            percent_cents = mul_div(item['fee_cents'], rule['percent_bp'] or 0, 10000) if rule and rule['rule_type'] == 'percent' else 0
+            known_fee = sum(line['fee_cents'] or 0 for line in item['lines'] if line['fee_known'])
+            pay, basis = lesson_pay(rule, item['minutes'], known_fee)
+            percent_cents = mul_div(known_fee, percent_bp, 10000) if rule and rule['rule_type'] == 'percent' else 0
         item['pay_cents'] = pay
         item['pay_basis'] = basis
         item['share_bp'] = rule['percent_bp'] if rule and rule['rule_type'] == 'percent' else None

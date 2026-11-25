@@ -35,7 +35,7 @@ SEED_ROWS = (
     ('one_to_two', 'Y12', 'Y12', 10000, 60),
     ('helen', 'K', 'Y10', 12000, 60),
     ('helen', 'Y11', 'Y12', 15000, 60),
-    ('term', 'K', 'Y6', 4500, 150),
+    ('term', 'Prep', 'Y6', 4500, 150),
     ('term', 'Y7', 'Y8', 5000, 120),
     ('term', 'Y9', 'Y10', 6000, 120),
     ('term', 'Y11', 'Y12', 7500, 120),
@@ -88,6 +88,35 @@ def schema(c):
         c.execute("ALTER TABLE price_tables ADD COLUMN validity_note TEXT NOT NULL DEFAULT ''")
     publish_seed(c)
     ensure_subject_prices(c)
+    ensure_combo_price(c)
+
+
+def product_for(c, type_name):
+    """The price product stored on the course type. A blank type has no price yet."""
+    if c is not None and type_name:
+        row = c.execute('SELECT product FROM course_types WHERE name=?', (type_name,)).fetchone()
+        if row is not None:
+            return row['product'] or ''
+    return TYPE_PRODUCT.get(type_name or '', '')
+
+
+def ensure_combo_price(c):
+    """Primary 小班课 is 数学加英语: Prep–Year 6, $45/hour, 2.5 hours.
+
+    The 2027 seed already stores that as the term band. Older databases still have
+    the same rate from K, so narrow that one row. Never insert a second product.
+    The flag is written even when the price table does not exist yet, so a later
+    initialize() does not add a row.
+    """
+    if c.execute("SELECT 1 FROM app_meta WHERE key='combo_price_v1'").fetchone():
+        return
+    table = c.execute("SELECT id FROM price_tables WHERE effective_from='2027-01-01'").fetchone()
+    if table:
+        c.execute('''UPDATE price_rows SET level_from='Prep'
+            WHERE table_id=? AND product='term' AND level_from='K' AND level_to='Y6'
+              AND hourly_cents=? AND lesson_minutes=?''',
+            (table['id'], COMBO_HOURLY_CENTS, COMBO_MINUTES))
+    c.execute("INSERT INTO app_meta(key,value) VALUES('combo_price_v1','1')")
 
 
 def seed_2027(c):
@@ -122,6 +151,12 @@ def publish_seed(c):
 
 
 TYPE_PRODUCT = {'一对一': 'one_to_one', '一对二': 'one_to_two', '小班课': 'term'}
+COMBO_SUBJECT = '数学加英语'
+COMBO_PRODUCT = 'term'
+COMBO_LEVEL = 'Prep'
+COMBO_HOURLY_CENTS = 4500
+COMBO_MINUTES = 150
+PRIMARY_CLASS_LEVELS = ('Prep', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6')
 LEGACY_SUBJECTS = ('数学', '英语')
 SUBJECT_PRICE_KEY = 'legacy_subject_prices_v1'
 SINGAPORE_LEVELS = ('Y7', 'Y8', 'Y9', 'Y10')
@@ -178,6 +213,8 @@ def canonical_subject(text):
     named = teaching.vce_subject(raw) or teaching.singapore_subject(raw)
     if named:
         return named
+    if '数学加英语' in raw or raw.casefold() in ('maths and english', 'math and english'):
+        return COMBO_SUBJECT
     if '数学' in raw:
         return '数学'
     if '英语' in raw:
@@ -333,6 +370,75 @@ def singapore_offer(student, level, name, validity):
         'validity': validity, 'source': 'custom' if override is not None else 'catalog', 'reason': ''}
 
 
+def align_primary_class(subject_name, type_name, level):
+    """Prep–Year 6 小班课 is 数学加英语. Year 7+ 小班课 stays a single subject."""
+    subject = str(subject_name or '')
+    kind = str(type_name or '')
+    year = str(level or '')
+    primary = year in PRIMARY_CLASS_LEVELS
+    if subject == COMBO_SUBJECT:
+        if year and not primary:
+            raise ValueError('数学加英语只开到 Year 6。')
+        if kind and kind != '小班课':
+            raise ValueError('数学加英语是小班课。')
+        return COMBO_SUBJECT
+    if kind == '小班课' and primary and subject in ('', '数学', '英语'):
+        return COMBO_SUBJECT
+    return subject
+
+
+def apply_primary_class(c, course, subject_id, type_id, type_name, level):
+    """Map a primary 小班课 enrolment onto 数学加英语. Leave Year 7+ classes alone."""
+    mapped = align_primary_class(course, type_name, level)
+    if mapped == course:
+        return course, subject_id, type_id
+    found = c.execute('SELECT id FROM subjects WHERE name=? AND active=1', (mapped,)).fetchone()
+    if not found:
+        raise ValueError('请先启用数学加英语。')
+    small = c.execute("SELECT id FROM course_types WHERE name='小班课' AND active=1").fetchone()
+    return mapped, found['id'], (small['id'] if small else type_id)
+
+
+def term_packages(display, band):
+    """学期班 packages: one term, a pair, or the whole year, with the class discounts."""
+    minutes = int(band['lesson_minutes'] or 150)
+    packages = []
+    choices = [(['T1'], 'T1'), (['T2'], 'T2'), (['T3'], 'T3'), (['T4'], 'T4'),
+        (['T1', 'T2'], 'T1+T2'), (['T3', 'T4'], 'T3+T4'), (list(TERM_COUNTS), '四个学期')]
+    for terms, label in choices:
+        paid = sum(TERM_COUNTS[term] for term in terms)
+        each = per_lesson_cents(band['hourly_cents'], minutes)
+        discount = discount_percent(terms)
+        total = apply_discount(each * paid, discount)
+        prices = lesson_prices_millis(total, paid)
+        off = f' · {100 - discount}%' if discount else ''
+        packages.append({'label': f'{display} {label}{off} · {length_label(minutes)} · {money_millis(total * 10)} · 每节 {money_millis(prices[0])}',
+            'paid_lessons': paid, 'gift_lessons': 0, 'lesson_minutes': minutes, 'total_cents': total,
+            'each_millis': prices[0], 'unit_fees': prices, 'terms': terms, 'product': 'term',
+            'discount_percent': discount, 'validity': '按所选学期'})
+    return packages
+
+
+def combo_offer(c, student, level, name, product, validity, on):
+    """数学加英语 is the Prep–Year 6 小班课. It uses the term price, not a private pack."""
+    stored = stored_level(dict(student)) if student else str(level or '')
+    if not name:
+        return _empty_offer(stored, name, product, validity, '请先选择年级和课程类型。')
+    if stored and stored not in PRIMARY_CLASS_LEVELS:
+        return _empty_offer(stored, name, 'term', validity, '数学加英语只开到 Year 6。')
+    if name != '小班课':
+        return _empty_offer(stored, name, 'term', validity, '数学加英语是小班课。')
+    table = table_on(c, on.isoformat())
+    rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+    band = matching_row(rows, 'term', stored or COMBO_LEVEL)
+    if not band:
+        return _empty_offer(stored, name, 'term', validity, '这个年级还没有价目。')
+    return {'level': stored, 'course_type': name, 'product': 'term', 'product_label': name,
+        'hourly_cents': int(band['hourly_cents']), 'lesson_minutes': int(band['lesson_minutes'] or COMBO_MINUTES),
+        'packages': term_packages(COMBO_SUBJECT, band),
+        'validity': validity, 'source': 'catalog', 'reason': ''}
+
+
 def presets(c, user, student_id=None, level=None, course_type_id=None, day=None, subject_id=None):
     """Packages that match one year level and one course type. Helen's own rate is never included.
 
@@ -353,7 +459,7 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
     if course_type_id:
         kind = c.execute('SELECT name FROM course_types WHERE id=?', (int(course_type_id),)).fetchone()
         name = kind['name'] if kind else ''
-    product = TYPE_PRODUCT.get(name)
+    product = product_for(c, name)
     subject_name = subject_of(c, student) if student else ''
     if not subject_name and subject_id:
         found = c.execute('SELECT name FROM subjects WHERE id=?', (int(subject_id),)).fetchone()
@@ -364,6 +470,12 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
         validity = table['validity_note'] or ''
     if teaching.singapore_subject(subject_name):
         return singapore_offer(student, stored_level(dict(student)) if student else level, name, validity)
+    if subject_name == COMBO_SUBJECT:
+        return combo_offer(c, student, level, name, product, validity, on)
+    if subject_name in ('数学', '英语') and product == 'term' and str(level or '') in PRIMARY_CLASS_LEVELS:
+        return _empty_offer(level, name, product, validity, '小学小班课是数学加英语。数学或英语请选一对一或一对二。')
+    if name and not product:
+        return _empty_offer(level, name, '', validity, '还没有价格')
     if not level or not product:
         return {'level': level or '', 'course_type': name, 'product': product, 'hourly_cents': None,
             'packages': [], 'validity': validity, 'source': '', 'reason': '请先选择年级和课程类型。'}
@@ -375,19 +487,8 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
     packages = []
     if product == 'term':
         minutes = int(band['lesson_minutes'] or 150)
-        choices = [(['T1'], 'T1'), (['T2'], 'T2'), (['T3'], 'T3'), (['T4'], 'T4'),
-            (['T1', 'T2'], 'T1+T2'), (['T3', 'T4'], 'T3+T4'), (list(TERM_COUNTS), '四个学期')]
-        for terms, label in choices:
-            paid = sum(TERM_COUNTS[term] for term in terms)
-            each = per_lesson_cents(band['hourly_cents'], minutes)
-            discount = discount_percent(terms)
-            total = apply_discount(each * paid, discount)
-            prices = lesson_prices_millis(total, paid)
-            off = f' · {100 - discount}%' if discount else ''
-            packages.append({'label': f'{name} {label}{off} · {length_label(minutes)} · {money_millis(total * 10)} · 每节 {money_millis(prices[0])}',
-                'paid_lessons': paid, 'gift_lessons': 0, 'lesson_minutes': minutes, 'total_cents': total,
-                'each_millis': prices[0], 'unit_fees': prices, 'terms': terms, 'product': product,
-                'discount_percent': discount, 'validity': '按所选学期'})
+        display = COMBO_SUBJECT if str(level or '') in PRIMARY_CLASS_LEVELS else name
+        packages = term_packages(display, band)
     else:
         for minutes in (60, 90):
             each = per_lesson_cents(band['hourly_cents'], minutes)
@@ -477,6 +578,29 @@ def legacy_price(c, student, on=None):
         'product': product, 'subject': subject, 'level': level, 'course_type': name}
 
 
+def price_for(c, student, day=None):
+    """Hourly cents for one course on one day. A saved rate wins, then that course's catalog price."""
+    on = day or now_local().date()
+    if isinstance(on, str):
+        on = dt.date.fromisoformat(str(on)[:10])
+    subject = subject_of(c, student)
+    override = enrolment_hourly(student)
+    if subject == COMBO_SUBJECT:
+        if override is not None:
+            return override
+        level = stored_level(dict(student)) or COMBO_LEVEL
+        if level not in PRIMARY_CLASS_LEVELS:
+            return None
+        table = table_on(c, on.isoformat())
+        rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+        band = matching_row(rows, 'term', level)
+        return band['hourly_cents'] if band else None
+    info = legacy_price(c, student, on)
+    if info.get('custom_hourly_cents') is not None:
+        return info['custom_hourly_cents']
+    return info.get('list_hourly_cents')
+
+
 def save_legacy_price(c, user, data):
     require_owner(user)
     import accounting
@@ -533,8 +657,7 @@ def charged_fee_cents(c, student_id, lesson, amount_units):
         LEFT JOIN subjects sb ON sb.id=s.subject_id WHERE s.id=?''', (student_id,)).fetchone()
     if not student:
         return None
-    info = legacy_price(c, student)
-    hourly = info['custom_hourly_cents'] if info['custom_hourly_cents'] is not None else info['list_hourly_cents']
+    hourly = price_for(c, student, (lesson.get('starts_at') or '')[:10] or None)
     if hourly is None:
         return None
     start = dt.datetime.fromisoformat(lesson['starts_at'])
@@ -694,13 +817,15 @@ def annotate(student, on=None):
 
 
 def remember_level(data, grade, today=None):
-    """The value in the form is the 2027 year. Later years are calculated, not stored."""
+    """The form asks for this year's level. Store the 2027 code, shifted back."""
+    today = today or now_local().date()
     code = str(data.get('level_code') or '').strip() or parse_level(grade)
     if code and code not in LEVELS:
         raise ValueError('请选择年级。')
-    if not code:
-        return '', 0
-    return code, ENROL_YEAR
+    if not code or code == 'K':
+        return code, ENROL_YEAR if code else 0
+    stored, _past = move_level(code, ENROL_YEAR - today.year)
+    return stored, ENROL_YEAR
 
 
 def clean_study_level(value):

@@ -55,6 +55,15 @@ def schema(c):
         actor_id INTEGER NOT NULL REFERENCES users(id), payload TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
+    CREATE TABLE IF NOT EXISTS arrears (
+        id INTEGER PRIMARY KEY,
+        student_id INTEGER NOT NULL REFERENCES students(id),
+        lesson_id INTEGER,
+        amount INTEGER NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        settled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
     CREATE INDEX IF NOT EXISTS lesson_time ON lessons(teacher_id,starts_at,ends_at);
     CREATE INDEX IF NOT EXISTS enrollment_student ON lesson_students(student_id,lesson_id);
     ''')
@@ -89,7 +98,8 @@ DEFAULT_COURSE_TYPES = ('一对一', '一对二', '小班课')
 DEFAULT_SUBJECTS = ('数学', '英语', '科学', '物理', '化学', '中文', '写作', '高数', '中数')
 VCE_SUBJECTS = ('VCE 中数', 'VCE 低数', 'VCE 高数')
 SINGAPORE_SUBJECT = '新加坡数学'
-OFFERED_SUBJECTS = ('数学', '英语', *VCE_SUBJECTS, SINGAPORE_SUBJECT)
+COMBO_SUBJECT = '数学加英语'
+OFFERED_SUBJECTS = ('数学', '英语', *VCE_SUBJECTS, SINGAPORE_SUBJECT, COMBO_SUBJECT)
 OFFERED_TYPES = ('一对一', '一对二', '小班课')
 TYPE_ALIASES = {
     '一对一': '一对一', '1:1': '一对一', '1：1': '一对一', 'one': '一对一', 'one_to_one': '一对一',
@@ -108,6 +118,7 @@ SUBJECT_ALIASES = {
     'general mathematics': 'VCE 低数', 'specialist mathematics': 'VCE 高数',
     '新加坡数学': '新加坡数学',
     'singapore maths': '新加坡数学', 'singapore math': '新加坡数学', 'singapore mathematics': '新加坡数学',
+    '数学加英语': '数学加英语', 'maths and english': '数学加英语', 'math and english': '数学加英语',
 }
 # Longer English names first, so "math methods" is not swallowed by the generic "math" prefix.
 VCE_ALIASES = (
@@ -253,6 +264,8 @@ def ensure_catalogs(c):
     refocus_catalog(c)
     activate_vce_subjects(c)
     activate_singapore_maths(c)
+    activate_combo_subject(c)
+    ensure_type_products(c)
 
 
 def focus_catalog(c):
@@ -322,6 +335,42 @@ def activate_singapore_maths(c):
         c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (SINGAPORE_SUBJECT,))
         c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (SINGAPORE_SUBJECT,))
     c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_singapore_maths_v1', '1')")
+
+
+def activate_combo_subject(c):
+    """Add 数学加英语 as one subject. It keeps its own price and is not 数学 plus 英语."""
+    if c.execute("SELECT 1 FROM app_meta WHERE key='catalog_combo_v1'").fetchone():
+        return
+    sort = (OFFERED_SUBJECTS.index(COMBO_SUBJECT) + 1) * 10
+    c.execute('INSERT OR IGNORE INTO subjects(name, sort_order, active) VALUES(?,?,1)', (COMBO_SUBJECT, sort))
+    c.execute('UPDATE subjects SET active=1 WHERE name=?', (COMBO_SUBJECT,))
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
+        c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (COMBO_SUBJECT,))
+        c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (COMBO_SUBJECT,))
+    c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_combo_v1', '1')")
+
+
+def ensure_type_products(c):
+    """Each course type points at a price product. A new type stays blank until one is set."""
+    _add_column(c, 'course_types', 'product', "product TEXT NOT NULL DEFAULT ''")
+    for name, product in (('一对一', 'one_to_one'), ('一对二', 'one_to_two'), ('小班课', 'term')):
+        c.execute("UPDATE course_types SET product=? WHERE name=? AND product=''", (product, name))
+
+
+def courses_match_lesson(c, student_ids, subject_id, type_id):
+    """The lesson subject comes from the chosen courses. A different subject is refused."""
+    subjects = []
+    for sid in student_ids:
+        row = c.execute('SELECT subject_id FROM students WHERE id=?', (sid,)).fetchone()
+        if row and row['subject_id']:
+            subjects.append(row['subject_id'])
+    if len(set(subjects)) > 1:
+        raise ValueError('请选择同一科目的课程。')
+    if subjects:
+        if subject_id and int(subject_id) != int(subjects[0]):
+            raise ValueError('这节课的科目和所选课程不一致。')
+        subject_id = subjects[0]
+    return type_id, subject_id
 
 
 def _id_by_name(c, table, name):
@@ -681,6 +730,23 @@ def save_lesson(c,user,data,units,text_value):
             raise ValueError('学生已归档，请先恢复档案再排课。')
         if c.execute("SELECT 1 FROM lesson_students ls JOIN lessons l ON ls.lesson_id=l.id JOIN students enrolled ON enrolled.id=ls.student_id WHERE enrolled.profile_id=(SELECT profile_id FROM students WHERE id=?) AND l.status!='cancelled' AND l.id!=? AND l.starts_at<? AND l.ends_at>?",(sid,lesson_id,end,start)).fetchone():
             raise ValueError(student['name']+'在该时段已有课程。')
+    type_id, subject_id = courses_match_lesson(c, members, subject_id, type_id)
+    type_name = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone() if type_id else type_name
+    subject_name = c.execute('SELECT name FROM subjects WHERE id=?', (subject_id,)).fetchone() if subject_id else None
+    if subject_name and type_name:
+        import pricing
+        for sid in members:
+            enrolled = c.execute('SELECT level_code FROM students WHERE id=?', (sid,)).fetchone()
+            year = enrolled['level_code'] if enrolled and 'level_code' in enrolled.keys() else ''
+            mapped = pricing.align_primary_class(subject_name['name'], type_name['name'], year)
+            if mapped != subject_name['name']:
+                raise ValueError('小学小班课是数学加英语，不能单独排数学或英语。')
+    if subject_name and subject_name['name'] == SINGAPORE_SUBJECT:
+        if not type_name or type_name['name'] not in ('一对一', '小班课'):
+            raise ValueError('新加坡数学只有一对一和小班课。')
+        boss = c.execute('''SELECT 1 FROM teachers t JOIN organization_owners o ON o.user_id=t.user_id WHERE t.id=?''', (teacher_id,)).fetchone()
+        if not boss:
+            raise ValueError('新加坡数学只由 Helen 授课。')
     if lesson_id:
         if old['status']!='scheduled':
             c.execute('INSERT INTO report_edits(lesson_id,actor_id,payload) VALUES(?,?,?)',(lesson_id,user['id'],json.dumps({'action':'owner_schedule_correction','before':dict(old),'after':data},ensure_ascii=False)))
@@ -715,14 +781,18 @@ def cancel_lesson(c,user,data,text_value):
     reason=str(data.get('reason') or '').strip()
     if len(reason)>250:
         raise ValueError('取消原因不能超过 250 个字。')
+    import auditlog
+    auditlog.begin(c)
     c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",(reason,lesson['id']))
     if scope=='future':
         c.execute("UPDATE lessons SET status='cancelled',cancel_reason=?,version=version+1 WHERE series_id=? AND occurrence_index>? AND status='scheduled'",(reason,lesson['series_id'],lesson['occurrence_index']))
         c.execute("UPDATE lesson_series SET stop_index=MIN(COALESCE(stop_index,?),?),error='',version=version+1 WHERE id=?",(lesson['occurrence_index'],lesson['occurrence_index'],lesson['series_id']))
     elif lesson['series_id']:
         c.execute('UPDATE lesson_series SET version=version+1 WHERE id=?',(lesson['series_id'],))
-    if not data.get('waive_leave'):
+    if data.get('charge') is True:
         apply_late_leave(c, lesson)
+    auditlog.hint(c, '取消课程' + ('并扣课时' if data.get('charge') is True else ''))
+    auditlog.finish(c, user)
     return {'ok':True}
 
 def _absence_columns(c):
@@ -835,15 +905,6 @@ def apply_late_leave(c, lesson):
     gap = (start - now).total_seconds()
     if gap <= 0 or gap > 48 * 3600:
         return
-    c.execute('''CREATE TABLE IF NOT EXISTS arrears (
-        id INTEGER PRIMARY KEY,
-        student_id INTEGER NOT NULL REFERENCES students(id),
-        lesson_id INTEGER,
-        amount INTEGER NOT NULL,
-        reason TEXT NOT NULL DEFAULT '',
-        settled INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    )''')
     import credit_batches
     for row in c.execute('SELECT student_id FROM lesson_students WHERE lesson_id=?', (lesson['id'],)):
         student = c.execute('SELECT balance, billing_unit FROM students WHERE id=?', (row['student_id'],)).fetchone()

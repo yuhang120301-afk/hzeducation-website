@@ -10,9 +10,9 @@ import uuid
 import auditlog
 import credit_batches
 import pricing
-from teaching import AccessError, OFFERED_SUBJECTS, now_local
+from teaching import AccessError, now_local
 
-SUBJECT_REQUIRED = '请选择数学、英语、VCE 中数、VCE 低数、VCE 高数或新加坡数学。'
+SUBJECT_REQUIRED = '请选择已启用的科目。'
 
 
 def schema(c):
@@ -92,6 +92,15 @@ def _each_millis(c, student, product, subject, minutes, level, manual):
         if hourly is None:
             raise ValueError('新加坡数学还没有价格。')
         return pricing.per_lesson_cents(hourly, int(minutes)) * 10, source
+    if subject == pricing.COMBO_SUBJECT:
+        if str(level) not in pricing.PRIMARY_CLASS_LEVELS:
+            raise ValueError('数学加英语只开到 Year 6。')
+        table = pricing.table_on(c, now_local().date().isoformat())
+        rows = [dict(row) for row in c.execute('SELECT * FROM price_rows WHERE table_id=?', (table['id'],))] if table else []
+        band = pricing.matching_row(rows, 'term', str(level))
+        if not band:
+            raise ValueError('这个年级还没有价目。')
+        return pricing.per_lesson_cents(band['hourly_cents'], int(band['lesson_minutes'] or pricing.COMBO_MINUTES)) * 10, 'catalog'
     custom = pricing.subject_lesson_cents(c, student['profile_id'], product, subject, int(minutes))
     if custom is not None:
         return int(custom) * 10, 'custom'
@@ -105,19 +114,22 @@ def _each_millis(c, student, product, subject, minutes, level, manual):
 
 def _choice(c, data, student):
     subject = str(data.get('subject') or '').strip()
-    if subject not in OFFERED_SUBJECTS:
+    if not c.execute('SELECT 1 FROM subjects WHERE name=? AND active=1', (subject,)).fetchone():
         raise ValueError(SUBJECT_REQUIRED)
     type_id = int(data.get('course_type_id') or 0)
-    kind = c.execute('SELECT id, name FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone()
+    kind = c.execute('SELECT id, name, product FROM course_types WHERE id=? AND active=1', (type_id,)).fetchone()
     if not kind:
         raise ValueError('请选择课程类型。')
-    product = pricing.TYPE_PRODUCT.get(kind['name'])
+    product = kind['product'] if 'product' in kind.keys() else ''
     if not product:
-        raise ValueError('请选择课程类型。')
+        raise ValueError('还没有价格')
     level = str(data.get('level') or '').strip()
     if level not in pricing.LEVELS:
         raise ValueError('请选择年级。')
+    subject = pricing.align_primary_class(subject, kind['name'], level)
     minutes = int(data.get('lesson_minutes') or 0)
+    if subject == pricing.COMBO_SUBJECT:
+        minutes = pricing.COMBO_MINUTES
     import teaching
     if teaching.singapore_subject(subject):
         if kind['name'] not in pricing.SINGAPORE_TYPES:
@@ -186,7 +198,7 @@ def quote_switch(c, user, data):
     fees, total_units = _fees(batch)
     remaining = _remaining_millis(fees, total_units, left)
     if remaining is None:
-        product = pricing.TYPE_PRODUCT.get(_type_name(c, student), '')
+        product = pricing.product_for(c, _type_name(c, student))
         level = pricing.annotate(dict(student))['level_price']
         if not product or not level:
             raise ValueError('这个课时包没有可换算的金额。')
@@ -252,6 +264,8 @@ def apply_switch(c, user, data):
     c.execute('UPDATE credit_batches SET switched_to=? WHERE id=?', (new_id, batch['id']))
     import timeline
     timeline.record(c, user, source['id'], 'switch', f"换课 {source['course']} → {choice['subject']}")
+    import profiles
+    profiles.move_future_lessons(c, source['id'], target['id'])
     auditlog.hint(c, f"换课：{source['name']} {preview['old_label']} → {label}，{preview['new_lessons']} 节，结余 {preview['leftover']}")
     audit_id = auditlog.finish(c, user)
     return {**preview, 'new_batch_id': new_id, 'target_student_id': target['id'], 'audit_id': audit_id}

@@ -65,12 +65,12 @@ class PackTests(unittest.TestCase):
             old_methods = c.execute("SELECT active FROM subjects WHERE name='中数'").fetchone()
             old_specialist = c.execute("SELECT active FROM subjects WHERE name='高数'").fetchone()
             courses = [row['name'] for row in c.execute("SELECT name FROM schedule_options WHERE kind='course' AND active=1")]
-            self.assertEqual(active, ['数学', '英语', 'VCE 中数', 'VCE 低数', 'VCE 高数', '新加坡数学'])
+            self.assertEqual(active, ['数学', '英语', 'VCE 中数', 'VCE 低数', 'VCE 高数', '新加坡数学', '数学加英语'])
             self.assertEqual(hidden['active'], 0)
             self.assertEqual(old_methods['active'], 0)
             self.assertEqual(old_specialist['active'], 0)
             self.assertTrue(textbook is None or textbook['active'] == 0)
-            for name in ('数学', '英语', 'VCE 中数', 'VCE 低数', 'VCE 高数', '新加坡数学'):
+            for name in ('数学', '英语', 'VCE 中数', 'VCE 低数', 'VCE 高数', '新加坡数学', '数学加英语'):
                 self.assertIn(name, courses)
             kept = {row['name']: row['active'] for row in c.execute("SELECT name, active FROM subjects WHERE name IN ('中数','高数','数学','英语')")}
             c.execute("DELETE FROM app_meta WHERE key='catalog_vce_maths_v1'")

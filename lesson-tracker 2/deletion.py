@@ -24,19 +24,7 @@ def remove(c, user, data):
     kind = data.get('kind')
     ident = int(data.get('id', 0))
     if kind == 'student':
-        student = c.execute('SELECT * FROM students WHERE id=?', (ident,)).fetchone()
-        if not student:
-            raise ValueError('学生档案不存在，请刷新页面。')
-        if student['archived']:
-            raise ValueError('学生已经归档，请刷新页面。')
-        courses=list(c.execute('SELECT * FROM students WHERE profile_id=? AND archived=0', (student['profile_id'],)))
-        c.execute('UPDATE students SET archived=1 WHERE profile_id=?', (student['profile_id'],))
-        c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'],user['id'],'archived'))
-        import timeline
-        timeline.record(c, user, student['id'], 'withdraw', f"退学 {student['name']}")
-        import vouchers
-        for course in courses:
-            vouchers.issue_stop(c, user, course, False)
+        return withdraw_student(c, user, data)
     elif kind in ('teacher', 'admin'):
         if kind == 'teacher':
             target = c.execute('SELECT u.* FROM users u JOIN teachers t ON t.user_id=u.id WHERE t.id=?', (ident,)).fetchone()
@@ -57,6 +45,151 @@ def remove(c, user, data):
         c.execute('DELETE FROM users WHERE id=?', (uid,))
     else:
         raise ValueError('档案类型无效。')
+    return {'ok': True}
+
+
+def _settle_keep(c, course, reason):
+    c.execute('UPDATE students SET settle_reason=? WHERE id=?', (reason, course['id']))
+
+
+def _settle_forfeit(c, user, course):
+    """Write the hours off. This is not income and does not move cash."""
+    import secrets
+    balance = int(course['balance'] or 0)
+    if balance:
+        c.execute('''INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id)
+            VALUES(?,?,'forfeit',?,?,?,?)''', (
+            course['id'], -balance, now_local().date().isoformat(), '作废余额', user['id'], 'forfeit-' + secrets.token_hex(8)))
+    if _has(c, 'credit_batches'):
+        c.execute('UPDATE credit_batches SET paid_left=0, gift_left=0 WHERE student_id=?', (course['id'],))
+    c.execute("UPDATE students SET balance=0, settle_reason='void' WHERE id=?", (course['id'],))
+
+
+def _settle_refund(c, user, course, choice):
+    import secrets
+    import accounting
+    import vouchers
+    balance = int(course['balance'] or 0)
+    try:
+        cents = int(choice.get('refund_cents') or 0)
+    except (TypeError, ValueError):
+        raise ValueError('请填写退款金额。')
+    if cents < 0:
+        raise ValueError('退款金额不能为负。')
+    day = now_local().date().isoformat()
+    lid = c.execute('''INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id)
+        VALUES(?,?,'refund',?,?,?,?)''', (
+        course['id'], -balance, day, '退学退款', user['id'], 'refund-' + secrets.token_hex(8))).lastrowid
+    if _has(c, 'credit_batches'):
+        c.execute('UPDATE credit_batches SET paid_left=0, gift_left=0 WHERE student_id=?', (course['id'],))
+    c.execute("UPDATE students SET balance=0, settle_reason='refund' WHERE id=?", (course['id'],))
+    if cents:
+        accounting.record_cash(c, lid, -cents, 'bank', '退学退款', user['id'])
+    vouchers.issue_ledger(c, user, lid)
+
+
+def withdraw_student(c, user, data):
+    """Archive the whole student, including a profile whose courses are already stopped."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以退学。')
+    schema(c)
+    import profiles
+    profiles.ensure_enrolment_columns(c)
+    student = c.execute('SELECT * FROM students WHERE id=?', (int(data.get('id') or 0),)).fetchone()
+    if not student:
+        raise ValueError('学生档案不存在，请刷新页面。')
+    if profiles.profile_withdrawn(c, student['profile_id']):
+        raise ValueError('学生已经退学，请在退学学员里查看。')
+    import auditlog
+    auditlog.begin(c)
+    courses = list(c.execute('SELECT * FROM students WHERE profile_id=? AND voided=0', (student['profile_id'],)))
+    supplied = data.get('courses')
+    choices = {}
+    if isinstance(supplied, list):
+        for item in supplied:
+            if isinstance(item, dict):
+                choices[int(item.get('student_id') or 0)] = item
+    for course in courses:
+        if int(course['balance'] or 0) <= 0:
+            continue
+        if supplied is None:
+            choice = {'reason': 'keep'}
+        else:
+            choice = choices.get(course['id']) or {}
+        reason = choice.get('reason') or ''
+        if reason not in ('refund', 'keep', 'void'):
+            raise ValueError(f"{course['course']} 还有余额，请选择退款、保留余额或作废。")
+        if reason == 'refund':
+            _settle_refund(c, user, course, choice)
+        elif reason == 'void':
+            _settle_forfeit(c, user, course)
+        else:
+            _settle_keep(c, course, 'keep')
+    import vouchers
+    for course in courses:
+        _drop_future(c, course['id'], '退学', user)
+        if not course['archived']:
+            vouchers.issue_stop(c, user, dict(course), False)
+    c.execute('UPDATE students SET archived=1 WHERE profile_id=? AND voided=0', (student['profile_id'],))
+    c.execute("UPDATE student_profiles SET status='withdrawn', withdrawn_on=? WHERE id=?",
+        (now_local().date().isoformat(), student['profile_id']))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'], user['id'], 'archived'))
+    import timeline
+    timeline.record(c, user, student['id'], 'withdraw', f"退学 {student['name']}")
+    auditlog.hint(c, f"退学 {student['name']}")
+    auditlog.finish(c, user)
+    return {'ok': True}
+
+
+def settle_course(c, user, data):
+    """One 退课/停课 action. The balance needs 退款, 保留余额 or 作废."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以退课或停课。')
+    schema(c)
+    course = c.execute('SELECT * FROM students WHERE id=? AND archived=0 AND voided=0', (int(data.get('student_id') or 0),)).fetchone()
+    if not course:
+        raise ValueError('这门课不存在，请刷新页面。')
+    reason = str(data.get('reason') or '')
+    if int(course['balance'] or 0) > 0 and reason not in ('refund', 'keep', 'void'):
+        raise ValueError('还有余额，请选择退款、保留余额或作废。')
+    if reason not in ('refund', 'keep', 'void'):
+        reason = 'keep'
+    import auditlog
+    auditlog.begin(c)
+    if reason == 'refund':
+        _settle_refund(c, user, course, data)
+    elif reason == 'void':
+        _settle_forfeit(c, user, course)
+    else:
+        _settle_keep(c, course, 'keep')
+    _drop_future(c, course['id'], '退课/停课', user)
+    c.execute('UPDATE students SET archived=1 WHERE id=?', (course['id'],))
+    import vouchers
+    note = {'refund': '退课退款', 'keep': '停课，余额保留', 'void': '作废余额'}[reason]
+    vid = vouchers.issue_stop(c, user, dict(course), False)
+    c.execute('UPDATE vouchers SET note=? WHERE id=?', (note, vid))
+    import timeline
+    timeline.record(c, user, course['id'], 'stop', f"{note} {course['course']}")
+    auditlog.hint(c, f"{note} {course['name']} {course['course']}")
+    auditlog.finish(c, user)
+    return {'ok': True, 'reason': reason, 'voucher_id': vid}
+
+
+def reinstate_student(c, user, data):
+    """Bring a withdrawn student back. Kept balances stay. Refunded or forfeited courses return at zero."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以复学。')
+    schema(c)
+    import profiles
+    profiles.ensure_enrolment_columns(c)
+    student = c.execute('SELECT * FROM students WHERE id=?', (int(data.get('id') or 0),)).fetchone()
+    if not student or not profiles.profile_withdrawn(c, student['profile_id']):
+        raise ValueError('这位学生没有退学。')
+    c.execute('UPDATE students SET archived=0 WHERE profile_id=? AND voided=0', (student['profile_id'],))
+    c.execute("UPDATE student_profiles SET status='active', withdrawn_on='' WHERE id=?", (student['profile_id'],))
+    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'], user['id'], 'reinstated'))
+    import timeline
+    timeline.record(c, user, student['id'], 'reinstate', f"复学 {student['name']}")
     return {'ok': True}
 
 
@@ -91,6 +224,11 @@ def schema(c):
         c.execute('ALTER TABLE students ADD COLUMN voided INTEGER NOT NULL DEFAULT 0')
     if 'void_reason' not in cols:
         c.execute("ALTER TABLE students ADD COLUMN void_reason TEXT NOT NULL DEFAULT ''")
+    if 'settle_reason' not in cols:
+        c.execute("ALTER TABLE students ADD COLUMN settle_reason TEXT NOT NULL DEFAULT ''")
+    c.execute('DROP INDEX IF EXISTS profile_course_unique')
+    c.execute('''CREATE UNIQUE INDEX IF NOT EXISTS profile_course_active
+        ON students(profile_id, course) WHERE archived=0 AND voided=0''')
 
 
 def _drop_future(c, sid, cancel_reason='停课', user=None):

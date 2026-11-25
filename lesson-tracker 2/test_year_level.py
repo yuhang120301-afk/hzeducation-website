@@ -84,6 +84,9 @@ class YearLevelTests(unittest.TestCase):
         self.assertEqual(advanced['level_code'], 'K')
         self.assertEqual(advanced['level_calendar'], 'Y1')
         self.assertEqual(pricing.remember_level({}, '幼儿园'), ('K', 2027))
+        self.assertEqual(pricing.remember_level({}, 'Y5', dt.date(2026, 6, 1)), ('Y6', 2027))
+        self.assertEqual(pricing.remember_level({}, 'Y5', dt.date(2027, 6, 1)), ('Y5', 2027))
+        self.assertEqual(pricing.remember_level({}, 'Prep', dt.date(2028, 1, 1)), ('Prep', 2027))
         self.assertEqual(pricing.clean_study_level('kindy'), 'K')
         self.assertEqual(pricing.level_label('K', past=True), 'Prep · 已毕业?')
 
@@ -110,7 +113,8 @@ class YearLevelTests(unittest.TestCase):
         self.assertEqual(listed['levels'][0], 'Prep')
         self.assertNotIn('K', listed['levels'])
         bands = [row for table in listed['tables'] for row in table['rows']]
-        self.assertTrue(any(row['product'] == 'term' and row['level_from'] == 'K' for row in bands))
+        self.assertTrue(any(row['product'] == 'term' and row['level_from'] == 'Prep' and row['level_to'] == 'Y6' for row in bands))
+        self.assertFalse(any(row['level_from'] == 'K' for row in bands))
 
     def test_screens_do_not_offer_kindergarten(self):
         root = Path(__file__).resolve().parent

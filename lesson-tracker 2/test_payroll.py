@@ -84,6 +84,31 @@ class PayCalculationTests(unittest.TestCase):
     def pay(self, start, end):
         return payroll.report(self.c, {'id': 1, 'role': 'owner'}, 'custom', None, start, end)
 
+    def test_small_class_uses_the_teachers_own_percent_and_warns(self):
+        tid = self.teacher('Kelsey')
+        known = self.student('知道价格')
+        unknown = self.student('不知道价格')
+        batch = self.package(known, 1, 10000)
+        kind = self.c.execute("SELECT id FROM course_types WHERE name='小班课'").fetchone()['id']
+        day = '2030-09-01'
+        lid = self.c.execute('''INSERT INTO lessons(teacher_id,title,starts_at,ends_at,planned_units,location,status,created_by,request_id,course_type_id)
+            VALUES(?,?,?,?,100,'教室','completed',1,?,?)''', (tid, '小班课', day+'T16:00', day+'T17:00', uuid.uuid4().hex, kind)).lastrowid
+        self.c.execute('INSERT INTO lesson_students VALUES(?,?)', (lid, known))
+        self.c.execute('INSERT INTO lesson_students VALUES(?,?)', (lid, unknown))
+        ledger = self.c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,'上课',1,?)",
+            (known, -100, day, uuid.uuid4().hex)).lastrowid
+        self.c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,ledger_id,updated_by)
+            VALUES(?,?,100,'内容','作业','反馈',?,1)''', (lid, known, ledger))
+        self.c.execute('INSERT INTO credit_movements(ledger_id,batch_id,paid,gift,voided) VALUES(?,?,?,?,0)', (ledger, batch, -100, 0))
+        missing = self.c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,?,'lesson',?,'上课',1,?)",
+            (unknown, -100, day, uuid.uuid4().hex)).lastrowid
+        self.c.execute('''INSERT INTO lesson_reports(lesson_id,student_id,amount,content,homework,feedback,ledger_id,updated_by)
+            VALUES(?,?,100,'内容','作业','反馈',?,1)''', (lid, unknown, missing))
+        self.rule(tid, 'percent', 30)
+        lesson = next(item for item in self.pay(day, day)['teachers'][0]['lessons'] if item['lesson_id'] == lid)
+        self.assertEqual(lesson['pay_cents'], 3000)
+        self.assertIn('不知道价格', lesson['warnings'])
+
     def test_percent_of_lesson_fee(self):
         tid, sid = self.teacher('Angela'), self.student('学生甲')
         batch = self.package(sid, 10, 100000)
@@ -301,6 +326,19 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(partner['teacher_id'], ids['Vincent'])
         self.assertEqual(partner['percent_bp'], 3000)
         self.assertEqual(self.c.execute('SELECT COUNT(*) FROM pay_rules').fetchone()[0], 5)
+
+    def test_existing_helen_zero_percent_becomes_forty_once(self):
+        uid = self.user('Helen', 'admin')
+        tid = self.c.execute('INSERT INTO teachers(user_id,subject) VALUES(?,?)', (uid, '数学')).lastrowid
+        actor = self.c.execute('SELECT id FROM users ORDER BY id LIMIT 1').fetchone()['id']
+        rule = self.c.execute('''INSERT INTO pay_rules(teacher_id,rule_type,percent_bp,hourly_floor_cents,hourly_rate_cents,effective_from,note,created_by)
+            VALUES(?,?,?,?,?,?,?,?)''', (tid, 'percent', 0, None, None, '2000-01-01', '旧规则', actor)).lastrowid
+        self.c.execute("DELETE FROM app_meta WHERE key='helen_pay_40_v1'")
+        payroll.apply_helen_percent(self.c)
+        self.assertEqual(self.c.execute('SELECT percent_bp FROM pay_rules WHERE id=?', (rule,)).fetchone()['percent_bp'], 4000)
+        self.c.execute('UPDATE pay_rules SET percent_bp=0 WHERE id=?', (rule,))
+        payroll.apply_helen_percent(self.c)
+        self.assertEqual(self.c.execute('SELECT percent_bp FROM pay_rules WHERE id=?', (rule,)).fetchone()['percent_bp'], 0)
 
     def test_schema_does_not_drop_students(self):
         sid = self.student('保留学生')

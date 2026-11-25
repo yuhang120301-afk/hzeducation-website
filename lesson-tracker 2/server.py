@@ -422,6 +422,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(200, pricing.list_prices(c, user))
                 except teaching.AccessError as e:return self.response(403,{'error':str(e)})
                 except ValueError as e:return self.response(400,{'error':str(e)})
+        if path == '/api/reports/monthly':
+            with connect() as c:
+                user=self.current(c)
+                if not user:return self.response(401,{'error':'请先登录。'})
+                try:
+                    params=parse_qs(urlsplit(self.path).query)
+                    return self.response(200, finance.monthly(c, user, params.get('month', [''])[0]))
+                except teaching.AccessError as e:return self.response(403,{'error':str(e)})
+                except ValueError as e:return self.response(400,{'error':str(e)})
         if path in ('/api/finance', '/api/finance.xlsx', '/api/finance.pdf'):
             with connect() as c:
                 user=self.current(c)
@@ -518,6 +527,9 @@ class Handler(BaseHTTPRequestHandler):
                 if user['role'] not in ('owner','admin'):
                     for s in students: s.pop('notes',None)
                 credit_batches.enrich(c,students)
+                for person in students:
+                    paid = person.get('paid_balance')
+                    person['needs_renewal'] = (paid if paid is not None else person.get('balance') or 0) < 300
                 if user['role'] == 'owner':
                     for person in students:
                         offer=pricing.legacy_price(c, person)
@@ -540,10 +552,16 @@ class Handler(BaseHTTPRequestHandler):
                 archived_students=[s for s in students if s['archived'] and not s.get('voided')] if user['role']=='owner' else []
                 voided_students=[s for s in students if s['archived'] and s.get('voided')] if staff else []
                 withdrawn_ids=set()
-                if staff and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
-                    withdrawn_ids={row['profile_id'] for row in c.execute('''SELECT DISTINCT s.profile_id FROM profile_audit a
-                        JOIN students s ON s.id=a.student_id
-                        WHERE a.action='archived' AND s.profile_id IS NOT NULL''')}
+                if staff:
+                    profiles.ensure_enrolment_columns(c)
+                    withdrawn_ids={row['id'] for row in c.execute("SELECT id FROM student_profiles WHERE status='withdrawn'")}
+                    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='profile_audit'").fetchone():
+                        for row in c.execute('''SELECT profile_id, action FROM (
+                            SELECT s.profile_id, a.action, ROW_NUMBER() OVER (PARTITION BY s.profile_id ORDER BY a.id DESC) n
+                            FROM profile_audit a JOIN students s ON s.id=a.student_id
+                            WHERE s.profile_id IS NOT NULL AND a.action IN ('archived','reinstated')
+                        ) WHERE n=1 AND action='archived' '''):
+                            withdrawn_ids.add(row['profile_id'])
                 withdrawn_students=[]
                 for person in students:
                     if person.get('profile_id') in withdrawn_ids:
@@ -658,14 +676,24 @@ class Handler(BaseHTTPRequestHandler):
                     result=deletion.remove_course(c,user,data)
                     c.commit()
                     return self.response(200, result)
+                if self.path == '/api/students/course/settle':
+                    c.execute('BEGIN IMMEDIATE')
+                    result=deletion.settle_course(c,user,data)
+                    c.commit()
+                    return self.response(200, result)
                 if self.path == '/api/students/course/stop':
                     c.execute('BEGIN IMMEDIATE')
                     result=deletion.stop_course(c,user,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/profiles/delete','/api/profiles/restore'):
+                if self.path in ('/api/profiles/delete','/api/profiles/restore','/api/profiles/reinstate'):
                     c.execute('BEGIN IMMEDIATE')
-                    result=deletion.restore(c,user,data) if self.path.endswith('/restore') else deletion.remove(c,user,data)
+                    if self.path.endswith('/reinstate'):
+                        result=deletion.reinstate_student(c,user,data)
+                    elif self.path.endswith('/restore'):
+                        result=deletion.restore(c,user,data)
+                    else:
+                        result=deletion.remove(c,user,data)
                     c.commit()
                     return self.response(200,result)
                 if self.path == '/api/backup':
@@ -849,6 +877,14 @@ class Handler(BaseHTTPRequestHandler):
         if 'grade' in data and not str(data.get('grade') or '').strip():
             raise ValueError('请选择年级。')
         level_code, level_year = pricing.remember_level(data, grade)
+        type_guess = c.execute('SELECT id, name FROM course_types WHERE id=?', (int(data.get('course_type_id') or 0),)).fetchone() if data.get('course_type_id') else None
+        course, forced_subject, forced_type = pricing.apply_primary_class(
+            c, course, data.get('subject_id'), type_guess['id'] if type_guess else None,
+            type_guess['name'] if type_guess else '', level_code)
+        if forced_subject:
+            data['subject_id'] = forced_subject
+        if forced_type:
+            data['course_type_id'] = forced_type
         if teaching.singapore_subject(course):
             type_row = c.execute('SELECT name FROM course_types WHERE id=?', (int(data.get('course_type_id') or 0),)).fetchone()
             pricing.assert_singapore_enrolment(course, type_row['name'] if type_row else '', level_code)

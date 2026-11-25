@@ -81,14 +81,68 @@ def arrears_rows(c):
     return {'debts': owed, 'booked_without_credit': booked}
 
 
+def paid_units(c, student_id):
+    """Renewal looks at paid hours left on packs, not gift hours and not the balance cache."""
+    row = c.execute('SELECT COALESCE(SUM(paid_left),0) n FROM credit_batches WHERE student_id=?', (student_id,)).fetchone()
+    return int(row['n'] if row else 0)
+
+
 def low_balance(c):
     rows = []
-    for student in c.execute('''SELECT id, profile_id, name, course, balance, billing_unit, grade, level_code
-        FROM students WHERE archived=0 AND balance<=300 ORDER BY balance, name, id'''):
+    for student in c.execute('''SELECT s.id, s.profile_id, s.name, s.course, s.balance, s.billing_unit, s.grade, s.level_code,
+        COALESCE((SELECT SUM(paid_left) FROM credit_batches b WHERE b.student_id=s.id),0) paid_left
+        FROM students s WHERE s.archived=0
+        AND COALESCE((SELECT SUM(paid_left) FROM credit_batches b WHERE b.student_id=s.id),0)<300
+        ORDER BY paid_left, s.name, s.id'''):
         item = dict(student)
-        item['lessons_left'] = student['balance'] / 100
+        item['lessons_left'] = item['paid_left'] / 100
         rows.append(item)
     return rows
+
+
+def monthly(c, user, month):
+    """One month: money in, lesson value, hours left, teacher pay, forfeits, and what does not add up."""
+    import calendar as cal
+    text = str(month or '')
+    try:
+        year, mon = int(text[:4]), int(text[5:7])
+        start = dt.date(year, mon, 1)
+    except (ValueError, IndexError):
+        raise ValueError('请选择月份。')
+    end = dt.date(year, mon, cal.monthrange(year, mon)[1])
+    report = statement(c, user, 'custom', None, start.isoformat(), end.isoformat())
+    outstanding = c.execute('''SELECT COALESCE(SUM(b.paid_left+b.gift_left),0) FROM credit_batches b
+        JOIN students s ON s.id=b.student_id WHERE s.archived=0 AND s.voided=0''').fetchone()[0]
+    value = 0
+    unpriced = []
+    for row in c.execute('''SELECT s.*, b.paid_left FROM credit_batches b
+        JOIN students s ON s.id=b.student_id
+        WHERE s.archived=0 AND s.voided=0 AND b.paid_left>0'''):
+        hourly = __import__('pricing').price_for(c, row, end.isoformat())
+        if hourly is None:
+            unpriced.append(f"{row['name']} {row['course']} 的剩余课时没有价格")
+            continue
+        value += int(hourly) * int(row['paid_left']) // 100
+    mismatches = c.execute('''SELECT s.name, s.course, s.balance,
+        COALESCE((SELECT SUM(paid_left+gift_left) FROM credit_batches b WHERE b.student_id=s.id),0) packs
+        FROM students s WHERE s.voided=0
+        AND s.balance != COALESCE((SELECT SUM(paid_left+gift_left) FROM credit_batches b WHERE b.student_id=s.id),0)''').fetchall()
+    exceptions = list(unpriced)
+    if report['unknown_fee_count']:
+        exceptions.append(f"有 {report['unknown_fee_count']} 节课算不出上课费用")
+    for row in mismatches:
+        exceptions.append(f"{row['name']} {row['course']} 的余额和课时包不一致")
+    return {
+        'month': f'{year:04d}-{mon:02d}',
+        'money_received_cents': report['cash_received_cents'],
+        'money_refunded_cents': report['cash_refunded_cents'],
+        'lessons_value_cents': report['turnover_cents'],
+        'outstanding_units': outstanding,
+        'outstanding_value_cents': value,
+        'teacher_pay_cents': report['teacher_pay_cents'],
+        'forfeit_units': report['forfeit_units'],
+        'exceptions': exceptions,
+    }
 
 
 def statement(c, user, period, day, start, end):
@@ -130,6 +184,8 @@ def statement(c, user, period, day, start, end):
         # Her lesson value was not paid out as wages, so it is already inside the profit.
         pass
     cash = accounting.cash_breakdown(c, start, end)
+    forfeit_units = c.execute('''SELECT COALESCE(SUM(-delta),0) FROM ledger
+        WHERE kind='forfeit' AND lesson_date>=? AND lesson_date<=?''', (start.isoformat(), end.isoformat())).fetchone()[0]
     margin = None if not turnover else round((turnover - teacher_pay) * 100 / turnover, 1)
     by_type = {}
     for teacher in pay['teachers']:
@@ -144,6 +200,7 @@ def statement(c, user, period, day, start, end):
         'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'turnover_cents': turnover,
         'cash_received_cents': cash['received_cents'],
+        'forfeit_units': forfeit_units,
         'cash_refunded_cents': cash['refunded_cents'],
         'by_method': cash['by_method'],
         'by_receiver': cash['by_receiver'],
