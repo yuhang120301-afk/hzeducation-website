@@ -31,6 +31,7 @@ def schema(c,demo=False):
     for code,label,active,sort_order,system in (
         ('bank','银行转账',1,10,1),('cash','现金',1,20,1),('cny','人民币',1,30,1),
         ('alipay','支付宝',1,40,0),('card','刷卡',1,50,1),('wechat','微信',1,60,0),
+        ('other','其他',1,70,1),
         ('gift','赠课 / 无收款',1,90,1)):
         c.execute('INSERT OR IGNORE INTO payment_methods(code,label,active,sort_order,system) VALUES(?,?,?,?,?)',(code,label,active,sort_order,system))
     if demo:
@@ -168,18 +169,31 @@ def money(raw):
     except (InvalidOperation,ValueError):
         raise ValueError('请输入有效的澳元金额，最多两位小数，且不超过 1,000,000。')
 
+# Code, Chinese label. The top-up form submits the code. A label is accepted too,
+# so a picker that posts the visible text still records the right method.
+PAYMENT_METHODS = (
+    ('bank', '银行转账'), ('cash', '现金'), ('cny', '人民币'), ('alipay', '支付宝'),
+    ('card', '刷卡'), ('wechat', '微信'), ('other', '其他'), ('gift', '赠课 / 无收款'),
+)
+PAYMENT_LABELS = {label: code for code, label in PAYMENT_METHODS}
+PAYMENT_LABELS.update({
+    'Bank transfer': 'bank', 'Cash': 'cash', 'Card': 'card', 'Other': 'other',
+    'WeChat': 'wechat', 'Alipay': 'alipay',
+})
+
 def cash_details(data, c=None):
     cents=money(data.get('cash_amount'))
     method=str(data.get('payment_method','')).strip()
+    method=PAYMENT_LABELS.get(method, method)
     reference=str(data.get('reference','')).strip()
-    legacy=('bank','cash','card','other','gift')
+    known=tuple(code for code, _label in PAYMENT_METHODS)
     if c is not None:
         row=c.execute('SELECT active FROM payment_methods WHERE code=?',(method,)).fetchone()
-        if row is None and method not in legacy:
+        if row is None and method not in known:
             raise ValueError('请选择收付款方式。')
         if row is not None and not row['active'] and method!='gift':
             raise ValueError('这种收款方式已停用。')
-    elif method not in legacy:
+    elif method not in known:
         raise ValueError('请选择收付款方式。')
     if len(reference)>100:
         raise ValueError('凭证号或转账备注最多 100 个字。')
@@ -302,7 +316,7 @@ def supplement_cash(c,user,data):
     if not entry:raise ValueError('只能补录充值或退款记录的金额。')
     if c.execute('SELECT 1 FROM cash_entries WHERE ledger_id=?',(entry['id'],)).fetchone():
         raise ValueError('这笔记录已经登记金额，不能重复补录。')
-    cents,method,reference=cash_details(data)
+    cents,method,reference=cash_details(data, c)
     if entry['kind']=='refund':cents=-cents
     record_cash(c,entry['id'],cents,method,reference,user['id'])
     reversed_entry=c.execute('SELECT id FROM ledger WHERE reversal_of=?',(entry['id'],)).fetchone()

@@ -878,7 +878,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(note)>300:
                 raise ValueError('备注不能超过 300 个字。')
             if kind in ('credit','refund'):
-                cents,method,reference=accounting.cash_details(data)
+                cents,method,reference=accounting.cash_details(data, c)
                 if kind=='credit' and method=='gift' and credit_batches.zero_units(data.get('amount'),units)>0:
                     raise ValueError('纯赠课请将付费课时填 0，并在赠送课时中填写数量。')
                 if kind=='refund':
