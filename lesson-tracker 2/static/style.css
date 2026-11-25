@@ -139,7 +139,7 @@
 .gcal-event.completed,.month-chip.completed,.lesson-card.completed{--event-bg:#EDF0F2;--event-ink:#53616B;--event-edge:#9AA7AF;background:#EDF0F2;color:#53616B;border-color:#9AA7AF;border-style:solid;border-left-style:solid}
 .gcal-event.gcal-ghost{opacity:.35;outline:1px dashed var(--event-edge)}
 .drag-tip{position:absolute;top:-24px;left:0;background:#204F40;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;white-space:nowrap;font-style:normal}
-.pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer;color:#1F2A27}
+.pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer;color:#1F2A27}.card-hours{text-align:right;min-width:7.5rem}.card-hours strong{display:block}.card-hours .muted{font-size:12px;margin-top:8px}.card-hours .muted:first-child{margin-top:0}
 .pay-card h2{margin:0;font-size:22px;color:#1F2A27}
 .pay-card.is-split{color:#1F2A27}
 .legacy-badge{display:inline-block;margin-left:8px;background:#F8F3E4;color:#8A6D1F;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600;vertical-align:middle}
