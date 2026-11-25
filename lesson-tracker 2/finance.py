@@ -166,38 +166,64 @@ def statement(c, user, period, day, start, end):
     teachers = []
     for teacher in pay['teachers']:
         own = teacher_users.get(teacher['teacher_id']) in owner_ids
-        line = {'teacher_id': teacher['teacher_id'], 'name': teacher['name'], 'lessons': len(teacher['lessons']),
-            'minutes': teacher['total_minutes'], 'fee_cents': teacher['total_fee_cents'],
-            'pay_cents': teacher['total_pay_cents'], 'is_helen': own, 'rule': teacher['rule']}
+        totals = payroll.institution_totals(teacher['lessons'])
+        line = {'teacher_id': teacher['teacher_id'], 'name': teacher['name'], 'lessons': totals['lessons'],
+            'minutes': totals['minutes'], 'fee_cents': totals['fee_cents'],
+            'pay_cents': totals['pay_cents'], 'is_helen': own, 'rule': teacher['rule']}
         teachers.append(line)
         if own:
-            helen_income += teacher['total_fee_cents']
+            helen_income += totals['fee_cents']
         else:
-            external_pay += teacher['total_pay_cents']
-    turnover = sum(teacher['fee_cents'] for teacher in teachers)
-    costs, cost_lines = payroll.costs_for(c, start, end, shared_only=False)
-    gross = turnover - external_pay - sum(teacher['pay_cents'] for teacher in teachers if teacher['is_helen'])
-    # Teacher pay shown per person includes Helen when she has a pay rule.
-    teacher_pay = sum(teacher['pay_cents'] for teacher in teachers)
-    organisation = turnover - teacher_pay - costs
+            external_pay += totals['pay_cents']
     partner = pay['partner']
-    helen_net = organisation - partner['share_cents']
-    if helen_income and not any(teacher['is_helen'] and teacher['pay_cents'] for teacher in teachers):
-        # Her lesson value was not paid out as wages, so it is already inside the profit.
-        pass
+    lessons = [lesson for teacher in pay['teachers'] for lesson in teacher['lessons']]
+    own_revenue, own_lines = payroll.original_student_lines(lessons)
+    revenue = partner['revenue_cents']
+    institution_cost = partner['shared_cost_cents']
+    profit = partner['remainder_cents']
+    percent = partner['percent_bp'] or 0
+    helen_share = payroll.signed_mul_div(profit, 10000 - percent, 10000) if percent else profit
+    total = own_revenue + helen_share
+    share_view = payroll.public_profit_share(partner)
+    dashboard = {
+        'own_revenue_cents': own_revenue,
+        'own_lines': own_lines,
+        'revenue_cents': revenue,
+        'cost_cents': institution_cost,
+        'profit_cents': profit,
+        'percent_bp': percent,
+        'vincent_cents': partner['share_cents'],
+        'helen_share_cents': helen_share,
+        'total_cents': total,
+        'lines': share_view['lines'],
+        'costs': share_view['costs'],
+    }
+    turnover = revenue
+    costs, cost_lines = payroll.costs_for(c, start, end, shared_only=False)
+    teacher_pay = sum(teacher['pay_cents'] for teacher in teachers)
+    organisation = profit
+    helen_income = own_revenue
+    helen_net = total
     cash = accounting.cash_breakdown(c, start, end)
     forfeit_units = c.execute('''SELECT COALESCE(SUM(-delta),0) FROM ledger
         WHERE kind='forfeit' AND lesson_date>=? AND lesson_date<=?''', (start.isoformat(), end.isoformat())).fetchone()[0]
     margin = None if not turnover else round((turnover - teacher_pay) * 100 / turnover, 1)
     by_type = {}
+    unknown_fee = 0
     for teacher in pay['teachers']:
+        unknown_fee += payroll.institution_totals(teacher['lessons'])['unknown_fee_count']
         for lesson in teacher['lessons']:
+            counted = [line for line in lesson['lines'] if payroll.counts_for_institution(line)]
+            if payroll.SEPARATE_ORIGINAL_STUDENTS and not counted:
+                continue
             label = lesson.get('course_type_name') or '未分类'
             bucket = by_type.setdefault(label, {'name': label, 'lessons': 0, 'minutes': 0, 'fee_cents': 0, 'pay_cents': 0})
             bucket['lessons'] += 1
             bucket['minutes'] += lesson['minutes']
-            bucket['fee_cents'] += lesson['fee_cents']
-            bucket['pay_cents'] += lesson['pay_cents']
+            for line in counted:
+                if line['fee_known']:
+                    bucket['fee_cents'] += line['fee_cents'] or 0
+                bucket['pay_cents'] += line.get('pay_cents') or 0
     return {
         'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'turnover_cents': turnover,
@@ -217,7 +243,9 @@ def statement(c, user, period, day, start, end):
         'helen_teaching_cents': helen_income,
         'helen_net_cents': helen_net,
         'unhanded': unhanded(c),
-        'unknown_fee_count': sum(teacher['unknown_fee_count'] for teacher in pay['teachers']),
+        'unknown_fee_count': unknown_fee,
+        'separate_originals': payroll.SEPARATE_ORIGINAL_STUDENTS,
+        'dashboard': dashboard,
         'by_type': list(by_type.values()),
         'gst': False,
         'generated_at': now_local().isoformat(timespec='seconds'),

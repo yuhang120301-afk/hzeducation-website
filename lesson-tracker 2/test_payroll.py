@@ -355,6 +355,63 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(payroll.schedule_cost(7000, 'week', date(2030, 2, 1), date(2030, 1, 1), date(2030, 3, 1), date(2030, 3, 7)), 0)
 
 
+    def test_institution_and_own_students_use_one_share_formula(self):
+        import json
+        import dividend
+        import finance
+        vincent = self.teacher('Vincent')
+        angela = self.teacher('Angela')
+        new_student = self.student('机构学生甲')
+        original = self.student('我的学生甲', original=True)
+        new_batch = self.package(new_student, 1, 10000)
+        old_batch = self.package(original, 1, 20000)
+        self.confirmed(vincent, new_student, '2030-07-07', '16:00', '17:00', 100, new_batch)
+        self.confirmed(angela, original, '2030-07-08', '16:00', '17:00', 100, old_batch)
+        self.rule(vincent, 'percent', 40)
+        self.rule(angela, 'percent', 40)
+        self.partner(vincent, 30)
+        self.c.execute("INSERT INTO cost_entries(cost_date,label,amount_cents,shared,created_by) VALUES('2030-07-07','房租',1000,1,1)")
+        self.c.execute("INSERT INTO cost_entries(cost_date,label,amount_cents,shared,created_by) VALUES('2030-07-07','私人开支',5000,0,1)")
+        boss = {'id': 1, 'role': 'owner'}
+        statement = finance.statement(self.c, boss, 'custom', None, '2030-07-01', '2030-07-31')
+        board = statement['dashboard']
+        share = dividend.report(self.c, boss, 'custom', None, '2030-07-01', '2030-07-31')
+        vincent_user = self.c.execute('SELECT user_id FROM teachers WHERE id=?', (vincent,)).fetchone()['user_id']
+        angela_user = self.c.execute('SELECT user_id FROM teachers WHERE id=?', (angela,)).fetchone()['user_id']
+        own = payroll.report(self.c, {'id': vincent_user, 'role': 'teacher'}, 'month', '2030-07-15', None, None)
+        other = payroll.report(self.c, {'id': angela_user, 'role': 'teacher'}, 'month', '2030-07-15', None, None)
+        self.assertEqual(board['revenue_cents'], 10000)
+        self.assertEqual(board['cost_cents'], 1000)
+        self.assertEqual(board['profit_cents'], 9000)
+        self.assertEqual(board['vincent_cents'], 2700)
+        self.assertEqual(board['helen_share_cents'], 6300)
+        self.assertEqual(board['own_revenue_cents'], 20000)
+        self.assertEqual(board['total_cents'], 26300)
+        self.assertNotEqual(board['vincent_cents'], 1500)
+        self.assertEqual(share['revenue_cents'], board['revenue_cents'])
+        self.assertEqual(share['cost_cents'], board['cost_cents'])
+        self.assertEqual(share['share_cents'], board['vincent_cents'])
+        self.assertEqual(share['helen_share_cents'], board['helen_share_cents'])
+        self.assertEqual(own['profit_share']['revenue_cents'], board['revenue_cents'])
+        self.assertEqual(own['profit_share']['cost_cents'], board['cost_cents'])
+        self.assertEqual(own['profit_share']['share_cents'], board['vincent_cents'])
+        self.assertEqual(sum(line['share_cents'] for line in own['profit_share']['lines']), 2700)
+        self.assertNotIn('我的学生甲', json.dumps(own))
+        self.assertNotIn('我的学生甲', json.dumps(share['lines']) + json.dumps(share['students']) + json.dumps(share['costs']))
+        self.assertNotIn('profit_share', other)
+        self.assertIsNone(other['partner'])
+        self.assertTrue(payroll.SEPARATE_ORIGINAL_STUDENTS)
+        previous = payroll.SEPARATE_ORIGINAL_STUDENTS
+        payroll.SEPARATE_ORIGINAL_STUDENTS = False
+        try:
+            folded = finance.statement(self.c, boss, 'custom', None, '2030-07-01', '2030-07-31')['dashboard']
+        finally:
+            payroll.SEPARATE_ORIGINAL_STUDENTS = previous
+        self.assertEqual(folded['own_revenue_cents'], 0)
+        self.assertEqual(folded['revenue_cents'], 30000)
+        self.assertEqual(folded['vincent_cents'], 8700)
+
+
 def teaching_access():
     import teaching
     return teaching.AccessError

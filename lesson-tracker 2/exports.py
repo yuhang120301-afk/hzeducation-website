@@ -66,16 +66,16 @@ def xlsx_bytes(sheets):
 def finance_rows(data):
     summary = [
         ['HZ Education Melbourne', data['start'], data['end'], '金额为澳元，不含 GST'],
-        ['上课营业额', aud(data['turnover_cents'])],
+        ['机构收入', aud(data['turnover_cents'])],
         ['本期实收（另列，不重复计入利润）', aud(data['cash_received_cents'])],
         ['本期实退', aud(data['cash_refunded_cents'])],
         ['老师课酬合计', aud(data['teacher_pay_cents'])],
-        ['运营成本', aud(data['operating_cost_cents'])],
+        ['机构成本', aud((data.get('dashboard') or {}).get('cost_cents', data['operating_cost_cents']))],
         ['毛利率 %', '' if data['gross_margin_percent'] is None else data['gross_margin_percent']],
         ['机构利润', aud(data['organisation_profit_cents'])],
         ['Vincent 分成', aud(data['partner']['share_cents'])],
-        ['Helen 上课收入（课酬基数）', aud(data['helen_teaching_cents'])],
-        ['Helen 净利', aud(data['helen_net_cents'])],
+        ['我的学生收入', aud(data['helen_teaching_cents'])],
+        ['本月我的总收入', aud(data['helen_net_cents'])],
         [],
         ['老师', '节数', '小时', '课酬基数', '应付课酬'],
     ]
@@ -88,7 +88,8 @@ def finance_rows(data):
     for row in data['unhanded']:
         outstanding.append([row['lesson_date'], row['student_name'], row.get('receiver_name') or '',
             row['payment_method'], aud(row['cash_delta']), row.get('reference') or ''])
-    costs = [['成本', '金额']] + [[row['label'], aud(row['amount_cents'])] for row in data['costs']]
+    cost_rows = (data.get('dashboard') or {}).get('costs') or data['costs']
+    costs = [['成本', '金额']] + [[row['label'], aud(row['amount_cents'])] for row in cost_rows]
     return [('汇总', summary), ('收款方式', methods), ('收款人', receivers), ('未上交', outstanding), ('成本', costs)]
 
 
@@ -110,15 +111,15 @@ def finance_pdf(data):
     pdf.cell(0, 8, f"{data['start']} 至 {data['end']}    澳元，不含 GST", new_x='LMARGIN', new_y='NEXT')
     pdf.ln(2)
     lines = [
-        ('上课营业额', aud(data['turnover_cents'])),
+        ('机构收入', aud(data['turnover_cents'])),
         ('本期实收（另列）', aud(data['cash_received_cents'])),
         ('老师课酬', aud(data['teacher_pay_cents'])),
-        ('运营成本', aud(data['operating_cost_cents'])),
+        ('机构成本', aud((data.get('dashboard') or {}).get('cost_cents', data['operating_cost_cents']))),
         ('毛利率', '' if data['gross_margin_percent'] is None else f"{data['gross_margin_percent']}%"),
         ('机构利润', aud(data['organisation_profit_cents'])),
         ('Vincent 分成', aud(data['partner']['share_cents'])),
-        ('Helen 上课收入', aud(data['helen_teaching_cents'])),
-        ('Helen 净利', aud(data['helen_net_cents'])),
+        ('我的学生收入', aud(data['helen_teaching_cents'])),
+        ('本月我的总收入', aud(data['helen_net_cents'])),
     ]
     for label, value in lines:
         pdf.set_font('Droid', size=12)

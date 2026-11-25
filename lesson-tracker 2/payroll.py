@@ -3,7 +3,12 @@
 A confirmed lesson is worth the package price divided by the paid lessons in
 that package. Gift lessons are worth nothing. Helen can type over that number.
 Vincent's teaching pay (his own percentage) is separate from his share of what
-is left after shared costs are taken out of new students' fees.
+is left after shared costs are taken out of institution lesson fees.
+Teacher wages are not subtracted from that share.
+
+SEPARATE_ORIGINAL_STUDENTS is the one switch for Helen's ticked original
+students. On, they are outside the institution: omitted from turnover, profit
+and 分红. Off, their lesson fees are included with everyone else's.
 
 An absence is not taught time. absence_pay_clause is the only place that
 decides whether one is paid. Charging the student's balance does not pay
@@ -209,6 +214,13 @@ def mul_div(value, numerator, denominator):
     return (value * numerator + denominator // 2) // denominator
 
 
+def signed_mul_div(value, numerator, denominator):
+    value = int(value or 0)
+    if value < 0:
+        return -mul_div(-value, numerator, denominator)
+    return mul_div(value, numerator, denominator)
+
+
 def indexed_fee_millis(c, ledger_id):
     """Per-lesson price stored on the package. Gift lessons are included and still paid to the teacher."""
     import json
@@ -311,6 +323,55 @@ def lesson_pay(rule, minutes, known_fee_cents):
 def student_is_new(helen_original):
     """Unticked students are new. Only a boss-set flag marks Helen's original list."""
     return not helen_original
+
+
+# One switch. On: students ticked as Helen's originals are not part of the institution.
+SEPARATE_ORIGINAL_STUDENTS = True
+
+
+def counts_for_institution(line):
+    """Lines that enter turnover, profit and 分红. The switch is the only gate."""
+    if SEPARATE_ORIGINAL_STUDENTS and not line.get('is_new', True):
+        return False
+    return True
+
+
+def institution_totals(lessons):
+    fee = pay = lessons_n = minutes = unknown = 0
+    for lesson in lessons:
+        counted = [item for item in lesson['lines'] if counts_for_institution(item)]
+        if SEPARATE_ORIGINAL_STUDENTS and not counted:
+            continue
+        lessons_n += 1
+        minutes += lesson['minutes']
+        for item in counted:
+            if item['fee_known']:
+                fee += item['fee_cents'] or 0
+            else:
+                unknown += 1
+            pay += item.get('pay_cents') or 0
+    return {'lessons': lessons_n, 'minutes': minutes, 'fee_cents': fee, 'pay_cents': pay, 'unknown_fee_count': unknown}
+
+
+def original_student_lines(lessons):
+    """Helen's ticked students. Empty when the switch is off, because they then count as institution."""
+    rows = []
+    revenue = 0
+    for lesson in lessons:
+        for line in lesson['lines']:
+            if counts_for_institution(line):
+                continue
+            known = bool(line['fee_known'])
+            if known:
+                revenue += line['fee_cents'] or 0
+            rows.append({
+                'date': lesson['date'],
+                'student_name': line['student_name'],
+                'lesson': lesson.get('title') or line.get('course') or '',
+                'revenue_cents': line['fee_cents'] if known else None,
+                'fee_known': known,
+            })
+    return revenue, rows
 
 
 def absence_pay_clause():
@@ -483,7 +544,12 @@ def costs_for(c, start, end, shared_only=False):
 
 
 def partner_section(c, lessons, teachers, start, end):
-    """30% of (new-student fees − shared costs). Teaching pay is not deducted again."""
+    """(institution lesson fees − shared costs) × the partner percent, floored at 0.
+
+    Teaching pay is not deducted. Costs marked shared are taken in full; there
+    is no split by whose lesson the cost relates to. With the switch on, only
+    students who are not Helen's originals are institution fees.
+    """
     rules = [dict(r) for r in c.execute('''SELECT p.*, u.name teacher_name FROM partner_share_rules p
         LEFT JOIN teachers t ON t.id=p.teacher_id LEFT JOIN users u ON u.id=t.user_id ORDER BY p.effective_from, p.id''')]
     chosen = rule_on(rules, end.isoformat())
@@ -491,7 +557,7 @@ def partner_section(c, lessons, teachers, start, end):
     revenue = unknown = 0
     for lesson in lessons:
         for line in lesson['lines']:
-            if not line['is_new']:
+            if not counts_for_institution(line):
                 continue
             if line['fee_known']:
                 revenue += line['fee_cents'] or 0
@@ -515,6 +581,47 @@ def partner_section(c, lessons, teachers, start, end):
         'share_cents': share, 'teaching_pay_cents': teaching['total_pay_cents'] if teaching else 0,
         'unknown_fee_count': unknown, 'lines': lines, 'costs': shared_details,
         'rules': [{k: r[k] for k in ('id','teacher_id','teacher_name','percent_bp','effective_from','note')} for r in rules]}
+
+
+def line_share_cents(lines, share_cents):
+    """Spread the period share across counted lines in proportion to known fees."""
+    known = [(index, line) for index, line in enumerate(lines) if line['fee_known'] and (line['fee_cents'] or 0) > 0]
+    total = sum(line['fee_cents'] or 0 for _, line in known)
+    shares = [0] * len(lines)
+    allocated = 0
+    for number, (index, line) in enumerate(known):
+        if number == len(known) - 1:
+            part = share_cents - allocated
+        else:
+            part = mul_div(share_cents, line['fee_cents'] or 0, total) if total else 0
+            allocated += part
+        shares[index] = part
+    return shares
+
+
+def public_profit_share(partner):
+    """What the partner teacher may see. No original-student rows are included."""
+    lines = partner['lines']
+    parts = line_share_cents(lines, partner['share_cents'])
+    safe = []
+    for line, part in zip(lines, parts):
+        safe.append({
+            'date': line['date'],
+            'student_name': line['student_name'],
+            'lesson': line.get('title') or line.get('course') or '',
+            'revenue_cents': line['fee_cents'] if line['fee_known'] else None,
+            'fee_known': bool(line['fee_known']),
+            'share_cents': part,
+        })
+    return {
+        'percent_bp': partner['percent_bp'],
+        'revenue_cents': partner['revenue_cents'],
+        'cost_cents': partner['shared_cost_cents'],
+        'remainder_cents': partner['remainder_cents'],
+        'share_cents': partner['share_cents'],
+        'lines': safe,
+        'costs': [{'date': cost['date'], 'label': cost['label'], 'amount_cents': cost['amount_cents']} for cost in partner['costs']],
+    }
 
 
 def report(c, user, period, day, start, end):
@@ -561,9 +668,14 @@ def report(c, user, period, day, start, end):
         students.append(item)
     if own_teacher:
         teachers = [teacher for teacher in teachers if teacher['teacher_id'] == own_teacher['id']]
-        return {'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
+        share_lessons = build_lessons(c, confirmed_rows(c, start, end), by_teacher)
+        share = partner_section(c, share_lessons, [], start, end)
+        payload = {'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
             'teachers': teachers, 'partner': None, 'rules': [], 'cost_entries': [], 'cost_schedules': [],
             'students': [], 'generated_at': now_local().isoformat(timespec='seconds')}
+        if share.get('teacher_id') == own_teacher['id']:
+            payload['profit_share'] = public_profit_share(share)
+        return payload
     return {'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'teachers': teachers, 'partner': partner_section(c, lessons, teachers, start, end),
         'rules': [public_rule(r) for r in rules],
@@ -799,6 +911,19 @@ def csv_bytes(data, teacher_id=None):
         writer.writerow(['成本', '金额（AUD）', '说明'])
         for cost in partner['costs']:
             writer.writerow([cost['label'], aud(cost['amount_cents']), cost.get('date', '')])
+    share = data.get('profit_share')
+    if share:
+        writer.writerow([])
+        writer.writerow(['分红', f'{(share.get("percent_bp") or 0) / 100:.2f}%'])
+        writer.writerow(['收入', aud(share['revenue_cents'])])
+        writer.writerow(['减：成本', aud(share['cost_cents'])])
+        writer.writerow(['分红（不足按 0）', aud(share['share_cents'])])
+        writer.writerow(['日期', '学生', '课程', '收入（AUD）', '分红（AUD）'])
+        for line in share['lines']:
+            writer.writerow([line['date'], line['student_name'], line['lesson'],
+                aud(line['revenue_cents']) if line['fee_known'] else '未定价', aud(line['share_cents'])])
+        for cost in share['costs']:
+            writer.writerow([cost['date'], cost['label'], aud(cost['amount_cents'])])
     return b'\xef\xbb\xbf' + buffer.getvalue().encode('utf-8')
 
 
