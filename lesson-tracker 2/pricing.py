@@ -124,7 +124,12 @@ SUBJECT_PRICE_KEY = 'legacy_subject_prices_v1'
 
 
 def canonical_subject(text):
+    """数学 and 英语 collapse longer labels. VCE maths names do not contain 数学 and stay separate."""
     raw = str(text or '').strip()
+    import teaching
+    named = teaching.vce_subject(raw)
+    if named:
+        return named
     if '数学' in raw:
         return '数学'
     if '英语' in raw:

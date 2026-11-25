@@ -77,7 +77,8 @@ def schema(c):
 
 DEFAULT_COURSE_TYPES = ('一对一', '一对二', '小班课')
 DEFAULT_SUBJECTS = ('数学', '英语', '科学', '物理', '化学', '中文', '写作', '高数', '中数')
-OFFERED_SUBJECTS = ('数学', '英语')
+VCE_SUBJECTS = ('VCE 中数', 'VCE 低数', 'VCE 高数')
+OFFERED_SUBJECTS = ('数学', '英语', *VCE_SUBJECTS)
 OFFERED_TYPES = ('一对一', '一对二', '小班课')
 TYPE_ALIASES = {
     '一对一': '一对一', '1:1': '一对一', '1：1': '一对一', 'one': '一对一', 'one_to_one': '一对一',
@@ -91,7 +92,18 @@ SUBJECT_ALIASES = {
     '物理': '物理', '化学': '化学', '中文': '中文',
     '写作': '写作', 'writing': '写作',
     '高数': '高数', '中数': '中数',
+    'vce 中数': 'VCE 中数', 'vce 低数': 'VCE 低数', 'vce 高数': 'VCE 高数',
+    'math methods': 'VCE 中数', 'maths methods': 'VCE 中数', 'mathematical methods': 'VCE 中数',
+    'general mathematics': 'VCE 低数', 'specialist mathematics': 'VCE 高数',
 }
+# Longer English names first, so "math methods" is not swallowed by the generic "math" prefix.
+VCE_ALIASES = (
+    ('mathematical methods', 'VCE 中数'),
+    ('specialist mathematics', 'VCE 高数'),
+    ('general mathematics', 'VCE 低数'),
+    ('maths methods', 'VCE 中数'),
+    ('math methods', 'VCE 中数'),
+)
 
 
 def display_person(name):
@@ -103,11 +115,33 @@ def display_person(name):
     return text
 
 
-def canonical_subject(name):
-    """Science and 科学 display as the same Chinese subject. Stored labels are not rewritten."""
+def vce_subject(name):
+    """VCE maths stays its own subject. Names do not contain 数学, and Math Methods is not generic maths."""
     text = str(name or '').strip()
     if not text:
         return ''
+    for label in VCE_SUBJECTS:
+        if text == label or label in text:
+            return label
+    key = text.casefold()
+    for alias, label in VCE_ALIASES:
+        if key == alias or key.startswith(alias + ' ') or key.startswith(alias + '·') or key.startswith(alias + ' ·'):
+            return label
+    return ''
+
+
+def canonical_subject(name):
+    """Science and 科学 display as the same Chinese subject. Stored labels are not rewritten.
+
+    VCE 中数 / VCE 低数 / VCE 高数, and Math Methods, are not folded into 数学.
+    The unused 中数 and 高数 labels stay as themselves.
+    """
+    text = str(name or '').strip()
+    if not text:
+        return ''
+    named = vce_subject(text)
+    if named:
+        return named
     key = text.casefold()
     if key in SUBJECT_ALIASES:
         return SUBJECT_ALIASES[key]
@@ -189,6 +223,7 @@ def ensure_catalogs(c):
     _backfill_catalogs(c)
     focus_catalog(c)
     refocus_catalog(c)
+    activate_vce_subjects(c)
 
 
 def focus_catalog(c):
@@ -204,7 +239,7 @@ def focus_catalog(c):
     c.execute(f'UPDATE course_types SET active=1 WHERE name IN ({type_marks})', OFFERED_TYPES)
     c.execute(f'UPDATE course_types SET active=0 WHERE name NOT IN ({type_marks})', OFFERED_TYPES)
     if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
-        c.execute("UPDATE schedule_options SET active=0 WHERE kind='course' AND name NOT IN ('数学','英语')")
+        c.execute(f"UPDATE schedule_options SET active=0 WHERE kind='course' AND name NOT IN ({marks})", OFFERED_SUBJECTS)
         for name in OFFERED_SUBJECTS:
             c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (name,))
             c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (name,))
@@ -222,8 +257,26 @@ def refocus_catalog(c):
     c.execute(f'UPDATE course_types SET active=0 WHERE name NOT IN ({type_marks})', OFFERED_TYPES)
     c.execute(f'UPDATE course_types SET active=1 WHERE name IN ({type_marks})', OFFERED_TYPES)
     if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
-        c.execute("UPDATE schedule_options SET active=0 WHERE kind='course' AND name NOT IN ('数学','英语')")
+        c.execute(f"UPDATE schedule_options SET active=0 WHERE kind='course' AND name NOT IN ({marks})", OFFERED_SUBJECTS)
     c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_focus_v2', '1')")
+
+
+def activate_vce_subjects(c):
+    """Add VCE 中数, VCE 低数 and VCE 高数 on databases that already focused on 数学 and 英语.
+
+    Idempotent. Does not deactivate 数学 or 英语, and does not touch the unused 中数 / 高数 rows.
+    """
+    if c.execute("SELECT 1 FROM app_meta WHERE key='catalog_vce_maths_v1'").fetchone():
+        return
+    start = OFFERED_SUBJECTS.index(VCE_SUBJECTS[0])
+    for offset, name in enumerate(VCE_SUBJECTS):
+        c.execute('INSERT OR IGNORE INTO subjects(name, sort_order, active) VALUES(?,?,1)', (name, (start + offset + 1) * 10))
+        c.execute('UPDATE subjects SET active=1 WHERE name=?', (name,))
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schedule_options'").fetchone():
+        for name in VCE_SUBJECTS:
+            c.execute("INSERT OR IGNORE INTO schedule_options(kind, name, active) VALUES('course', ?, 1)", (name,))
+            c.execute("UPDATE schedule_options SET active=1 WHERE kind='course' AND name=?", (name,))
+    c.execute("INSERT INTO app_meta(key, value) VALUES('catalog_vce_maths_v1', '1')")
 
 
 def _id_by_name(c, table, name):
