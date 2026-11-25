@@ -63,6 +63,7 @@ def schema(c):
         c.execute("ALTER TABLE lessons ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
     if 'subjects' not in {r['name'] for r in c.execute('PRAGMA table_info(teachers)')}:
         c.execute("ALTER TABLE teachers ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
+    _add_column(c, 'teachers', 'duty', 'duty TEXT')
     c.execute("INSERT OR IGNORE INTO teachers(user_id) SELECT id FROM users WHERE role='admin'")
     if not c.execute("SELECT 1 FROM app_meta WHERE key='schedule_options_v1'").fetchone():
         for kind, names in [('course',['数学 · 一对一','物理','化学']),('location',[])]:
@@ -393,11 +394,13 @@ def state_for(c,user):
     if role in ('owner','admin','teacher'):
         tw='' if role in ('owner','admin') else ' WHERE u.id=? AND u.active=1'
         tp=() if role in ('owner','admin') else (user['id'],)
-        teachers=[dict(x) for x in c.execute("SELECT t.id,t.subject,t.subjects,u.name,u.phone,u.active,u.id user_id,CASE WHEN EXISTS(SELECT 1 FROM organization_owners o WHERE o.user_id=u.id) THEN 'owner' WHEN u.role='admin' THEN 'admin' ELSE 'teacher' END account_role FROM teachers t JOIN users u ON t.user_id=u.id"+tw+' ORDER BY t.id',tp)]
+        teachers=[dict(x) for x in c.execute("SELECT t.id,t.subject,t.subjects,t.duty,u.name,u.phone,u.active,u.id user_id,CASE WHEN EXISTS(SELECT 1 FROM organization_owners o WHERE o.user_id=u.id) THEN 'owner' WHEN u.role='admin' THEN 'admin' ELSE 'teacher' END account_role FROM teachers t JOIN users u ON t.user_id=u.id"+tw+' ORDER BY t.id',tp)]
     for t in teachers:
         t['name']=display_person(t.get('name'))
         t['subjects']=[canonical_subject(name) for name in (json.loads(t['subjects']) or [t['subject']])]
         t['subject']=canonical_subject(t.get('subject') or '')
+        if role!='owner' and role!='admin':
+            t.pop('duty', None)
     if role=='parent':
         for lesson in lessons:lesson['reports']=[r for r in lesson['reports'] if not r.get('reversed_by')]
         lessons=[l for l in lessons if l['status']!='completed' or l['reports']]
@@ -419,7 +422,7 @@ def create_teacher(c,user,data,phone_value,password_hash,text_value):
     # Teacher membership augments legacy users without rebuilding its FK-bound table.
     uid=c.execute("INSERT INTO users(phone,name,password,role) VALUES(?,?,?,'parent')",(phone,name,password_hash(password))).lastrowid
     tid=c.execute('INSERT INTO teachers(user_id,subject) VALUES(?,?)',(uid,subject)).lastrowid
-    c.execute('UPDATE teachers SET subjects=? WHERE id=?',(json.dumps(subjects,ensure_ascii=False),tid))
+    c.execute('UPDATE teachers SET subjects=?,duty=? WHERE id=?',(json.dumps(subjects,ensure_ascii=False),duty_value(data),tid))
     return {'ok':True,'teacher_id':tid}
 
 def require_scheduler(c,user,data):
@@ -723,6 +726,15 @@ def save_option(c,user,data,text_value):
     return {'ok':True,'id':option_id}
 
 
+def duty_value(data):
+    """Optional title. Missing or blank is stored as NULL. At most 60 characters."""
+    if 'duty' not in data:
+        return None
+    text=str(data.get('duty') or '').strip()
+    if len(text)>60:
+        raise ValueError('职责最多 60 个字。')
+    return text or None
+
 def subject_values(data,text_value):
     raw=data.get('subjects')
     if raw is None: raw=[data.get('subject')]
@@ -755,7 +767,13 @@ def edit_teacher(c,user,data,phone_value,password_hash,text_value):
         c.execute('UPDATE users SET name=?,phone=? WHERE id=?',(name,phone,t['user_id']))
         if password:c.execute('UPDATE users SET password=? WHERE id=?',(password_hash(password),t['user_id']))
         if password or phone!=t['phone']:c.execute('DELETE FROM sessions WHERE user_id=?',(t['user_id'],))
-    c.execute('UPDATE teachers SET subject=?,subjects=? WHERE id=?',('、'.join(subjects),json.dumps(subjects,ensure_ascii=False),t['id']))
+    fields=['subject=?','subjects=?']
+    params=['、'.join(subjects), json.dumps(subjects,ensure_ascii=False)]
+    if 'duty' in data:
+        fields.append('duty=?')
+        params.append(duty_value(data))
+    params.append(t['id'])
+    c.execute('UPDATE teachers SET '+','.join(fields)+' WHERE id=?', params)
     return {'ok':True}
 
 def teacher_status(c,user,data):

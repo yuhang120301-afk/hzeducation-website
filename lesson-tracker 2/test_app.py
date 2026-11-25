@@ -322,6 +322,32 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.admin.request('teachers/edit',{'teacher_id':owner_teacher['id'],'subjects':['数学','物理']})[0],200)
         self.assertEqual(self.admin.request('teachers/edit',{**payload,'teacher_id':owner_teacher['id']})[0],400)
 
+    def test_teacher_duty_is_optional_and_boss_only(self):
+        code, created = self.admin.request('teachers', {
+            'name': '职责老师', 'phone': '0493333001', 'password': 'DutyTeacher2026!',
+            'subjects': ['数学'], 'duty': '  联合校长  '})
+        self.assertEqual(code, 200, created)
+        tid = created['teacher_id']
+        row = next(t for t in self.admin.request('state')[1]['teachers'] if t['id'] == tid)
+        self.assertEqual(row['duty'], '联合校长')
+        tutor = Client()
+        tutor.login('0493333001', 'DutyTeacher2026!')
+        edit = {'teacher_id': tid, 'name': '职责老师', 'phone': '0493333001', 'subjects': ['数学'], 'duty': '校长'}
+        self.assertEqual(tutor.request('teachers/edit', edit)[0], 403)
+        self.assertEqual(self.parent.request('teachers/edit', edit)[0], 403)
+        self.assertEqual(self.parent.request('state')[1]['teachers'], [])
+        self.assertTrue(all('duty' not in teacher for teacher in tutor.request('state')[1]['teachers']))
+        self.assertEqual(self.admin.request('teachers/edit', {**edit, 'duty': '   '})[0], 200)
+        row = next(t for t in self.admin.request('state')[1]['teachers'] if t['id'] == tid)
+        self.assertIsNone(row['duty'])
+        self.assertEqual(self.admin.request('teachers/edit', {**edit, 'duty': 'x' * 61})[0], 400)
+        owner_teacher = next(t for t in self.admin.request('state')[1]['teachers'] if t['account_role'] == 'owner')
+        subjects = owner_teacher['subjects'] or ['数学']
+        self.assertEqual(self.admin.request('teachers/edit', {'teacher_id': owner_teacher['id'], 'subjects': subjects, 'duty': '联合校长'})[0], 200)
+        row = next(t for t in self.admin.request('state')[1]['teachers'] if t['id'] == owner_teacher['id'])
+        self.assertEqual(row['duty'], '联合校长')
+        self.assertEqual(row['subjects'], subjects)
+
     def gift_credit(self,sid,paid,gift,key=None):
         return self.admin.request('entries',{'student_id':sid,'kind':'credit','amount':paid,'gift_amount':gift,'cash_amount':'100' if float(paid)>0 else '0','payment_method':'bank' if float(paid)>0 else 'gift','date':date.today().isoformat(),'request_id':key or str(uuid.uuid4())})
     def credit_account(self,sid):
