@@ -1,0 +1,14 @@
+{
+  "note": "Numbers are students.id, the same #id printed by report_parent_links.py. They are not profile ids. Zachary and Sunny stay with 林静. Everyone else listed here leaves 林静. A profile's other course rows move with the listed student.",
+  "source_parent": {"id": 46, "name": "林静", "phone": "0470702742"},
+  "moves": [
+    {"student_ids": [60, 74, 75], "names": {"60": "Zachary", "74": "Zachary", "75": "Zachary"}, "parent": 46, "parent_name": "林静", "parent_phone": "0470702742"},
+    {"student_ids": [58], "names": {"58": "Sunny"}, "parent": 46, "parent_name": "林静", "parent_phone": "0470702742"},
+    {"student_ids": [59, 57, 73], "names": {"59": "Shirley", "57": "Amelia", "73": "Amelia"}, "parent": "new:Shirley/Amelia家长"},
+    {"student_ids": [56], "names": {"56": "Joanna"}, "parent": 39, "parent_name": "Jeffery家长", "parent_phone": "0449917255"},
+    {"student_ids": [62, 63], "names": {"62": "Cathy", "63": "Cathy 妹妹"}, "parent": "new:Cathy家长"},
+    {"student_ids": [65, 55], "names": {"65": "David", "55": "Felix"}, "parent": "new:David/Felix家长"},
+    {"student_ids": [71, 61], "names": {"71": "Bella", "61": "Bella"}, "parent": 10, "parent_name": "Ruby家长", "parent_phone": "0430155816"},
+    {"student_ids": [64], "names": {"64": "Zoey"}, "parent": "new:Zoey家长（待定）"}
+  ]
+}
