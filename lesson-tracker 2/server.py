@@ -43,7 +43,7 @@ def demo_seed_allowed():
 SECURE = os.environ.get('LESSON_SECURE_COOKIE') == '1'
 ORG_NAME = 'HZ Education Melbourne'
 DB_ERROR = None
-NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
+NOT_FOUND_PAGE = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>页面不存在</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="stylesheet" href="/style.css"></head><body><main class="error-page"><p class="eyebrow">HZ Education Melbourne</p><h1>找不到这个页面</h1><p>这个地址没有对应的页面。请回到课时管理首页，或联系老师帮忙。</p><p><a class="btn primary" href="/">返回首页</a></p></main></body></html>'''
 
 def contact_details():
     email = os.environ.get('LESSON_CONTACT_EMAIL', 'helenzeducation@gmail.com').strip()[:80]
@@ -721,13 +721,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.response(403, {'error': '家长不能打开学生档案。'})
         if student_page or re.fullmatch(r'/teachers/\d+/pay/?', path) or re.fullmatch(r'/receipts/\d+/?', path):
             path = '/'
-        files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/vouchers.js':'vouchers.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.svg':'favicon.svg','/logo.jpg':'logo.jpg'}
+        files = {'/':'index.html','/app.js':'app.js','/teaching.js':'teaching.js','/accounting.js':'accounting.js','/calendar.js':'calendar.js','/pay.js':'pay.js','/vouchers.js':'vouchers.js','/i18n.js':'i18n.js','/style.css':'style.css','/favicon.ico':'favicon.ico','/favicon-16.png':'favicon-16.png','/favicon-32.png':'favicon-32.png','/apple-touch-icon.png':'apple-touch-icon.png','/logo.jpg':'logo.jpg'}
         if path not in files:
             if path.startswith('/api/'):
                 return self.response(404, {'error':'页面不存在。'})
             return self.response(404, NOT_FOUND_PAGE.encode(), content_type='text/html; charset=utf-8')
         name = files[path]
-        mime = {'html':'text/html; charset=utf-8','js':'application/javascript; charset=utf-8','css':'text/css; charset=utf-8','svg':'image/svg+xml','jpg':'image/jpeg'}[name.rsplit('.',1)[1]]
+        mime = {'html':'text/html; charset=utf-8','js':'application/javascript; charset=utf-8','css':'text/css; charset=utf-8','svg':'image/svg+xml','jpg':'image/jpeg','png':'image/png','ico':'image/x-icon'}[name.rsplit('.',1)[1]]
         content = (ROOT/'static'/name).read_bytes()
         return self.response(200,content,content_type=mime)
 
