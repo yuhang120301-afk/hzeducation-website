@@ -100,6 +100,7 @@ def schema(c):
             c.execute(f'ALTER TABLE {table} ADD COLUMN shared INTEGER NOT NULL DEFAULT 0')
     seed_if_needed(c)
     apply_helen_percent(c)
+    migrate_origin_history(c)
     import expenses
     expenses.schema(c)
 
@@ -325,6 +326,74 @@ def student_is_new(helen_original):
     return not helen_original
 
 
+ORIGIN_START = '2000-01-01'
+ORIGIN_ON_DATE = '''CASE
+    WHEN s.profile_id IS NULL THEN COALESCE(s.helen_original,0)
+    WHEN EXISTS (SELECT 1 FROM student_origin_events e WHERE e.profile_id=s.profile_id)
+    THEN COALESCE((SELECT e.helen_original FROM student_origin_events e
+        WHERE e.profile_id=s.profile_id AND e.effective_from<=substr(l.starts_at,1,10)
+        ORDER BY e.effective_from DESC, e.id DESC LIMIT 1), 0)
+    ELSE COALESCE(s.helen_original,0)
+END'''
+
+
+def migrate_origin_history(c):
+    """Keep every existing tick, and treat it as effective from the beginning.
+
+    New rows are only inserted for ticked profiles that have no history yet.
+    Nothing is deleted or rewritten. The table is created only when missing,
+    because creating it inside an open transaction would commit that transaction.
+    """
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='student_origin_events'").fetchone():
+        c.execute('''CREATE TABLE student_origin_events (
+            id INTEGER PRIMARY KEY,
+            profile_id INTEGER NOT NULL,
+            helen_original INTEGER NOT NULL CHECK(helen_original IN (0,1)),
+            effective_from TEXT NOT NULL,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        )''')
+        c.execute('''CREATE INDEX student_origin_lookup
+            ON student_origin_events(profile_id, effective_from, id)''')
+    c.execute('''INSERT INTO student_origin_events(profile_id, helen_original, effective_from, created_by)
+        SELECT DISTINCT s.profile_id, 1, ?, NULL FROM students s
+        WHERE s.helen_original=1 AND s.profile_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM student_origin_events e WHERE e.profile_id=s.profile_id)''', (ORIGIN_START,))
+
+
+def origin_since_by_profile(c):
+    """Date the student became original, for whoever is ticked right now."""
+    current = {}
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='student_origin_events'").fetchone():
+        return current
+    for row in c.execute('''SELECT profile_id, helen_original, effective_from FROM student_origin_events
+            ORDER BY profile_id, effective_from, id'''):
+        current[row['profile_id']] = row
+    return {profile: row['effective_from'] for profile, row in current.items() if row['helen_original']}
+
+
+def record_origin(c, user, profile_id, flag, day):
+    """Append one status change. A repeat of the current status does not move the date."""
+    migrate_origin_history(c)
+    latest = c.execute('''SELECT helen_original, effective_from FROM student_origin_events
+        WHERE profile_id=? ORDER BY effective_from DESC, id DESC LIMIT 1''', (profile_id,)).fetchone()
+    if latest is None:
+        current = c.execute('SELECT MAX(helen_original) FROM students WHERE profile_id=?', (profile_id,)).fetchone()[0]
+        if current and flag:
+            c.execute('''INSERT INTO student_origin_events(profile_id, helen_original, effective_from, created_by)
+                VALUES(?,1,?,?)''', (profile_id, ORIGIN_START, user['id']))
+            return
+        if current and not flag:
+            c.execute('''INSERT INTO student_origin_events(profile_id, helen_original, effective_from, created_by)
+                VALUES(?,1,?,?)''', (profile_id, ORIGIN_START, user['id']))
+        elif not flag:
+            return
+    elif int(latest['helen_original']) == int(flag):
+        return
+    c.execute('''INSERT INTO student_origin_events(profile_id, helen_original, effective_from, created_by)
+        VALUES(?,?,?,?)''', (profile_id, int(flag), day, user['id']))
+
+
 # One switch. On: students ticked as Helen's originals are not part of the institution.
 SEPARATE_ORIGINAL_STUDENTS = True
 
@@ -368,7 +437,11 @@ def original_student_lines(lessons):
                 continue
             known = bool(line['fee_known'])
             fee = (line['fee_cents'] or 0) if known else None
-            deducted = 0 if helen_taught else int(line.get('pay_cents') or 0)
+            # A deliberate $0 lesson is not negative income. The wage is an institution cost.
+            if known and fee == 0:
+                deducted = 0
+            else:
+                deducted = 0 if helen_taught else int(line.get('pay_cents') or 0)
             line_net = None if fee is None else fee - deducted
             if line_net is not None:
                 net += line_net
@@ -411,7 +484,7 @@ def confirmed_rows(c, start, end):
         (SELECT name FROM course_types WHERE id=l.course_type_id) course_type_name,
         (SELECT name FROM subjects WHERE id=l.subject_id) subject_name,
         r.student_id, r.amount, r.ledger_id, r.fee_cents, r.fee_millis, r.fee_overridden,
-        s.name student_name, s.course, s.billing_unit, s.profile_id, s.helen_original,
+        s.name student_name, s.course, s.billing_unit, s.profile_id, ''' + ORIGIN_ON_DATE + ''' helen_original,
         u.name teacher_name
         FROM lessons l
         JOIN teachers t ON t.id=l.teacher_id JOIN users u ON u.id=t.user_id
@@ -560,12 +633,49 @@ def costs_for(c, start, end, shared_only=False):
     return total, details
 
 
-def partner_section(c, lessons, teachers, start, end):
-    """(institution lesson fees − shared costs) × the partner percent, floored at 0.
+def free_lesson_wage_costs(lessons):
+    """Pay for a deliberate $0 lesson is an institution cost, except when Helen teaches it."""
+    details = []
+    total = 0
+    for lesson in lessons:
+        if lesson.get('helen_taught'):
+            continue
+        for line in lesson['lines']:
+            if not line.get('fee_known') or (line.get('fee_cents') or 0) != 0:
+                continue
+            pay = int(line.get('pay_cents') or 0)
+            if pay <= 0:
+                continue
+            details.append({
+                'kind': 'free_lesson', 'date': lesson['date'], 'label': '免费课老师工资',
+                'amount_cents': pay, 'student_name': line.get('student_name') or '',
+                'teacher_name': lesson.get('teacher_name') or '', 'note': '', 'shared': 1,
+            })
+            total += pay
+    return total, details
 
-    Teaching pay is not deducted. Costs marked shared are taken in full; there
-    is no split by whose lesson the cost relates to. With the switch on, only
-    students who are not Helen's originals are institution fees.
+
+def unpriced_lessons(lessons):
+    """Lessons with no price. A known $0 fee is a free lesson, not one of these."""
+    rows = []
+    for lesson in lessons:
+        for line in lesson['lines']:
+            if line.get('fee_known'):
+                continue
+            rows.append({
+                'date': lesson['date'], 'student_name': line.get('student_name') or '',
+                'course': line.get('course') or lesson.get('title') or '',
+                'teacher_name': lesson.get('teacher_name') or '',
+                'lesson_id': lesson['lesson_id'], 'student_id': line.get('student_id'),
+            })
+    return rows
+
+
+def partner_section(c, lessons, teachers, start, end):
+    """Split institution profit by the partner percent, including a loss.
+
+    Vincent's share plus Helen's share equals the profit. Teaching pay is not
+    deducted except a deliberate $0 lesson, whose wage is an institution cost.
     """
     rules = [dict(r) for r in c.execute('''SELECT p.*, u.name teacher_name FROM partner_share_rules p
         LEFT JOIN teachers t ON t.id=p.teacher_id LEFT JOIN users u ON u.id=t.user_id ORDER BY p.effective_from, p.id''')]
@@ -586,16 +696,20 @@ def partner_section(c, lessons, teachers, start, end):
                 'student_id': line['student_id'], 'student_name': line['student_name'], 'course': line['course'],
                 'fee_cents': line['fee_cents'], 'fee_known': line['fee_known'], 'pay_cents': line['pay_cents']})
     shared_total, shared_details = costs_for(c, start, end, shared_only=True)
+    free_total, free_details = free_lesson_wage_costs(lessons)
+    shared_total += free_total
+    shared_details = list(shared_details) + free_details
     remainder = revenue - shared_total
     percent = chosen['percent_bp'] if chosen and chosen['teacher_id'] else 0
-    share = mul_div(remainder, percent, 10000) if remainder > 0 and percent else 0
+    share = signed_mul_div(remainder, percent, 10000) if percent else 0
     teaching = next((teacher for teacher in teachers if chosen and teacher['teacher_id'] == chosen['teacher_id']), None)
     return {'teacher_id': chosen['teacher_id'] if chosen else None,
         'teacher_name': chosen.get('teacher_name') if chosen else None,
         'percent_bp': percent, 'effective_from': chosen['effective_from'] if chosen else None,
         'changed_during_period': any(start.isoformat() < r['effective_from'] <= end.isoformat() for r in rules),
         'revenue_cents': revenue, 'shared_cost_cents': shared_total, 'remainder_cents': remainder,
-        'share_cents': share, 'teaching_pay_cents': teaching['total_pay_cents'] if teaching else 0,
+        'share_cents': share, 'helen_share_cents': remainder - share,
+        'teaching_pay_cents': teaching['total_pay_cents'] if teaching else 0,
         'unknown_fee_count': unknown, 'lines': lines, 'costs': shared_details,
         'rules': [{k: r[k] for k in ('id','teacher_id','teacher_name','percent_bp','effective_from','note')} for r in rules]}
 
@@ -646,7 +760,8 @@ def public_profit_share(partner):
         'remainder_cents': partner['remainder_cents'],
         'share_cents': partner['share_cents'],
         'lines': safe,
-        'costs': [{'date': cost['date'], 'label': cost['label'], 'amount_cents': cost['amount_cents']} for cost in partner['costs']],
+        'costs': [{'date': cost['date'], 'label': cost['label'], 'amount_cents': cost['amount_cents']}
+            for cost in partner['costs'] if cost.get('kind') != 'free_lesson'],
     }
 
 
@@ -686,11 +801,13 @@ def report(c, user, period, day, start, end):
             'total_pay_cents': sum(lesson['pay_cents'] for lesson in own),
             'total_top_up_cents': sum(lesson['top_up_cents'] for lesson in own),
             'unknown_fee_count': sum(lesson['unknown_fee_count'] for lesson in own)})
+    since = origin_since_by_profile(c)
     students = []
     for row in c.execute('''SELECT id, profile_id, name, course, helen_original, archived
         FROM students ORDER BY helen_original DESC, name, course, id'''):
         item = dict(row)
         item['is_new'] = student_is_new(row['helen_original'])
+        item['origin_since'] = since.get(row['profile_id'])
         students.append(item)
     if own_teacher:
         teachers = [teacher for teacher in teachers if teacher['teacher_id'] == own_teacher['id']]
@@ -777,6 +894,9 @@ def set_original(c, user, data):
     found = c.execute(f'SELECT COUNT(DISTINCT profile_id) FROM students WHERE profile_id IN ({marks})', ids).fetchone()[0]
     if found != len(ids):
         raise ValueError('有学生不存在，请刷新后重试。')
+    day = now_local().date().isoformat()
+    for profile_id in ids:
+        record_origin(c, user, profile_id, flag, day)
     c.execute(f'UPDATE students SET helen_original=? WHERE profile_id IN ({marks})', [int(flag), *ids])
     return {'ok': True}
 
@@ -944,7 +1064,7 @@ def csv_bytes(data, teacher_id=None):
         writer.writerow(['分红', f'{(share.get("percent_bp") or 0) / 100:.2f}%'])
         writer.writerow(['收入', aud(share['revenue_cents'])])
         writer.writerow(['减：成本', aud(share['cost_cents'])])
-        writer.writerow(['分红（不足按 0）', aud(share['share_cents'])])
+        writer.writerow(['分红', aud(share['share_cents'])])
         writer.writerow(['日期', '学生', '课程', '收入（AUD）', '分红（AUD）'])
         for line in share['lines']:
             writer.writerow([line['date'], line['student_name'], line['lesson'],
