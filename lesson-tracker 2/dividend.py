@@ -1,8 +1,8 @@
 """Partner profit share. Same numbers as the finance institution cards.
 
 机构利润 = 机构收入 − 机构成本. Vincent's share is that profit times his percent,
-floored at zero. Helen's institution share is the profit times the rest.
-Teaching pay is not subtracted. Her original students are not in this report.
+including a loss. Helen's share is the rest, so the two always add up.
+Her original students are not in this report.
 """
 import calendar
 import csv
@@ -29,9 +29,11 @@ def _months(c, lessons, start, end, percent):
                 if payroll.counts_for_institution(line) and line['fee_known']:
                     revenue += line['fee_cents'] or 0
         cost, _details = payroll.costs_for(c, window_start, window_end, shared_only=True)
+        month_lessons = [lesson for lesson in lessons if window_start.isoformat() <= lesson['date'] <= window_end.isoformat()]
+        cost += payroll.free_lesson_wage_costs(month_lessons)[0]
         remainder = revenue - cost
-        share = payroll.mul_div(remainder, percent, 10000) if remainder > 0 and percent else 0
-        helen = payroll.signed_mul_div(remainder, 10000 - percent, 10000) if percent else remainder
+        share = payroll.signed_mul_div(remainder, percent, 10000) if percent else 0
+        helen = remainder - share
         if revenue or cost:
             rows.append({'month': cursor.strftime('%Y-%m'), 'revenue_cents': revenue,
                 'cost_cents': cost, 'profit_cents': remainder, 'share_cents': share, 'helen_share_cents': helen})
@@ -65,7 +67,7 @@ def report(c, user, period, day, start, end):
     view = payroll.public_profit_share(partner)
     percent = partner['percent_bp'] or 0
     profit = partner['remainder_cents']
-    helen_share = payroll.signed_mul_div(profit, 10000 - percent, 10000) if percent else profit
+    helen_share = partner['helen_share_cents']
     students = {}
     for line in view['lines']:
         row = students.setdefault(line['student_name'], {'name': line['student_name'], 'revenue_cents': 0, 'share_cents': 0, 'lessons': 0})
@@ -73,11 +75,13 @@ def report(c, user, period, day, start, end):
             row['revenue_cents'] += line['revenue_cents'] or 0
         row['share_cents'] += line['share_cents']
         row['lessons'] += 1
+    since = payroll.origin_since_by_profile(c)
     roster = []
     for row in c.execute('''SELECT id, profile_id, name, course, helen_original, archived
         FROM students ORDER BY name, course, id'''):
         item = dict(row)
         item['is_new'] = payroll.student_is_new(row['helen_original'])
+        item['origin_since'] = since.get(row['profile_id'])
         roster.append(item)
     return {
         'period': period, 'start': start.isoformat(), 'end': end.isoformat(),

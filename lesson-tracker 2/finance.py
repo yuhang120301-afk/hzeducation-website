@@ -136,7 +136,9 @@ def monthly(c, user, month):
         'month': f'{year:04d}-{mon:02d}',
         'money_received_cents': report['cash_received_cents'],
         'money_refunded_cents': report['cash_refunded_cents'],
-        'lessons_value_cents': report['turnover_cents'],
+        'institution_lessons_cents': report['turnover_cents'],
+        'own_lessons_cents': report['dashboard']['own_lesson_fee_cents'],
+        'lessons_value_cents': report['turnover_cents'] + report['dashboard']['own_lesson_fee_cents'],
         'outstanding_units': outstanding,
         'outstanding_value_cents': value,
         'teacher_pay_cents': report['teacher_pay_cents'],
@@ -166,15 +168,15 @@ def statement(c, user, period, day, start, end):
     teachers = []
     for teacher in pay['teachers']:
         own = teacher_users.get(teacher['teacher_id']) in owner_ids
-        totals = payroll.institution_totals(teacher['lessons'])
-        line = {'teacher_id': teacher['teacher_id'], 'name': teacher['name'], 'lessons': totals['lessons'],
-            'minutes': totals['minutes'], 'fee_cents': totals['fee_cents'],
-            'pay_cents': totals['pay_cents'], 'is_helen': own, 'rule': teacher['rule']}
+        line = {'teacher_id': teacher['teacher_id'], 'name': teacher['name'],
+            'lessons': len(teacher['lessons']), 'minutes': teacher['total_minutes'],
+            'fee_cents': teacher['total_fee_cents'], 'pay_cents': teacher['total_pay_cents'],
+            'is_helen': own, 'rule': teacher['rule']}
         teachers.append(line)
         if own:
-            helen_income += totals['fee_cents']
+            helen_income += line['fee_cents']
         else:
-            external_pay += totals['pay_cents']
+            external_pay += line['pay_cents']
     partner = pay['partner']
     lessons = [lesson for teacher in pay['teachers'] for lesson in teacher['lessons']]
     own = payroll.original_student_lines(lessons)
@@ -184,7 +186,7 @@ def statement(c, user, period, day, start, end):
     institution_cost = partner['shared_cost_cents']
     profit = partner['remainder_cents']
     percent = partner['percent_bp'] or 0
-    helen_share = payroll.signed_mul_div(profit, 10000 - percent, 10000) if percent else profit
+    helen_share = partner['helen_share_cents']
     total = own_revenue + helen_share
     share_view = payroll.public_profit_share(partner)
     dashboard = {
@@ -200,7 +202,13 @@ def statement(c, user, period, day, start, end):
         'helen_share_cents': helen_share,
         'total_cents': total,
         'lines': share_view['lines'],
-        'costs': share_view['costs'],
+        'costs': [{
+            'date': cost.get('date') or '', 'label': cost.get('label') or '',
+            'amount_cents': cost.get('amount_cents') or 0,
+            'student_name': cost.get('student_name') or '', 'teacher_name': cost.get('teacher_name') or '',
+        } for cost in partner['costs']],
+        'unpriced': payroll.unpriced_lessons(lessons),
+        'own_lesson_fee_cents': sum((line['fee_cents'] or 0) for line in own_lines if line.get('fee_known')),
     }
     turnover = revenue
     costs, cost_lines = payroll.costs_for(c, start, end, shared_only=False)
