@@ -591,6 +591,95 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(pay_cells, ['40.00', '80.00'])
         self.assertIn('机构学生上过的课', Path(__file__).resolve().parent.joinpath('static', 'pay.js').read_text())
 
+    def test_maths_names_and_saved_flag(self):
+        for name in ('数学', '中数', '高数', 'VCE 中数', 'VCE 低数', 'VCE 高数', '新加坡数学', '数学 + 英语',
+                'Singapore Maths', 'Methods', 'Specialist Mathematics', 'General Maths', 'general mathematics'):
+            self.assertTrue(teaching.name_is_maths(name), name)
+        for name in ('英语', '科学', '物理', '化学', '中文', '写作', 'Science', 'English'):
+            self.assertFalse(teaching.name_is_maths(name), name)
+        stored = {row['name']: row['is_maths'] for row in self.c.execute('SELECT name, is_maths FROM subjects')}
+        for name in ('数学', '中数', '高数', 'VCE 中数', 'VCE 低数', 'VCE 高数', '新加坡数学', '数学 + 英语'):
+            self.assertEqual(stored[name], 1, name)
+        for name in ('英语', '科学', '物理', '化学', '中文', '写作'):
+            self.assertEqual(stored[name], 0, name)
+        forced = teaching.save_catalog_item(self.c, {'id': 1, 'role': 'owner'}, 'subjects',
+            {'name': '科学实验', 'is_maths': True, 'active': True}, server.text_value)
+        self.assertEqual(self.c.execute('SELECT is_maths FROM subjects WHERE id=?', (forced['id'],)).fetchone()['is_maths'], 1)
+        teaching.ensure_maths_flag(self.c)
+        self.assertEqual(self.c.execute('SELECT is_maths FROM subjects WHERE id=?', (forced['id'],)).fetchone()['is_maths'], 1)
+        guessed = teaching.save_catalog_item(self.c, {'id': 1, 'role': 'owner'}, 'subjects',
+            {'name': 'Methods Unit', 'active': True}, server.text_value)
+        plain = teaching.save_catalog_item(self.c, {'id': 1, 'role': 'owner'}, 'subjects',
+            {'name': 'Science Lab', 'active': True}, server.text_value)
+        self.assertEqual(self.c.execute('SELECT is_maths FROM subjects WHERE id=?', (guessed['id'],)).fetchone()['is_maths'], 1)
+        self.assertEqual(self.c.execute('SELECT is_maths FROM subjects WHERE id=?', (plain['id'],)).fetchone()['is_maths'], 0)
+        english = self.c.execute("SELECT id FROM subjects WHERE name='英语'").fetchone()['id']
+        with self.assertRaises(teaching.AccessError):
+            teaching.save_catalog_item(self.c, {'id': 2, 'role': 'teacher'}, 'subjects',
+                {'id': english, 'name': '英语', 'is_maths': True, 'active': True}, server.text_value)
+        page = Path(__file__).resolve().parent.joinpath('static')
+        self.assertIn('data-maths-subject', (page / 'pay.js').read_text())
+        self.assertIn('name="is_maths"', (page / 'teaching.js').read_text())
+        self.assertIn('20261127math', (page / 'index.html').read_text())
+
+    def test_original_tick_is_maths_only(self):
+        import json
+        import finance
+        import dividend
+        import receivables
+        receivables.total_owed = lambda c: 0
+        helen_uid = self.user('Helen', 'admin')
+        self.c.execute('INSERT INTO organization_owners(user_id) VALUES(?)', (helen_uid,))
+        helen = self.c.execute('INSERT INTO teachers(user_id,subject) VALUES(?,?)', (helen_uid, '数学')).lastrowid
+        vincent = self.teacher('Vincent')
+        self.rule(helen, 'percent', 40)
+        self.rule(vincent, 'percent', 40)
+        self.partner(vincent, 30)
+        parent = self.user('原有家长')
+        profile = self.c.execute('INSERT INTO student_profiles DEFAULT VALUES').lastrowid
+        maths_id = self.c.execute("SELECT id FROM subjects WHERE name='数学'").fetchone()['id']
+        english_id = self.c.execute("SELECT id FROM subjects WHERE name='英语'").fetchone()['id']
+        maths = self.c.execute('''INSERT INTO students(name,course,parent_id,profile_id,balance,helen_original,subject_id)
+            VALUES(?,?,?,?,?,?,?)''', ('同一原有学生', '数学', parent, profile, 100000, 1, maths_id)).lastrowid
+        english = self.c.execute('''INSERT INTO students(name,course,parent_id,profile_id,balance,helen_original,subject_id)
+            VALUES(?,?,?,?,?,?,?)''', ('同一原有学生', '英语', parent, profile, 100000, 1, english_id)).lastrowid
+        maths_lesson = self.confirmed(helen, maths, '2031-04-02', '16:00', '17:00', 100, self.package(maths, 1, 10000))
+        english_lesson = self.confirmed(vincent, english, '2031-04-03', '16:00', '17:00', 100, self.package(english, 1, 10000))
+        self.c.execute('UPDATE lessons SET subject_id=?, title=? WHERE id=?', (maths_id, '数学', maths_lesson))
+        self.c.execute('UPDATE lessons SET subject_id=?, title=? WHERE id=?', (english_id, '英语', english_lesson))
+        boss = {'id': helen_uid, 'role': 'owner'}
+        board = finance.statement(self.c, boss, 'custom', None, '2031-04-01', '2031-04-30')['dashboard']
+        self.assertEqual([line['lesson'] for line in board['own_lines']], ['数学'])
+        self.assertEqual(board['own_revenue_cents'], 10000)
+        self.assertEqual(board['revenue_cents'], 10000)
+        self.assertEqual(board['vincent_cents'], 3000)
+        month = finance.monthly(self.c, boss, '2031-04')
+        self.assertEqual(month['own_lessons_cents'], 10000)
+        self.assertEqual(month['institution_lessons_cents'], 10000)
+        self.assertEqual(month['lessons_value_cents'], 20000)
+        share = dividend.report(self.c, boss, 'custom', None, '2031-04-01', '2031-04-30')
+        self.assertEqual([line['student_name'] for line in share['lines']], ['同一原有学生'])
+        self.assertEqual(share['revenue_cents'], 10000)
+        self.assertTrue(all('is_new' not in line and 'helen_original' not in line for line in share['lines']))
+        vincent_user = self.c.execute('SELECT user_id FROM teachers WHERE id=?', (vincent,)).fetchone()['user_id']
+        own = payroll.report(self.c, {'id': vincent_user, 'role': 'teacher'}, 'month', '2031-04-15', None, None)
+        self.assertEqual(own['teachers'][0]['total_pay_cents'], 4000)
+        self.assertEqual(own['profit_share']['revenue_cents'], 10000)
+        self.assertEqual(own['profit_share']['share_cents'], 3000)
+        dumped = json.dumps(own['profit_share'], ensure_ascii=False)
+        self.assertIn('同一原有学生', dumped)
+        self.assertNotIn('原有学生', dumped.replace('同一原有学生', ''))
+        self.assertNotIn('新学生', dumped)
+        for lesson in own['teachers'][0]['lessons']:
+            for line in lesson['lines']:
+                self.assertNotIn('is_new', line)
+                self.assertNotIn('is_maths', line)
+        self.c.execute('UPDATE subjects SET is_maths=0 WHERE id=?', (maths_id,))
+        moved = finance.statement(self.c, boss, 'custom', None, '2031-04-01', '2031-04-30')['dashboard']
+        self.assertEqual(moved['own_lines'], [])
+        self.assertEqual(moved['revenue_cents'], 20000)
+        self.assertEqual(moved['vincent_cents'], 6000)
+
 
 def teaching_access():
     import teaching

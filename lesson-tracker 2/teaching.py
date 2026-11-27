@@ -184,6 +184,16 @@ def combo_subject(name):
     return ''
 
 
+def name_is_maths(name):
+    """Default for a course that has no saved 数学课 flag yet."""
+    text = str(name or '').casefold()
+    compact = ''.join(text.split())
+    if 'generalmaths' in compact or 'generalmathematics' in compact:
+        return True
+    return any(marker in text for marker in (
+        '数学', 'maths', 'math', 'methods', 'specialist', '中数', '高数', '低数', '新加坡', 'singapore'))
+
+
 def canonical_subject(name):
     """Science and 科学 display as the same Chinese subject. Stored labels are not rewritten.
 
@@ -283,6 +293,14 @@ def ensure_catalogs(c):
     activate_combo_subject(c)
     merge_combo_subject(c)
     ensure_type_products(c)
+    ensure_maths_flag(c)
+
+
+def ensure_maths_flag(c):
+    """Add 数学课 without rewriting a choice the boss already saved."""
+    _add_column(c, 'subjects', 'is_maths', 'is_maths INTEGER')
+    for row in c.execute('SELECT id, name FROM subjects WHERE is_maths IS NULL'):
+        c.execute('UPDATE subjects SET is_maths=? WHERE id=?', (1 if name_is_maths(row['name']) else 0, row['id']))
 
 
 def focus_catalog(c):
@@ -488,15 +506,28 @@ def save_catalog_item(c, user, table, data, text_value):
     name = text_value(data.get('name'), '名称', 40)
     active = 0 if data.get('active') in (False, 0, '0') else 1
     item_id = int(data.get('id') or 0)
+    is_maths = None
+    if table == 'subjects':
+        if 'is_maths' in data:
+            is_maths = 1 if data.get('is_maths') in (True, 1, '1', 'true') else 0
+        else:
+            is_maths = 1 if name_is_maths(name) else 0
     if item_id:
         if c.execute(f'SELECT 1 FROM {table} WHERE name=? AND id!=?', (name, item_id)).fetchone():
             raise ValueError('这个名称已经有了。')
-        c.execute(f'UPDATE {table} SET name=?, active=? WHERE id=?', (name, active, item_id))
+        if is_maths is None:
+            c.execute(f'UPDATE {table} SET name=?, active=? WHERE id=?', (name, active, item_id))
+        else:
+            c.execute('UPDATE subjects SET name=?, active=?, is_maths=? WHERE id=?', (name, active, is_maths, item_id))
         return {'ok': True, 'id': item_id}
     if c.execute(f'SELECT 1 FROM {table} WHERE name=?', (name,)).fetchone():
         raise ValueError('这个名称已经有了。')
     sort = c.execute(f'SELECT COALESCE(MAX(sort_order),0)+10 FROM {table}').fetchone()[0]
-    new_id = c.execute(f'INSERT INTO {table}(name, sort_order, active) VALUES(?,?,?)', (name, sort, active)).lastrowid
+    if is_maths is None:
+        new_id = c.execute(f'INSERT INTO {table}(name, sort_order, active) VALUES(?,?,?)', (name, sort, active)).lastrowid
+    else:
+        new_id = c.execute('INSERT INTO subjects(name, sort_order, active, is_maths) VALUES(?,?,?,?)',
+            (name, sort, active, is_maths)).lastrowid
     return {'ok': True, 'id': new_id}
 
 

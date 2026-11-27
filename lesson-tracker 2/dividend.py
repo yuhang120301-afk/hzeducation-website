@@ -2,7 +2,7 @@
 
 机构利润 = 机构收入 − 机构成本. Vincent's share is that profit times his percent,
 including a loss. Helen's share is the rest, so the two always add up.
-Her original students are not in this report.
+A ticked student's maths lessons are left out. Their other lessons stay in.
 """
 import calendar
 import csv

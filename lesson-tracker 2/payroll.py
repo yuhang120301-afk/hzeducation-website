@@ -7,8 +7,10 @@ is left after shared costs are taken out of institution lesson fees.
 Teacher wages are not subtracted from that share.
 
 SEPARATE_ORIGINAL_STUDENTS is the one switch for Helen's ticked original
-students. On, they are outside the institution: omitted from turnover, profit
-and 分红. Off, their lesson fees are included with everyone else's.
+students. On, a ticked student is outside the institution only for a maths
+course: omitted from turnover, profit and 分红. A non-maths lesson stays
+institution income even when the student is ticked. Off, every lesson fee
+is included with everyone else's.
 
 An absence is not taught time. absence_pay_clause is the only place that
 decides whether one is paid. Charging the student's balance does not pay
@@ -22,7 +24,7 @@ import logging
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import accounting
-from teaching import SINGAPORE_SUBJECT, AccessError, now_local
+from teaching import SINGAPORE_SUBJECT, AccessError, name_is_maths, now_local
 
 SEED_KEY = 'pay_seed_v1'
 HELEN_PAY_KEY = 'helen_pay_40_v1'
@@ -399,10 +401,13 @@ SEPARATE_ORIGINAL_STUDENTS = True
 
 
 def counts_for_institution(line):
-    """Lines that enter turnover, profit and 分红. The switch is the only gate."""
-    if SEPARATE_ORIGINAL_STUDENTS and not line.get('is_new', True):
-        return False
-    return True
+    """Unticked students, and non-maths lessons, belong to the institution.
+
+    A ticked original student stays outside only for a maths course.
+    """
+    if not SEPARATE_ORIGINAL_STUDENTS or line.get('is_new', True):
+        return True
+    return not line.get('is_maths', True)
 
 
 def institution_totals(lessons):
@@ -423,7 +428,7 @@ def institution_totals(lessons):
 
 
 def original_student_lines(lessons):
-    """Ticked original students only. Unticked students never reach this list.
+    """Ticked original students' maths lessons only. Unticked students, and non-maths lessons, never reach this list.
 
     Helen keeps the whole fee when she teaches the lesson. Another teacher's
     wage for that lesson, including an hourly floor, is deducted. Costs are not.
@@ -484,6 +489,7 @@ def confirmed_rows(c, start, end):
         (SELECT name FROM course_types WHERE id=l.course_type_id) course_type_name,
         (SELECT name FROM subjects WHERE id=l.subject_id) subject_name,
         r.student_id, r.amount, r.ledger_id, r.fee_cents, r.fee_millis, r.fee_overridden,
+        (SELECT sb.is_maths FROM subjects sb WHERE sb.id=COALESCE(l.subject_id, s.subject_id)) subject_is_maths,
         s.name student_name, s.course, s.billing_unit, s.profile_id, ''' + ORIGIN_ON_DATE + ''' helen_original,
         u.name teacher_name
         FROM lessons l
@@ -521,9 +527,11 @@ def build_lessons(c, rows, rules_by_teacher):
             grouped.append(item)
         fee, known, paid_units, gift_units, overridden = resolved_fee(c, row)
         millis = row['fee_millis'] if row['fee_millis'] is not None else (None if fee is None else fee * 10)
+        stored = row['subject_is_maths'] if 'subject_is_maths' in row.keys() else None
+        is_maths = bool(stored) if stored is not None else name_is_maths(row['subject_name'] or row['course'])
         index[key]['lines'].append({'student_id': row['student_id'], 'student_name': row['student_name'],
             'course': row['course'], 'billing_unit': row['billing_unit'], 'profile_id': row['profile_id'],
-            'is_new': student_is_new(row['helen_original']),
+            'is_new': student_is_new(row['helen_original']), 'is_maths': is_maths,
             'units': row['amount'], 'paid_units': paid_units, 'gift_units': gift_units,
             'fee_cents': fee, 'fee_millis': millis, 'fee_known': known, 'fee_overridden': overridden, 'ledger_id': row['ledger_id']})
     for item in grouped:
@@ -737,10 +745,11 @@ def hide_student_origin(teachers):
             for line in lesson['lines']:
                 line.pop('is_new', None)
                 line.pop('helen_original', None)
+                line.pop('is_maths', None)
 
 
 def public_profit_share(partner):
-    """What the partner teacher may see. No original-student rows are included."""
+    """What the partner teacher may see. Ticked students' maths lessons are already left out."""
     lines = partner['lines']
     parts = line_share_cents(lines, partner['share_cents'])
     safe = []
