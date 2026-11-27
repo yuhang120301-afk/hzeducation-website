@@ -33,6 +33,8 @@ ENGLISH_COUNT = 11
 MATHS_MILLIS = (MATHS_CENTS * 10) // MATHS_COUNT
 ENGLISH_MILLIS = (ENGLISH_CENTS * 10) // ENGLISH_COUNT
 MATHS_FEE_CENTS = (MATHS_MILLIS + 5) // 10
+ENGLISH_FEE_CENTS = (ENGLISH_MILLIS + 5) // 10
+PRICE_KEY = 'atticus_prices_v1'
 
 
 def _log(lines):
@@ -398,3 +400,214 @@ def run(c, db_path):
         return
     c.execute('RELEASE atticus_maths')
     _log(['APPLY  12 节数学课已改到数学课程。英语还剩 8，数学还剩 11。'])
+
+
+def _pack_total(millis_each, count):
+    return (int(millis_each) * int(count) + 5) // 10
+
+
+def _drop_zero_cash(c, ledger_id):
+    """A stored $0 hides the pack total. Removing it does not change money received."""
+    if not ledger_id:
+        return
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_entries'").fetchone():
+        return
+    c.execute('DELETE FROM cash_entries WHERE ledger_id=? AND IFNULL(cash_delta,0)=0', (ledger_id,))
+
+
+def _set_pack_value(c, pack, millis_each, count):
+    total = _pack_total(millis_each, count)
+    fees = json.dumps([millis_each] * count)
+    cols = _columns(c, 'credit_batches')
+    sets = ['total_cents=?', 'unit_fees=?']
+    values = [total, fees]
+    if 'paid_cents' in cols:
+        sets.append('paid_cents=?')
+        values.append(total)
+    if 'payment_status' in cols:
+        sets.append("payment_status='paid'")
+    c.execute(f"UPDATE credit_batches SET {', '.join(sets)} WHERE id=?", (*values, pack['id']))
+    _drop_zero_cash(c, pack.get('ledger_id'))
+    return total
+
+
+def _save_hourly(c, student_id, profile_id, subject, hourly_cents, actor):
+    c.execute('UPDATE students SET custom_hourly_cents=? WHERE id=?', (hourly_cents, student_id))
+    import pricing
+    pricing.ensure_subject_prices(c)
+    for minutes in (60, 90):
+        each = pricing.per_lesson_cents(hourly_cents, minutes)
+        c.execute('''INSERT INTO student_subject_prices(profile_id,product,subject,lesson_minutes,per_lesson_cents,note,updated_by)
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(profile_id,product,subject,lesson_minutes) DO UPDATE SET
+            per_lesson_cents=excluded.per_lesson_cents, note=excluded.note, updated_by=excluded.updated_by''',
+            (profile_id, 'one_to_one', subject, minutes, each, 'Atticus 约定价格', actor))
+
+
+def _lesson_fees(c, profile_id):
+    marks = ','.join('?' for _ in DATES)
+    rows = c.execute(f'''SELECT substr(l.starts_at,1,10) day, r.lesson_id, r.fee_cents, r.ledger_id, s.course
+        FROM lessons l
+        JOIN lesson_reports r ON r.lesson_id=l.id
+        JOIN students s ON s.id=r.student_id
+        WHERE s.profile_id=? AND substr(l.starts_at,1,10) IN ({marks})
+        ORDER BY l.starts_at''', (profile_id, *DATES)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _backup_fees():
+    folder = '/var/data'
+    if not os.path.isdir(folder):
+        return {}, ''
+    names = sorted(name for name in os.listdir(folder)
+        if name.startswith('backup-atticus-maths-') and name.endswith('.sqlite3'))
+    if not names:
+        return {}, ''
+    path = os.path.join(folder, names[0])
+    found = {}
+    try:
+        uri = PathUri(path)
+        src = sqlite3.connect(uri, uri=True, timeout=30)
+    except sqlite3.Error:
+        return {}, path
+    src.row_factory = sqlite3.Row
+    try:
+        marks = ','.join('?' for _ in DATES)
+        rows = src.execute(f'''SELECT substr(l.starts_at,1,10) day, r.fee_cents
+            FROM lessons l
+            JOIN lesson_reports r ON r.lesson_id=l.id
+            JOIN students s ON s.id=r.student_id
+            WHERE lower(trim(s.name))='atticus' AND substr(l.starts_at,1,10) IN ({marks})
+            ORDER BY l.starts_at''', DATES).fetchall()
+        for row in rows:
+            found.setdefault(row['day'], row['fee_cents'])
+    except sqlite3.Error:
+        found = {}
+    finally:
+        src.close()
+    return found, path
+
+
+def PathUri(path):
+    return f"file:{os.path.realpath(path)}?mode=ro"
+
+
+def _month_sum(fees):
+    months = {'2026-09': 0, '2026-10': 0, '2026-11': 0}
+    counts = {'2026-09': 0, '2026-10': 0, '2026-11': 0}
+    for day, cents in fees:
+        key = day[:7]
+        if key in months and cents is not None:
+            months[key] += int(cents)
+            counts[key] += 1
+    return months, counts
+
+
+def apply_prices(c, decision):
+    actor = _actor(c)
+    english_id = decision['english_id']
+    maths_id = decision['maths_id']
+    profile_id = decision['profile_id']
+    before = _lesson_fees(c, profile_id)
+    backup_fees, backup_path = _backup_fees()
+    lines = ['APPLY  Atticus prices']
+    if backup_path:
+        lines.append(f'更正前的备份 {backup_path}')
+    for row in before:
+        old = backup_fees.get(row['day'])
+        lines.append(
+            f"{row['day']} 更正前 { _aud(old) }，现在 {_aud(row['fee_cents'])}，改为 {_aud(MATHS_FEE_CENTS)}")
+    for row in before:
+        c.execute('''UPDATE lesson_reports SET fee_cents=?, fee_millis=?, fee_overridden=0
+            WHERE lesson_id=?''', (MATHS_FEE_CENTS, MATHS_MILLIS, row['lesson_id']))
+    english_packs = _packs(c, english_id)
+    maths_packs = _packs(c, maths_id)
+    for pack in english_packs:
+        count = (int(pack['purchased'] or 0) + int(pack['gifted'] or 0)) // LESSON
+        if count not in (8, 23):
+            continue
+        total = _set_pack_value(c, pack, ENGLISH_MILLIS, count)
+        note = '已用完，不改变英语还剩的 8 节' if count == 23 else '还剩的 8 节按这个价'
+        lines.append(f"英语课时包 #{pack['id']} {count} 节改为 {_aud(total)}（{note}）")
+    for pack in maths_packs:
+        paid = int(pack['purchased'] or 0)
+        gift = int(pack['gifted'] or 0)
+        if paid == 900 and gift == 200:
+            total = _set_pack_value(c, pack, MATHS_MILLIS, 11)
+            lines.append(f"数学转移包 #{pack['id']} 9+2 改为 {_aud(total)}，以后按这个价扣。")
+        elif paid == 1200 and gift == 0:
+            _set_pack_value(c, pack, MATHS_MILLIS, 12)
+            total = MATHS_FEE_CENTS * 12
+            c.execute('UPDATE credit_batches SET total_cents=? WHERE id=?', (total, pack['id']))
+            if 'paid_cents' in _columns(c, 'credit_batches'):
+                c.execute('UPDATE credit_batches SET paid_cents=? WHERE id=?', (total, pack['id']))
+            lines.append(f"数学 12 节包 #{pack['id']} 改为 {_aud(total)}")
+    _save_hourly(c, english_id, profile_id, '英语', ENGLISH_FEE_CENTS, actor)
+    _save_hourly(c, maths_id, profile_id, '数学', MATHS_FEE_CENTS, actor)
+    lines.append(f'英语保存单价 {_aud(ENGLISH_FEE_CENTS)}/小时，数学 {_aud(MATHS_FEE_CENTS)}/小时。')
+    after = [(row['day'], MATHS_FEE_CENTS) for row in before]
+    old_pairs = [(row['day'], backup_fees.get(row['day']) if backup_fees else row['fee_cents']) for row in before]
+    now_pairs = [(row['day'], row['fee_cents']) for row in before]
+    for label, pairs in (('备份里的课酬', old_pairs), ('改价前的课酬', now_pairs), ('改价后的课酬', after)):
+        months, counts = _month_sum(pairs)
+        lines.append(
+            f"{label} 9月 {_aud(months['2026-09'])}（{counts['2026-09']}节）"
+            f" 10月 {_aud(months['2026-10'])}（{counts['2026-10']}节）"
+            f" 11月 {_aud(months['2026-11'])}（{counts['2026-11']}节）")
+    c.execute('INSERT OR IGNORE INTO app_meta(key, value) VALUES(?,?)', (PRICE_KEY, '1'))
+    return lines
+
+
+def _aud(cents):
+    if cents is None:
+        return '无'
+    cents = int(cents)
+    sign = '-' if cents < 0 else ''
+    cents = abs(cents)
+    return f'{sign}${cents // 100}.{cents % 100:02d}'
+
+
+def run_prices(c, db_path):
+    """Save Atticus's agreed hourly prices and put them on the packs and the 12 lessons."""
+    try:
+        if _marked_price(c):
+            return
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='students'").fetchone():
+            return
+        people = _people(c)
+        if len(people) != 1:
+            if people:
+                _log([f'Atticus 价格不改：名为 Atticus 的人有 {len(people)} 个。'])
+            return
+        profile_id = next(iter(people))
+        english, maths = _enrolments(c, profile_id)
+        if len(english) != 1 or len(maths) != 1:
+            _log(['Atticus 价格不改：英语或数学课不是一门。'])
+            return
+        if _production(db_path):
+            try:
+                copied = _backup(db_path)
+                _log([f'已备份到 {copied}，没有替换正在用的数据库。'])
+            except (OSError, FileExistsError, FileNotFoundError, RuntimeError) as exc:
+                _log([f'备份没有写成，价格这次不改：{exc}'])
+                return
+        decision = {'english_id': english[0]['id'], 'maths_id': maths[0]['id'], 'profile_id': profile_id}
+        c.execute('SAVEPOINT atticus_prices')
+        try:
+            lines = apply_prices(c, decision)
+        except Exception as exc:
+            c.execute('ROLLBACK TO atticus_prices')
+            c.execute('RELEASE atticus_prices')
+            _log([f'Atticus 价格没有写成：{exc}'])
+            return
+        c.execute('RELEASE atticus_prices')
+        _log(lines)
+    except sqlite3.Error as exc:
+        _log([f'Atticus 价格没有读成：{exc}'])
+
+
+def _marked_price(c):
+    tables = {row['name'] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'app_meta' not in tables:
+        return False
+    return c.execute('SELECT 1 FROM app_meta WHERE key=?', (PRICE_KEY,)).fetchone() is not None

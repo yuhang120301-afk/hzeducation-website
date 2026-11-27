@@ -12,6 +12,7 @@ os.environ['LESSON_SECURE_COOKIE'] = '0'
 
 import atticus_maths
 import payroll
+import pricing
 import server
 
 DATES = atticus_maths.DATES
@@ -94,7 +95,14 @@ class AtticusMathsTests(unittest.TestCase):
 
     def test_moves_the_twelve_lessons_and_keeps_both_balances(self):
         english, maths, used, kept, priced, maths_pack = self._scene()
+        self.c.execute(
+            'INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by) VALUES(?,?,?,?,1)',
+            (self.c.execute('SELECT ledger_id FROM credit_batches WHERE id=?', (kept,)).fetchone()[0], 0, 'bank', ''))
+        self.c.execute(
+            'INSERT INTO cash_entries(ledger_id,cash_delta,payment_method,reference,recorded_by) VALUES(?,?,?,?,1)',
+            (self.c.execute('SELECT ledger_id FROM credit_batches WHERE id=?', (maths_pack,)).fetchone()[0], 0, 'bank', ''))
         atticus_maths.run(self.c, os.environ['LESSON_DB'])
+        atticus_maths.run_prices(self.c, os.environ['LESSON_DB'])
         self.assertEqual(atticus_maths._left(self.c, english), (800, 0))
         self.assertEqual(atticus_maths._left(self.c, maths), (900, 200))
         self.assertEqual(self.c.execute('SELECT balance FROM students WHERE id=?', (english,)).fetchone()[0], 800)
@@ -109,6 +117,22 @@ class AtticusMathsTests(unittest.TestCase):
         kept_maths = self.c.execute('SELECT paid_left, gift_left FROM credit_batches WHERE id=?', (maths_pack,)).fetchone()
         self.assertEqual((kept_maths['paid_left'], kept_maths['gift_left']), (900, 200))
         self.assertEqual(self.c.execute('SELECT paid_left FROM credit_batches WHERE id=?', (used,)).fetchone()[0], 0)
+        self.assertEqual(self.c.execute('SELECT total_cents FROM credit_batches WHERE id=?', (kept,)).fetchone()[0],
+            atticus_maths._pack_total(atticus_maths.ENGLISH_MILLIS, 8))
+        self.assertEqual(self.c.execute('SELECT total_cents FROM credit_batches WHERE id=?', (used,)).fetchone()[0],
+            atticus_maths._pack_total(atticus_maths.ENGLISH_MILLIS, 23))
+        self.assertEqual(self.c.execute('SELECT total_cents FROM credit_batches WHERE id=?', (maths_pack,)).fetchone()[0],
+            atticus_maths._pack_total(atticus_maths.MATHS_MILLIS, 11))
+        self.assertEqual(self.c.execute('SELECT custom_hourly_cents FROM students WHERE id=?', (english,)).fetchone()[0],
+            atticus_maths.ENGLISH_FEE_CENTS)
+        self.assertEqual(self.c.execute('SELECT custom_hourly_cents FROM students WHERE id=?', (maths,)).fetchone()[0],
+            atticus_maths.MATHS_FEE_CENTS)
+        self.assertIsNone(self.c.execute('SELECT 1 FROM cash_entries WHERE ledger_id=? AND cash_delta=0',
+            (self.c.execute('SELECT ledger_id FROM credit_batches WHERE id=?', (kept,)).fetchone()[0],)).fetchone())
+        english_row = dict(self.c.execute('SELECT * FROM students WHERE id=?', (english,)).fetchone())
+        maths_row = dict(self.c.execute('SELECT * FROM students WHERE id=?', (maths,)).fetchone())
+        self.assertEqual(pricing.course_rate(self.c, english_row)['hourly_cents'], atticus_maths.ENGLISH_FEE_CENTS)
+        self.assertEqual(pricing.course_rate(self.c, maths_row)['hourly_cents'], atticus_maths.MATHS_FEE_CENTS)
         kept_fees = self.c.execute('SELECT unit_fees, total_cents FROM credit_batches WHERE id=?', (kept,)).fetchone()
         self.assertNotEqual(kept_fees['unit_fees'] or '', '')
         self.assertEqual(self.c.execute('SELECT total_cents FROM credit_batches WHERE id=?', (priced,)).fetchone()[0], 10000)
