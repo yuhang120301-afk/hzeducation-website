@@ -252,7 +252,7 @@ async function renderMonth(){
   ['收到的钱', money(data.money_received_cents)],
   ['退款', money(data.money_refunded_cents)],
   ['机构学生上过的课', money(data.institution_lessons_cents||0)],
-  ['我的学生上过的课', money(data.own_lessons_cents||0)],
+  ['Helen工作室上过的课', money(data.own_lessons_cents||0)],
   [`Helen工作室 工资${data.hms_percent_bp?` ${data.hms_percent_bp/100}%`:''}（不另付）`, money(data.hms_wage_cents||0)],
   ['Helen工作室 分红', money(data.hms_dividend_cents||0)],
   ['上过的课合计', money((data.institution_lessons_cents||0)+(data.own_lessons_cents||0))],
@@ -263,7 +263,7 @@ async function renderMonth(){
   ['挂账应收', money(data.receivable_cents)],
  ];
  const problems=(data.exceptions||[]).map(item=>`<li>${escapeHTML(item)}</li>`).join('');
- $('#surface').innerHTML=`${backBar()}<div class="mock-top"><div><h1 class="mock-title">月度对账</h1><p class="mock-sub">${escapeHTML(data.month||month)}</p></div></div><div class="sums">${lines.map(([name,value])=>`<div class="card"><div class="k">${name}</div><div class="n">${value}</div></div>`).join('')}</div><p class="footnote">机构成本与分红、财务报表是同一个数，含机构课的老师工资。上面的老师工资是全部上课工资。Helen工作室 工资和 Helen工作室 分红两张卡加起来是我的学生收入，工资那一笔不另付。</p><section class="panel" style="margin-top:18px;padding:18px"><h2>对不上的</h2>${problems?`<ul>${problems}</ul>`:'<p class="muted">这个月对得上。</p>'}</section>`;
+ $('#surface').innerHTML=`${backBar()}<div class="mock-top"><div><h1 class="mock-title">月度对账</h1><p class="mock-sub">${escapeHTML(data.month||month)}</p></div></div><div class="sums">${lines.map(([name,value])=>`<div class="card"><div class="k">${name}</div><div class="n">${value}</div></div>`).join('')}</div><p class="footnote">机构成本与分红、财务报表是同一个数，含机构课的老师工资。上面的老师工资是全部上课工资。Helen工作室 工资和 Helen工作室 分红两张卡加起来是Helen工作室收入，工资那一笔不另付。</p><section class="panel" style="margin-top:18px;padding:18px"><h2>对不上的</h2>${problems?`<ul>${problems}</ul>`:'<p class="muted">这个月对得上。</p>'}</section>`;
  bindBack('/?view=finance');
 }
 async function renderReceivable(){
@@ -295,7 +295,7 @@ function lessonMoneyRows(lines){
 function financeDetail(board, key){
  if(key==='own'){
   const rows=(board.own_lines||[]).map(line=>`<tr><td>${escapeHTML(line.date)}</td><td>${userHTML(line.student_name)}</td><td>${userHTML(line.lesson||'')}</td><td>${userHTML(line.teacher_name||'')}</td><td>${line.fee_known?cashFmt(line.fee_cents):'未定价'}</td><td>${cashFmt(line.teacher_pay_cents||0)}</td><td>${line.net_cents==null?'未定价':cashFmt(line.net_cents)}</td></tr>`).join('');
-  return `<h2>我的学生收入 ${cashFmt(board.own_revenue_cents||0)}</h2>${hmsSplitCards(board.hms_wage_cents, board.hms_dividend_cents, board.hms_percent_bp)}<p class="dash-formula">Helen工作室 工资 ${cashFmt(board.hms_wage_cents||0)} + Helen工作室 分红 ${cashFmt(board.hms_dividend_cents||0)} = 我的学生收入 ${cashFmt(board.own_revenue_cents||0)}。工资按 Helen 亲自上课的课酬的 ${((board.hms_percent_bp||4000)/100)}% 列出，不另付。其他老师的工资已经从分红里扣除。</p><div class="table-wrap"><table><thead><tr><th>日期</th><th>学生</th><th>课程</th><th>老师</th><th>课酬</th><th>扣除老师工资</th><th>计入我的收入</th></tr></thead><tbody>${rows||'<tr><td colspan="7">这个周期没有原有学生的课。</td></tr>'}</tbody></table></div>`;
+  return `<h2>Helen工作室收入 ${cashFmt(board.own_revenue_cents||0)}</h2>${hmsSplitCards(board.hms_wage_cents, board.hms_dividend_cents, board.hms_percent_bp)}<p class="dash-formula">Helen工作室 工资 ${cashFmt(board.hms_wage_cents||0)} + Helen工作室 分红 ${cashFmt(board.hms_dividend_cents||0)} = Helen工作室收入 ${cashFmt(board.own_revenue_cents||0)}。工资按 Helen 亲自上课的课酬的 ${((board.hms_percent_bp||4000)/100)}% 列出，不另付。其他老师的工资已经从分红里扣除。</p><div class="table-wrap"><table><thead><tr><th>日期</th><th>学生</th><th>课程</th><th>老师</th><th>课酬</th><th>扣除老师工资</th><th>计入Helen工作室收入</th></tr></thead><tbody>${rows||'<tr><td colspan="7">这个周期没有原有学生的课。</td></tr>'}</tbody></table></div>`;
  }
  if(key==='revenue') return `<h2>机构收入</h2>${lessonMoneyRows(board.lines)}`;
  if(key==='cost'){
@@ -309,7 +309,7 @@ function financeDetail(board, key){
 }
 function financeCards(board){
  const cards=[
-  ['own','我的学生收入',board.own_revenue_cents,'原有学生的课'],
+  ['own','Helen工作室收入',board.own_revenue_cents,'原有学生的课'],
   ['revenue','机构收入',board.revenue_cents,'机构的课'],
   ['cost','机构成本',board.cost_cents,'机构课的老师工资，加上共同成本'],
   ['profit','机构利润',board.profit_cents,'机构收入 − 机构成本'],
@@ -318,7 +318,7 @@ function financeCards(board){
  ];
  const missing=board.unpriced||[];
  const warning=missing.length?`<div class="accounting-warning"><strong>有 ${missing.length} 节课没有价格，请补上</strong><ul>${missing.map(row=>`<li>${escapeHTML(row.date)} · ${userHTML(row.student_name)} · ${userHTML(row.course||'')} · ${userHTML(row.teacher_name)} <button type="button" class="action" data-fee-lesson="${row.lesson_id}" data-fee-student="${row.student_id}" data-fee-value="">补上价格</button></li>`).join('')}</ul></div>`:'';
- return `${warning}<div class="dash-grid">${cards.map(([key,label,cents,note])=>`<button type="button" class="dash-card${financeDash===key?' on':''}" data-dash="${key}"><span>${label}</span><strong>${cashFmt(cents||0)}</strong><small>${note}</small></button>`).join('')}</div>${hmsSplitCards(board.hms_wage_cents, board.hms_dividend_cents, board.hms_percent_bp)}<p class="dash-formula">Helen工作室 工资 ${cashFmt(board.hms_wage_cents||0)} + Helen工作室 分红 ${cashFmt(board.hms_dividend_cents||0)} = 我的学生收入 ${cashFmt(board.own_revenue_cents||0)}</p>${financeDash?`<section class="panel dash-detail">${financeDetail(board, financeDash)}</section>`:''}<section class="dash-total"><p>本月我的总收入</p><strong>${cashFmt(board.total_cents||0)}</strong><p class="dash-formula">本月我的总收入 = 我的学生收入 ${cashFmt(board.own_revenue_cents||0)} + 我的机构分成 ${cashFmt(board.helen_share_cents||0)} + 我教机构课的工资 ${cashFmt(board.helen_institution_wage_cents||0)}</p></section>`;
+ return `${warning}<div class="dash-grid">${cards.map(([key,label,cents,note])=>`<button type="button" class="dash-card${financeDash===key?' on':''}" data-dash="${key}"><span>${label}</span><strong>${cashFmt(cents||0)}</strong><small>${note}</small></button>`).join('')}</div>${hmsSplitCards(board.hms_wage_cents, board.hms_dividend_cents, board.hms_percent_bp)}<p class="dash-formula">Helen工作室 工资 ${cashFmt(board.hms_wage_cents||0)} + Helen工作室 分红 ${cashFmt(board.hms_dividend_cents||0)} = Helen工作室收入 ${cashFmt(board.own_revenue_cents||0)}</p>${financeDash?`<section class="panel dash-detail">${financeDetail(board, financeDash)}</section>`:''}<section class="dash-total"><p>本月我的总收入</p><strong>${cashFmt(board.total_cents||0)}</strong><p class="dash-formula">本月我的总收入 = Helen工作室收入 ${cashFmt(board.own_revenue_cents||0)} + 我的机构分成 ${cashFmt(board.helen_share_cents||0)} + 我教机构课的工资 ${cashFmt(board.helen_institution_wage_cents||0)}</p></section>`;
 }
 async function renderFinance(){
  loadFinanceChoice();
