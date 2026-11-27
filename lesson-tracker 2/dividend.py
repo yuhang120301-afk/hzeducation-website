@@ -13,7 +13,7 @@ import payroll
 from teaching import now_local
 
 
-def _months(c, lessons, start, end, percent):
+def _months(c, lessons, start, end, rules):
     rows = []
     cursor = start.replace(day=1)
     while cursor <= end:
@@ -21,22 +21,34 @@ def _months(c, lessons, start, end, percent):
         month_end = cursor.replace(day=last)
         window_start = max(start, cursor)
         window_end = min(end, month_end)
-        revenue = 0
-        for lesson in lessons:
-            if not window_start.isoformat() <= lesson['date'] <= window_end.isoformat():
-                continue
-            for line in lesson['lines']:
-                if payroll.counts_for_institution(line) and line['fee_known']:
-                    revenue += line['fee_cents'] or 0
-        cost, _details = payroll.costs_for(c, window_start, window_end, shared_only=True)
         month_lessons = [lesson for lesson in lessons if window_start.isoformat() <= lesson['date'] <= window_end.isoformat()]
-        cost += payroll.free_lesson_wage_costs(month_lessons)[0]
-        remainder = revenue - cost
-        share = payroll.signed_mul_div(remainder, percent, 10000) if percent else 0
-        helen = remainder - share
-        if revenue or cost:
+        pieces = []
+        revenue = 0
+        for lesson in month_lessons:
+            percent = payroll.percent_bp_on(rules, lesson['date'])
+            for line in lesson['lines']:
+                if not payroll.counts_for_institution(line):
+                    continue
+                if line['fee_known']:
+                    revenue += line['fee_cents'] or 0
+                    pieces.append((line['fee_cents'] or 0, percent))
+                pay = int(line.get('pay_cents') or 0)
+                if pay:
+                    pieces.append((-pay, percent))
+        cost, details = payroll.costs_for(c, window_start, window_end, shared_only=True)
+        wage, _, _helen = payroll.institution_wage_costs(month_lessons)
+        free, free_details = payroll.free_lesson_wage_costs(month_lessons)
+        for item in list(details) + free_details:
+            day = str(item.get('date') or window_start.isoformat())
+            if day < window_start.isoformat():
+                day = window_start.isoformat()
+            pieces.append((-int(item['amount_cents'] or 0), payroll.percent_bp_on(rules, day)))
+        remainder = revenue - cost - wage - free
+        share = payroll.share_of_pieces(pieces)
+        if revenue or cost or wage or free:
             rows.append({'month': cursor.strftime('%Y-%m'), 'revenue_cents': revenue,
-                'cost_cents': cost, 'profit_cents': remainder, 'share_cents': share, 'helen_share_cents': helen})
+                'cost_cents': cost + wage + free, 'profit_cents': remainder,
+                'share_cents': share, 'helen_share_cents': remainder - share})
         cursor = month_end + dt.timedelta(days=1)
     return rows
 
@@ -90,7 +102,7 @@ def report(c, user, period, day, start, end):
         'profit_cents': profit, 'share_cents': partner['share_cents'], 'helen_share_cents': helen_share,
         'lines': view['lines'], 'costs': view['costs'],
         'students': sorted(students.values(), key=lambda row: (row['name'],)),
-        'months': _months(c, lessons, start, end, percent),
+        'months': _months(c, lessons, start, end, partner['rules']),
         'roster': roster, 'rules': partner['rules'],
     }
 

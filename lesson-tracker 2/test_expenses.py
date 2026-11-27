@@ -179,13 +179,13 @@ class ExpenseTests(unittest.TestCase):
         partner = report['partner']
         self.assertEqual(partner['percent_bp'], 3000)
         self.assertEqual(partner['revenue_cents'], 10000)
-        self.assertEqual(partner['shared_cost_cents'], 1000)
-        self.assertEqual(partner['remainder_cents'], 9000)
-        self.assertEqual(partner['share_cents'], 2700)
+        self.assertEqual(partner['shared_cost_cents'], 5000)
+        self.assertEqual(partner['remainder_cents'], 5000)
+        self.assertEqual(partner['share_cents'], 1500)
         self.assertEqual(report['teachers'][0]['total_pay_cents'], 4000)
         month = finance.monthly(self.c, self.owner, '2026-05')
         self.assertEqual(month['teacher_pay_cents'], 4000)
-        self.assertEqual(month['cost_cents'], 6000)
+        self.assertEqual(month['cost_cents'], 5000)
         self.assertNotEqual(month['cost_cents'], month['teacher_pay_cents'])
 
 
@@ -244,7 +244,8 @@ class ExpensePageTests(unittest.TestCase):
             page.wait_for_selector('#surface .sums .card .k')
             labels = page.locator('#surface .sums .card .k').all_inner_texts()
             self.assertIn('老师工资', labels)
-            self.assertIn('成本', labels)
+            self.assertIn('机构成本', labels)
+            self.assertNotIn('成本', labels)
             page.click('.sidebar [data-view=audit]')
             page.wait_for_selector('#audit-list')
             self.assertIn('作废成本', page.locator('#audit-list').inner_text())
