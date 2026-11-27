@@ -74,7 +74,7 @@ def finance_rows(data):
         ['毛利率 %', '' if data['gross_margin_percent'] is None else data['gross_margin_percent']],
         ['机构利润', aud(data['organisation_profit_cents'])],
         ['Vincent 分成', aud(data['partner']['share_cents'])],
-        ['我的学生收入', aud(data['helen_teaching_cents'])],
+        ['Helen工作室收入', aud(data['helen_teaching_cents'])],
         ['其中 Helen工作室 工资（不另付）', aud((data.get('dashboard') or {}).get('hms_wage_cents') or 0)],
         ['其中 Helen工作室 分红', aud((data.get('dashboard') or {}).get('hms_dividend_cents') or 0)],
         ['我教机构课的工资', aud((data.get('dashboard') or {}).get('helen_institution_wage_cents') or 0)],
@@ -121,7 +121,7 @@ def finance_pdf(data):
         ('毛利率', '' if data['gross_margin_percent'] is None else f"{data['gross_margin_percent']}%"),
         ('机构利润', aud(data['organisation_profit_cents'])),
         ('Vincent 分成', aud(data['partner']['share_cents'])),
-        ('我的学生收入', aud(data['helen_teaching_cents'])),
+        ('Helen工作室收入', aud(data['helen_teaching_cents'])),
         ('本月我的总收入', aud(data['helen_net_cents'])),
     ]
     for label, value in lines:

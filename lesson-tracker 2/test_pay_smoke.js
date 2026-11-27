@@ -143,7 +143,7 @@ function html(selector) {
   const teacherPay = html('#pay-result');
   if (teacherPay.includes('id="pay-rule-form"')) throw new Error('teacher pay rendered the boss wage form');
   if (!teacherPay.includes('分红')) throw new Error('teacher pay is missing 分红');
-  if (teacherPay.includes('我的学生收入')) throw new Error('teacher pay shows Helen student income');
+  if (teacherPay.includes('Helen工作室收入')) throw new Error('teacher pay shows Helen student income');
   if (teacherPay.includes('· 原有学生') || teacherPay.includes('· 新学生')) throw new Error('teacher pay labels whether a student is original');
 
   context.view = 'share';
@@ -157,7 +157,7 @@ function html(selector) {
   await context.renderFinance();
   const finance = html('#surface');
   if (finance.includes('is not defined')) throw new Error('finance page failed: ' + finance.slice(0, 300));
-  if (!finance.includes('我的学生收入') || !finance.includes('本月我的总收入')) throw new Error('finance page is missing its cards');
+  if (!finance.includes('Helen工作室收入') || !finance.includes('本月我的总收入')) throw new Error('finance page is missing its cards');
 
   for (const [name, view] of [['renderExpenses', 'expenses'], ['renderMonth', 'month'], ['renderReceivable', 'receivable'], ['renderAccounting', 'accounting']]) {
     context.view = view;
