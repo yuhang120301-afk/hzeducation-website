@@ -1,5 +1,6 @@
 """A subject the boss just added can be given to a teacher and keeps its name."""
 import os
+import json
 import tempfile
 import unittest
 import uuid
@@ -52,10 +53,36 @@ class NewSubjectTeacherTests(unittest.TestCase):
             state = teaching.state_for(c, owner)
             teacher = next(item for item in state['teachers'] if item['id'] == teacher_id)
             self.assertEqual(teacher['subjects'], ['数学', 'Science 7-10', 'Workshop 4-6'])
+            self.assertEqual(teacher['subject'], '数学、Science 7-10、Workshop 4-6')
             listed = {item['name']: item['active'] for item in state['subjects']}
             self.assertEqual(listed['Science 7-10'], 1)
             self.assertEqual(listed['Workshop 4-6'], 1)
             self.assertTrue(all(item for item in created))
+        finally:
+            c.rollback()
+            c.close()
+
+    def test_stale_single_subject_does_not_hide_the_ticked_list(self):
+        c = server.connect()
+        c.execute('BEGIN')
+        try:
+            phone = '048' + f'{uuid.uuid4().int % 100000000:08d}'
+            user_id = c.execute(
+                "INSERT INTO users(phone,name,password,role) VALUES(?, 'Vincent', 'x', 'parent')",
+                (phone,)).lastrowid
+            teacher_id = c.execute(
+                "INSERT INTO teachers(user_id, subject) VALUES(?, '新加坡数学')", (user_id,)).lastrowid
+            owner = {'id': 1, 'role': 'owner'}
+            teaching.save_catalog_item(c, owner, 'subjects', {'name': 'Science 7-10', 'active': True}, server.text_value)
+            ticked = ['数学', '新加坡数学', 'Science 7-10', '科学']
+            c.execute('UPDATE teachers SET subject=?, subjects=? WHERE id=?', (
+                '新加坡数学', json.dumps(ticked, ensure_ascii=False), teacher_id))
+            state = teaching.state_for(c, owner)
+            teacher = next(item for item in state['teachers'] if item['id'] == teacher_id)
+            self.assertEqual(teacher['subjects'], ticked)
+            self.assertEqual(teacher['subject'], '、'.join(ticked))
+            known = teaching.subject_names(c)
+            self.assertEqual(teaching.canonical_subject('、'.join(ticked), known), '、'.join(ticked))
         finally:
             c.rollback()
             c.close()
