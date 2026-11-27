@@ -268,15 +268,28 @@ def indexed_fee_millis(c, ledger_id):
     return total if used else None
 
 
+def _batch_columns(c):
+    """Column names for credit_batches, remembered on this connection."""
+    found = getattr(c, '_batch_columns', None)
+    if found is None:
+        found = {row['name'] for row in c.execute('PRAGMA table_info(credit_batches)')}
+        try:
+            c._batch_columns = found
+        except AttributeError:
+            pass
+    return found
+
+
 def fee_for_ledger(c, ledger_id, amount):
     """Return (fee cents or None if the price is unknown, paid units, gift units)."""
-    indexed = indexed_fee_millis(c, ledger_id)
-    cols = {row['name'] for row in c.execute('PRAGMA table_info(credit_batches)')}
+    cols = _batch_columns(c)
     owed = 'b.receivable_cents' if 'receivable_cents' in cols else 'NULL'
-    moves = c.execute(f'''SELECT m.paid, m.gift, b.purchased, b.gifted, cash.cash_delta, {owed} AS receivable_cents
+    fees = 'b.unit_fees' if 'unit_fees' in cols else "''"
+    moves = c.execute(f'''SELECT m.paid, m.gift, b.purchased, b.gifted, cash.cash_delta, {owed} AS receivable_cents, {fees} AS unit_fees
         FROM credit_movements m JOIN credit_batches b ON b.id=m.batch_id
         LEFT JOIN cash_entries cash ON cash.ledger_id=b.ledger_id
         WHERE m.ledger_id=?''', (ledger_id,)).fetchall()
+    indexed = indexed_fee_millis(c, ledger_id) if any(move['unit_fees'] for move in moves) else None
     if not moves:
         return (None, 0, 0) if amount else (0, 0, 0)
     fee = 0
@@ -454,10 +467,15 @@ def original_student_lines(lessons):
                 deducted = 0 if helen_taught else int(line.get('pay_cents') or 0)
             line_net = None if fee is None else fee - deducted
             hms_wage = hms_dividend = None
-            hms_percent = int(lesson.get('share_bp') or 0) if helen_taught else 0
+            hms_percent = None
             if helen_taught and known and fee:
+                # Presentation only. A dated 0% rule still shows Helen's 40%, and it is not added to 应付.
+                hms_percent = int(lesson.get('hms_share_bp') or 0) or int(lesson.get('share_bp') or 0) or 4000
                 hms_wage = mul_div(fee, hms_percent, 10000)
                 hms_dividend = fee - hms_wage
+            elif not helen_taught and line_net is not None:
+                hms_wage = 0
+                hms_dividend = line_net
             if line_net is not None:
                 net += line_net
                 if helen_taught:
@@ -478,8 +496,14 @@ def original_student_lines(lessons):
                 'hms_dividend_cents': hms_dividend,
                 'hms_percent_bp': hms_percent if hms_wage is not None else None,
             })
+    wage_total = sum(line['hms_wage_cents'] or 0 for line in rows)
+    dividend_total = sum(line['hms_dividend_cents'] or 0 for line in rows)
+    percents = {line['hms_percent_bp'] for line in rows if line.get('hms_percent_bp')}
+    helen_fee = sum((line['fee_cents'] or 0) for line in rows if line.get('helen_taught') and line.get('fee_known') and line.get('fee_cents'))
     return {'revenue_cents': net, 'helen_taught_cents': helen_taught_cents,
-        'other_teacher_cents': other_teacher_cents, 'lines': rows}
+        'other_teacher_cents': other_teacher_cents, 'lines': rows,
+        'helen_fee_cents': helen_fee, 'hms_wage_cents': wage_total, 'hms_dividend_cents': dividend_total,
+        'hms_percent_bp': percents.pop() if len(percents) == 1 else 0}
 
 
 def absence_pay_clause():
@@ -575,7 +599,16 @@ def build_lessons(c, rows, rules_by_teacher):
             percent_cents = mul_div(known_fee, percent_bp, 10000) if rule and rule['rule_type'] == 'percent' else 0
         item['pay_cents'] = pay
         item['pay_basis'] = basis
-        item['share_bp'] = rule['percent_bp'] if rule and rule['rule_type'] == 'percent' else None
+        dated_percent = int(rule['percent_bp'] or 0) if rule and rule['rule_type'] == 'percent' else 0
+        item['share_bp'] = dated_percent or None
+        shown_percent = dated_percent
+        if item['helen_taught'] and not shown_percent:
+            for candidate in reversed(rules_by_teacher.get(item['teacher_id'], [])):
+                if candidate.get('rule_type') == 'percent' and int(candidate.get('percent_bp') or 0) > 0:
+                    shown_percent = int(candidate['percent_bp'])
+                    break
+            shown_percent = shown_percent or 4000
+        item['hms_share_bp'] = shown_percent if item['helen_taught'] else 0
         item['percent_cents'] = percent_cents
         item['floor_cents'] = floor_cents
         item['top_up_cents'] = max(0, pay - percent_cents) if basis == 'floor' else 0
@@ -792,6 +825,7 @@ def partner_section(c, lessons, teachers, start, end):
         'remainder_cents': remainder,
         'share_cents': share, 'helen_share_cents': remainder - share,
         'helen_institution_wage_cents': helen_wage,
+        'institution_wage_cents': wage_total + free_total,
         'teaching_pay_cents': teaching['total_pay_cents'] if teaching else 0,
         'unknown_fee_count': unknown, 'lines': lines, 'costs': cost_details,
         'rules': [{k: r[k] for k in ('id','teacher_id','teacher_name','percent_bp','effective_from','note')} for r in rules]}
@@ -904,8 +938,12 @@ def report(c, user, period, day, start, end):
         if share.get('teacher_id') == own_teacher['id']:
             payload['profit_share'] = public_profit_share(share)
         return payload
+    own_summary = original_student_lines(lessons)
     return {'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'teachers': teachers, 'partner': partner_section(c, lessons, teachers, start, end),
+        'hms': {'fee_cents': own_summary['helen_fee_cents'], 'wage_cents': own_summary['hms_wage_cents'],
+            'dividend_cents': own_summary['hms_dividend_cents'], 'percent_bp': own_summary['hms_percent_bp'],
+            'own_revenue_cents': own_summary['revenue_cents']},
         'rules': [public_rule(r) for r in rules],
         'cost_entries': [dict(r) for r in c.execute('SELECT * FROM cost_entries ORDER BY cost_date DESC, id DESC')],
         'cost_schedules': [dict(r) for r in c.execute('SELECT * FROM cost_schedules ORDER BY active DESC, id DESC')],
