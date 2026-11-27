@@ -137,6 +137,10 @@
 .gcal-event.t-ethan{--event-bg:#E4F0EF;--event-edge:#7AB6AD;--event-ink:#1F2A27}
 .gcal-event.t-christina{--event-bg:#F5F1E7;--event-edge:#CEBA88;--event-ink:#1F2A27}
 .gcal-event.completed,.month-chip.completed,.lesson-card.completed{--event-bg:#EDF0F2;--event-ink:#53616B;--event-edge:#9AA7AF;background:#EDF0F2;color:#53616B;border-color:#9AA7AF;border-style:solid;border-left-style:solid}
+.gcal-event.draft,.month-chip.draft,.lesson-card.draft,.today-lesson.draft{--event-bg:#FFF6D8;--event-ink:#6B5314;--event-edge:#E2C56A;background:#FFF6D8;color:#6B5314;border-color:#E2C56A}
+.owner-week-grid .owner-lesson.draft{--event-bg:#FFF6D8;--event-ink:#6B5314;--event-edge:#E2C56A;background:#FFF6D8;color:#6B5314}
+.draft-tag{display:inline-block;margin-top:2px;font-style:normal;font-size:11px;font-weight:700;color:#8A6A12;background:#F8E7A8;border-radius:4px;padding:0 4px}
+.badge.draft{background:#FFF6D8;color:#8A6A12}
 .gcal-event.gcal-ghost{opacity:.35;outline:1px dashed var(--event-edge)}
 .drag-tip{position:absolute;top:-24px;left:0;background:#204F40;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;white-space:nowrap;font-style:normal}
 .pay-card{display:flex;gap:14px;align-items:center;border:1px solid #D9E3DF;border-left:5px solid var(--tone,#9AA7AF);background:var(--fill,#fff);border-radius:12px;padding:16px 18px;margin:0 0 12px;cursor:pointer;color:#1F2A27}.card-hours{text-align:right;min-width:7.5rem}.card-hours strong{display:block}.card-hours .muted{font-size:12px;margin-top:8px}.card-hours .muted:first-child{margin-top:0}
