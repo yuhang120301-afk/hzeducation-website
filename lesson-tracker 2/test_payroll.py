@@ -620,7 +620,7 @@ class PayCalculationTests(unittest.TestCase):
         page = Path(__file__).resolve().parent.joinpath('static')
         self.assertIn('data-maths-subject', (page / 'pay.js').read_text())
         self.assertIn('name="is_maths"', (page / 'teaching.js').read_text())
-        self.assertIn('20261127cost', (page / 'index.html').read_text())
+        self.assertIn('20261127hms', (page / 'index.html').read_text())
 
     def test_original_tick_is_maths_only(self):
         import json
@@ -730,6 +730,44 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(board['own_revenue_cents'], 10000)
         exported = payroll.csv_bytes(payroll.report(self.c, {'id': helen_uid, 'role': 'owner'}, 'custom', None, '2032-03-01', '2032-03-31'), None).decode('utf-8')
         self.assertNotIn('剩余为负时为 0', exported)
+
+    def test_hms_shows_forty_percent_of_helens_lessons_and_other_teachers_net(self):
+        import finance
+        helen_uid = self.user('Helen', 'admin')
+        self.c.execute('INSERT INTO organization_owners(user_id) VALUES(?)', (helen_uid,))
+        helen = self.c.execute('INSERT INTO teachers(user_id,subject) VALUES(?,?)', (helen_uid, '数学')).lastrowid
+        vincent = self.teacher('Vincent')
+        hers = self.student('Helen的学生', original=True)
+        yilia = self.student('Yilia', original=True)
+        self.rule(helen, 'percent', 40, start='2032-06-20')
+        self.rule(vincent, 'percent', 40)
+        self.partner(vincent, 30)
+        self.confirmed(helen, hers, '2032-06-02', '16:00', '17:00', 100, self.package(hers, 1, 68000))
+        self.confirmed(vincent, yilia, '2032-06-03', '16:00', '17:00', 100, self.package(yilia, 1, 10000))
+        boss = {'id': helen_uid, 'role': 'owner'}
+        board = finance.statement(self.c, boss, 'custom', None, '2032-06-01', '2032-06-30')['dashboard']
+        report = payroll.report(self.c, {'id': 1, 'role': 'owner'}, 'custom', None, '2032-06-01', '2032-06-30')
+        helen_pay = next(teacher['total_pay_cents'] for teacher in report['teachers'] if teacher['teacher_id'] == helen)
+        vincent_pay = next(teacher['total_pay_cents'] for teacher in report['teachers'] if teacher['teacher_id'] == vincent)
+        self.assertEqual(helen_pay, 0)
+        self.assertEqual(vincent_pay, 4000)
+        self.assertEqual(board['own_revenue_cents'], 74000)
+        self.assertEqual(board['hms_fee_cents'], 68000)
+        self.assertEqual(board['hms_wage_cents'], 27200)
+        self.assertEqual(board['hms_dividend_cents'], 46800)
+        self.assertEqual(board['hms_percent_bp'], 4000)
+        self.assertEqual(board['hms_wage_cents'] + board['hms_dividend_cents'], board['own_revenue_cents'])
+        self.assertEqual(report['hms']['fee_cents'], 68000)
+        self.assertEqual(report['hms']['wage_cents'], 27200)
+        self.assertEqual(report['partner']['institution_wage_cents'], 0)
+        self.assertEqual(sum(teacher['total_pay_cents'] for teacher in report['teachers']), 4000)
+        page = Path(__file__).resolve().parent / 'static'
+        script = (page / 'pay.js').read_text()
+        teaching = (page / 'teaching.js').read_text()
+        self.assertIn('工资 ${pct}%（不另付）', script)
+        self.assertIn('已计入机构成本', script)
+        self.assertNotIn('上课工资不在这里扣', teaching)
+        self.assertIn('机构课的老师工资已经算在机构成本里', teaching)
 
     def test_one_rate_rounds_profit_once_and_helen_wage_is_income(self):
         import finance
