@@ -354,24 +354,41 @@ def institution_totals(lessons):
 
 
 def original_student_lines(lessons):
-    """Helen's ticked students. Empty when the switch is off, because they then count as institution."""
+    """Ticked original students only. Unticked students never reach this list.
+
+    Helen keeps the whole fee when she teaches the lesson. Another teacher's
+    wage for that lesson, including an hourly floor, is deducted. Costs are not.
+    """
     rows = []
-    revenue = 0
+    net = helen_taught_cents = other_teacher_cents = 0
     for lesson in lessons:
+        helen_taught = bool(lesson.get('helen_taught'))
         for line in lesson['lines']:
             if counts_for_institution(line):
                 continue
             known = bool(line['fee_known'])
-            if known:
-                revenue += line['fee_cents'] or 0
+            fee = (line['fee_cents'] or 0) if known else None
+            deducted = 0 if helen_taught else int(line.get('pay_cents') or 0)
+            line_net = None if fee is None else fee - deducted
+            if line_net is not None:
+                net += line_net
+                if helen_taught:
+                    helen_taught_cents += line_net
+                else:
+                    other_teacher_cents += line_net
             rows.append({
                 'date': lesson['date'],
                 'student_name': line['student_name'],
                 'lesson': lesson.get('title') or line.get('course') or '',
-                'revenue_cents': line['fee_cents'] if known else None,
+                'teacher_name': lesson.get('teacher_name') or '',
+                'fee_cents': fee,
                 'fee_known': known,
+                'teacher_pay_cents': deducted,
+                'net_cents': line_net,
+                'helen_taught': helen_taught,
             })
-    return revenue, rows
+    return {'revenue_cents': net, 'helen_taught_cents': helen_taught_cents,
+        'other_teacher_cents': other_teacher_cents, 'lines': rows}
 
 
 def absence_pay_clause():
@@ -426,7 +443,7 @@ def build_lessons(c, rows, rules_by_teacher):
             item = {'lesson_id': key, 'teacher_id': row['teacher_id'], 'teacher_name': row['teacher_name'],
                 'title': row['title'], 'date': row['starts_at'][:10], 'starts_at': row['starts_at'], 'ends_at': row['ends_at'],
                 'minutes': minutes, 'course_type_name': row['course_type_name'] or '', 'subject_name': row['subject_name'] or '',
-                'lines': []}
+                'helen_taught': row['teacher_id'] in owner_teachers, 'lines': []}
             index[key] = item
             grouped.append(item)
         fee, known, paid_units, gift_units, overridden = resolved_fee(c, row)

@@ -385,8 +385,11 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(board['profit_cents'], 9000)
         self.assertEqual(board['vincent_cents'], 2700)
         self.assertEqual(board['helen_share_cents'], 6300)
-        self.assertEqual(board['own_revenue_cents'], 20000)
-        self.assertEqual(board['total_cents'], 26300)
+        self.assertEqual(board['own_revenue_cents'], 12000)
+        self.assertEqual(board['helen_taught_cents'], 0)
+        self.assertEqual(board['other_teacher_cents'], 12000)
+        self.assertEqual(board['own_lines'][0]['teacher_pay_cents'], 8000)
+        self.assertEqual(board['total_cents'], 18300)
         self.assertNotEqual(board['vincent_cents'], 1500)
         self.assertEqual(share['revenue_cents'], board['revenue_cents'])
         self.assertEqual(share['cost_cents'], board['cost_cents'])
@@ -410,6 +413,67 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(folded['own_revenue_cents'], 0)
         self.assertEqual(folded['revenue_cents'], 30000)
         self.assertEqual(folded['vincent_cents'], 8700)
+
+    def test_ticked_students_keep_helens_fee_and_drop_other_teachers_pay(self):
+        import json
+        import finance
+        helen_uid = self.user('Helen', 'admin')
+        self.c.execute('INSERT INTO organization_owners(user_id) VALUES(?)', (helen_uid,))
+        helen = self.c.execute('INSERT INTO teachers(user_id,subject) VALUES(?,?)', (helen_uid, '数学')).lastrowid
+        vincent = self.teacher('Vincent')
+        angela = self.teacher('Angela')
+        original = self.student('勾选的原有学生', original=True)
+        fresh = self.student('没勾选的学生')
+        self.rule(helen, 'percent', 40)
+        self.rule(vincent, 'percent', 40)
+        self.rule(angela, 'percent', 40, floor=3500)
+        self.partner(vincent, 30)
+        self.confirmed(helen, original, '2030-12-02', '16:00', '17:00', 100, self.package(original, 1, 10000))
+        self.confirmed(vincent, original, '2030-12-03', '16:00', '17:00', 100, self.package(original, 1, 10000))
+        self.confirmed(vincent, fresh, '2030-12-04', '16:00', '17:00', 100, self.package(fresh, 1, 10000))
+        self.confirmed(angela, original, '2030-12-05', '16:00', '17:00', 100, self.package(original, 1, 5000))
+        self.confirmed(vincent, fresh, '2030-11-30', '16:00', '17:00', 100, self.package(fresh, 1, 10000))
+        cancelled = self.confirmed(helen, original, '2030-12-06', '16:00', '17:00', 100, self.package(original, 1, 10000))
+        self.c.execute("UPDATE lessons SET status='cancelled' WHERE id=?", (cancelled,))
+        absent = self.confirmed(vincent, original, '2030-12-07', '16:00', '17:00', 100, self.package(original, 1, 10000))
+        self.c.execute('UPDATE lessons SET absent=1 WHERE id=?', (absent,))
+        gift_ledger = self.c.execute("INSERT INTO ledger(student_id,delta,kind,lesson_date,note,actor_id,request_id) VALUES(?,100,'credit','2030-12-01','赠课',1,?)",
+            (original, uuid.uuid4().hex)).lastrowid
+        gift_batch = self.c.execute('''INSERT INTO credit_batches(student_id,ledger_id,purchased,gifted,paid_left,gift_left,credited_on)
+            VALUES(?,?,0,100,0,100,'2030-12-01')''', (original, gift_ledger)).lastrowid
+        self.confirmed(angela, original, '2030-12-08', '16:00', '17:00', 100, gift_batch, paid=False)
+        self.c.execute("INSERT INTO cost_entries(cost_date,label,amount_cents,shared,created_by) VALUES('2030-12-01','房租',2000,1,1)")
+        board = finance.statement(self.c, {'id': 1, 'role': 'owner'}, 'custom', None, '2030-12-01', '2030-12-31')['dashboard']
+        by_teacher = {}
+        for line in board['own_lines']:
+            by_teacher.setdefault(line['teacher_name'], []).append(line)
+        helen_line = by_teacher['Helen'][0]
+        vincent_line = by_teacher['Vincent'][0]
+        angela_lines = {line['fee_cents']: line for line in by_teacher['Angela']}
+        self.assertEqual(helen_line['teacher_pay_cents'], 0)
+        self.assertEqual(helen_line['net_cents'], 10000)
+        self.assertEqual(vincent_line['teacher_pay_cents'], 4000)
+        self.assertEqual(vincent_line['net_cents'], 6000)
+        self.assertEqual(angela_lines[5000]['teacher_pay_cents'], 3500)
+        self.assertEqual(angela_lines[5000]['net_cents'], 1500)
+        self.assertEqual(angela_lines[0]['fee_cents'], 0)
+        self.assertEqual(angela_lines[0]['teacher_pay_cents'], 3500)
+        self.assertEqual(angela_lines[0]['net_cents'], -3500)
+        self.assertEqual(board['helen_taught_cents'], 10000)
+        self.assertEqual(board['other_teacher_cents'], 6000 + 1500 - 3500)
+        self.assertEqual(board['own_revenue_cents'], 10000 + 4000)
+        self.assertNotIn('没勾选的学生', [line['student_name'] for line in board['own_lines']])
+        self.assertEqual(board['revenue_cents'], 10000)
+        self.assertEqual(board['cost_cents'], 2000)
+        self.assertEqual(board['profit_cents'], 8000)
+        self.assertEqual(board['vincent_cents'], 2400)
+        self.assertEqual(board['total_cents'], board['own_revenue_cents'] + board['helen_share_cents'])
+        vincent_user = self.c.execute('SELECT user_id FROM teachers WHERE id=?', (vincent,)).fetchone()['user_id']
+        own = payroll.report(self.c, {'id': vincent_user, 'role': 'teacher'}, 'month', '2030-12-15', None, None)
+        self.assertEqual(own['teachers'][0]['total_pay_cents'], 8000)
+        self.assertEqual(own['profit_share']['revenue_cents'], 10000)
+        self.assertEqual(own['profit_share']['share_cents'], 2400)
+        self.assertNotIn('勾选的原有学生', json.dumps(own['profit_share']))
 
 
 def teaching_access():

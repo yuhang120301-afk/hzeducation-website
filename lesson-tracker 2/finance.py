@@ -177,7 +177,9 @@ def statement(c, user, period, day, start, end):
             external_pay += totals['pay_cents']
     partner = pay['partner']
     lessons = [lesson for teacher in pay['teachers'] for lesson in teacher['lessons']]
-    own_revenue, own_lines = payroll.original_student_lines(lessons)
+    own = payroll.original_student_lines(lessons)
+    own_revenue = own['revenue_cents']
+    own_lines = own['lines']
     revenue = partner['revenue_cents']
     institution_cost = partner['shared_cost_cents']
     profit = partner['remainder_cents']
@@ -188,6 +190,8 @@ def statement(c, user, period, day, start, end):
     dashboard = {
         'own_revenue_cents': own_revenue,
         'own_lines': own_lines,
+        'helen_taught_cents': own['helen_taught_cents'],
+        'other_teacher_cents': own['other_teacher_cents'],
         'revenue_cents': revenue,
         'cost_cents': institution_cost,
         'profit_cents': profit,
