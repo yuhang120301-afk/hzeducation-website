@@ -474,6 +474,15 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(own['profit_share']['revenue_cents'], 10000)
         self.assertEqual(own['profit_share']['share_cents'], 2400)
         self.assertNotIn('勾选的原有学生', json.dumps(own['profit_share']))
+        for lesson in own['teachers'][0]['lessons']:
+            for line in lesson['lines']:
+                self.assertNotIn('is_new', line)
+                self.assertNotIn('helen_original', line)
+        exported = payroll.csv_bytes(own, vincent).decode('utf-8')
+        self.assertIn('勾选的原有学生', exported)
+        self.assertNotIn('is_new', exported)
+        boss_pay = payroll.report(self.c, {'id': helen_uid, 'role': 'owner'}, 'custom', None, '2030-12-01', '2030-12-31')
+        self.assertTrue(any('is_new' in line for teacher in boss_pay['teachers'] for lesson in teacher['lessons'] for line in lesson['lines']))
 
 
 def teaching_access():
