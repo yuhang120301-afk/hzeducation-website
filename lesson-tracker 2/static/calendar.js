@@ -193,7 +193,7 @@ function injectCalendarSwitch(){
 }
 function renderTimeGrid(){
  if(!['owner','admin'].includes(state.user.role)) return renderListSchedule();
- if(calendarSpan==='month') return renderMonth();
+ if(calendarSpan==='month') return renderCalendarMonth();
  const end = datePlus(weekStart, 7);
  const week = state.lessons.filter(lesson=>lesson.status!=='cancelled' && lesson.starts_at>=weekStart && lesson.starts_at<end && (!teacherFilter || String(lesson.teacher_id)===String(teacherFilter)));
  const rows = week.filter(lesson=>scheduleStatus==='all' || lesson.status===scheduleStatus);
@@ -306,7 +306,7 @@ function bindMiniPicker(){
  panel.querySelectorAll('[data-mini-move]').forEach(button=>button.onclick=event=>{event.stopPropagation(); miniAnchor=shiftMonth(miniAnchor, button.dataset.miniMove==='1'?1:-1); panel.innerHTML=paintMini(miniAnchor); bindMiniPicker(); panel.hidden=false;});
  panel.querySelectorAll('[data-mini-day]').forEach(button=>button.onclick=()=>{panel.hidden=true; toggle.setAttribute('aria-expanded','false'); focusCalendar(button.dataset.miniDay);});
 }
-function renderMonth(){
+function renderCalendarMonth(){
  const anchor=gcalDay||weekStart||state.today;
  const start=monthStart(anchor), end=monthEnd(anchor);
  const lead=(new Date(start+'T12:00:00Z').getUTCDay()+6)%7;
