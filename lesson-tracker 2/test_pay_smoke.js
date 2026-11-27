@@ -69,7 +69,7 @@ const financeData = {
 };
 const context = {
   console, document, $,
-  state: {user: {role: 'owner', name: 'Helen'}, teachers: [{id: 2, name: 'Vincent'}], today: '2026-11-25', students: [], administrators: []},
+  state: {user: {role: 'owner', name: 'Helen'}, teachers: [{id: 2, name: 'Vincent'}], today: '2026-11-25', timezone: 'Australia/Melbourne', students: [], administrators: [], lessons: []},
   view: 'pay',
   api: async (path) => {
     if (String(path).startsWith('pay')) return payData;
@@ -91,7 +91,18 @@ const context = {
   modal() {},
   openDetail() {},
   fmt: (value) => String(value ?? ''),
-  datePlus: (day) => day,
+  datePlus: (day, n = 0) => {
+    const date = new Date(String(day).slice(0, 10) + 'T12:00:00Z');
+    date.setUTCDate(date.getUTCDate() + Number(n || 0));
+    return date.toISOString().slice(0, 10);
+  },
+  formatDate: (day) => String(day || ''),
+  weekStart: '2026-11-23',
+  scheduleStatus: 'all',
+  teacherFilter: '',
+  requestAnimationFrame: (fn) => fn(),
+  addEventListener() {},
+  window: {matchMedia: () => ({matches: false})},
   backBar: () => '',
   bindBack() {},
   goBack() {},
@@ -103,6 +114,7 @@ const context = {
 };
 context.globalThis = context;
 vm.createContext(context);
+vm.runInContext(fs.readFileSync(path.join(root, 'static/calendar.js'), 'utf8'), context, {filename: 'calendar.js'});
 vm.runInContext(fs.readFileSync(path.join(root, 'static/pay.js'), 'utf8'), context, {filename: 'pay.js'});
 vm.runInContext(fs.readFileSync(path.join(root, 'static/accounting.js'), 'utf8'), context, {filename: 'accounting.js'});
 
@@ -154,6 +166,31 @@ function html(selector) {
     const page = html('#surface') + html('#accounting-result');
     if (page.includes('is not defined')) throw new Error(name + ' failed: ' + page.slice(0, 300));
   }
+
+  context.view = 'schedule';
+  context.state.user.role = 'owner';
+  context.state.today = '2026-11-27';
+  context.state.lessons = [
+    {id: 11, status: 'scheduled', starts_at: '2026-11-27T17:45', ends_at: '2026-11-27T19:00', teacher_name: 'Helen', title: '数学', students: [{name: 'Edward'}], reports: [{content: '先记着', homework: '', feedback: ''}]},
+    {id: 12, status: 'completed', starts_at: '2026-11-27T10:00', ends_at: '2026-11-27T11:00', teacher_name: 'Helen', title: '数学', students: [{name: 'Edward'}], reports: [{content: '已交', homework: '作业', feedback: '好', ledger_id: 4}]},
+  ];
+  context.renderTimeGrid();
+  const monthButton = store['#span-month'];
+  if (!monthButton || typeof monthButton.onclick !== 'function') throw new Error('calendar month button was not wired');
+  monthButton.onclick();
+  const grid = html('#surface');
+  if (grid.includes('正在读取月度对账')) throw new Error('month calendar opened the reconciliation page');
+  if (!grid.includes('class="month-grid"') || !grid.includes('month-days')) throw new Error('month calendar grid did not render');
+  if (!grid.includes(' draft') || !grid.includes('草稿')) throw new Error('month calendar is missing the draft colour');
+  if (!grid.includes(' completed')) throw new Error('month calendar is missing the completed colour');
+
+  context.view = 'month';
+  store['#surface'].innerHTML = '';
+  await context.renderMonth();
+  const reconciliation = html('#surface');
+  if (reconciliation.includes('正在读取月度对账')) throw new Error('reconciliation stayed on its loading line');
+  if (!reconciliation.includes('月度对账')) throw new Error('reconciliation page did not render');
+  if (reconciliation.includes('class="month-grid"')) throw new Error('reconciliation rendered the calendar grid');
   console.log('pay smoke ok');
 })().catch((error) => {
   console.error(error);
