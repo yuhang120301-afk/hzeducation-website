@@ -228,6 +228,7 @@ def _create_base_tables(c):
         try:
             import atticus_maths
             atticus_maths.run(c, DB_PATH)
+            atticus_maths.run_prices(c, DB_PATH)
         except Exception:
             logging.exception('Atticus maths correction failed')
 
