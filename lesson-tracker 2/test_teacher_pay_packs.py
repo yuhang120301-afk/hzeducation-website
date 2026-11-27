@@ -148,7 +148,7 @@ class TeacherPayPackTests(unittest.TestCase):
         self.assertIn("if(!form) return", source)
         self.assertIn("if(state.user.role!=='teacher') bindPaySettings();", source)
         page = Path(__file__).resolve().parent.joinpath('static', 'index.html').read_text()
-        self.assertIn('/pay.js?v=20261125fix', page)
+        self.assertIn('/pay.js?v=20261127own', page)
 
 
 if __name__ == '__main__':

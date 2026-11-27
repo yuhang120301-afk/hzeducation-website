@@ -271,7 +271,10 @@ function lessonMoneyRows(lines){
  return `<div class="table-wrap"><table><thead><tr><th>日期</th><th>学生</th><th>课程</th><th>收入</th></tr></thead><tbody>${(lines||[]).map(line=>`<tr><td>${escapeHTML(line.date)}</td><td>${userHTML(line.student_name)}</td><td>${userHTML(line.lesson||'')}</td><td>${line.fee_known?cashFmt(line.revenue_cents):'未定价'}</td></tr>`).join('')||'<tr><td colspan="4">这个周期没有课。</td></tr>'}</tbody></table></div>`;
 }
 function financeDetail(board, key){
- if(key==='own') return `<h2>我的学生收入</h2>${lessonMoneyRows(board.own_lines)}`;
+ if(key==='own'){
+  const rows=(board.own_lines||[]).map(line=>`<tr><td>${escapeHTML(line.date)}</td><td>${userHTML(line.student_name)}</td><td>${userHTML(line.lesson||'')}</td><td>${userHTML(line.teacher_name||'')}</td><td>${line.fee_known?cashFmt(line.fee_cents):'未定价'}</td><td>${cashFmt(line.teacher_pay_cents||0)}</td><td>${line.net_cents==null?'未定价':cashFmt(line.net_cents)}</td></tr>`).join('');
+  return `<h2>我的学生收入</h2><div class="table-wrap"><table><thead><tr><th>日期</th><th>学生</th><th>课程</th><th>老师</th><th>课酬</th><th>扣除老师工资</th><th>计入我的收入</th></tr></thead><tbody>${rows||'<tr><td colspan="7">这个周期没有原有学生的课。</td></tr>'}</tbody></table></div><p class="dash-formula">Helen 亲自上课 ${cashFmt(board.helen_taught_cents||0)}</p><p class="dash-formula">其他老师上课（已扣老师工资） ${cashFmt(board.other_teacher_cents||0)}</p>`;
+ }
  if(key==='revenue') return `<h2>机构收入</h2>${lessonMoneyRows(board.lines)}`;
  if(key==='cost'){
   const rows=(board.costs||[]).map(cost=>`<article class="trow"><div class="grow">${escapeHTML(cost.date)} · ${userHTML(cost.label)}</div><div class="num">${cashFmt(cost.amount_cents||0)}</div></article>`).join('');
