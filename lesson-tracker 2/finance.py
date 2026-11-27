@@ -142,7 +142,10 @@ def monthly(c, user, month):
         'outstanding_units': outstanding,
         'outstanding_value_cents': value,
         'teacher_pay_cents': report['teacher_pay_cents'],
-        'cost_cents': report['operating_cost_cents'],
+        'cost_cents': report['dashboard']['cost_cents'],
+        'hms_wage_cents': report['dashboard']['hms_wage_cents'],
+        'hms_dividend_cents': report['dashboard']['hms_dividend_cents'],
+        'helen_institution_wage_cents': report['dashboard']['helen_institution_wage_cents'],
         'forfeit_units': report['forfeit_units'],
         'receivable_cents': __import__('receivables').total_owed(c),
         'exceptions': exceptions,
@@ -187,7 +190,8 @@ def statement(c, user, period, day, start, end):
     profit = partner['remainder_cents']
     percent = partner['percent_bp'] or 0
     helen_share = partner['helen_share_cents']
-    total = own_revenue + helen_share
+    helen_wage = partner.get('helen_institution_wage_cents') or 0
+    total = own_revenue + helen_share + helen_wage
     share_view = payroll.public_profit_share(partner)
     dashboard = {
         'own_revenue_cents': own_revenue,
@@ -200,6 +204,9 @@ def statement(c, user, period, day, start, end):
         'percent_bp': percent,
         'vincent_cents': partner['share_cents'],
         'helen_share_cents': helen_share,
+        'helen_institution_wage_cents': helen_wage,
+        'hms_wage_cents': sum(line.get('hms_wage_cents') or 0 for line in own_lines),
+        'hms_dividend_cents': sum(line.get('hms_dividend_cents') or 0 for line in own_lines),
         'total_cents': total,
         'lines': share_view['lines'],
         'costs': [{
