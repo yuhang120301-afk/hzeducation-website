@@ -620,7 +620,7 @@ class PayCalculationTests(unittest.TestCase):
         page = Path(__file__).resolve().parent.joinpath('static')
         self.assertIn('data-maths-subject', (page / 'pay.js').read_text())
         self.assertIn('name="is_maths"', (page / 'teaching.js').read_text())
-        self.assertIn('20261127income', (page / 'index.html').read_text())
+        self.assertIn('20261127atticus', (page / 'index.html').read_text())
 
     def test_original_tick_is_maths_only(self):
         import json

@@ -225,6 +225,11 @@ def _create_base_tables(c):
         vouchers.schema(c)
         import timeline
         timeline.schema(c)
+        try:
+            import atticus_maths
+            atticus_maths.run(c, DB_PATH)
+        except Exception:
+            logging.exception('Atticus maths correction failed')
 
 def seed_portal_cast(c):
     """Demo teachers and students from the approved mockups. Additive and skipped once recorded."""
