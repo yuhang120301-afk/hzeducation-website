@@ -616,6 +616,15 @@ def line_share_cents(lines, share_cents):
     return shares
 
 
+def hide_student_origin(teachers):
+    """Teachers see the lesson and their pay, not whether the student is Helen's original."""
+    for teacher in teachers:
+        for lesson in teacher['lessons']:
+            for line in lesson['lines']:
+                line.pop('is_new', None)
+                line.pop('helen_original', None)
+
+
 def public_profit_share(partner):
     """What the partner teacher may see. No original-student rows are included."""
     lines = partner['lines']
@@ -685,6 +694,7 @@ def report(c, user, period, day, start, end):
         students.append(item)
     if own_teacher:
         teachers = [teacher for teacher in teachers if teacher['teacher_id'] == own_teacher['id']]
+        hide_student_origin(teachers)
         share_lessons = build_lessons(c, confirmed_rows(c, start, end), by_teacher)
         share = partner_section(c, share_lessons, [], start, end)
         payload = {'period': period, 'start': start.isoformat(), 'end': end.isoformat(),

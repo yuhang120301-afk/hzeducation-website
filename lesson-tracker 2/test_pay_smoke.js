@@ -132,6 +132,7 @@ function html(selector) {
   if (teacherPay.includes('id="pay-rule-form"')) throw new Error('teacher pay rendered the boss wage form');
   if (!teacherPay.includes('分红')) throw new Error('teacher pay is missing 分红');
   if (teacherPay.includes('我的学生收入')) throw new Error('teacher pay shows Helen student income');
+  if (teacherPay.includes('· 原有学生') || teacherPay.includes('· 新学生')) throw new Error('teacher pay labels whether a student is original');
 
   context.view = 'share';
   context.state.user.role = 'owner';
