@@ -75,8 +75,8 @@ def finance_rows(data):
         ['机构利润', aud(data['organisation_profit_cents'])],
         ['Vincent 分成', aud(data['partner']['share_cents'])],
         ['我的学生收入', aud(data['helen_teaching_cents'])],
-        ['其中 HMS 工资（不另付）', aud((data.get('dashboard') or {}).get('hms_wage_cents') or 0)],
-        ['其中 HMS 分红', aud((data.get('dashboard') or {}).get('hms_dividend_cents') or 0)],
+        ['其中 Helen工作室 工资（不另付）', aud((data.get('dashboard') or {}).get('hms_wage_cents') or 0)],
+        ['其中 Helen工作室 分红', aud((data.get('dashboard') or {}).get('hms_dividend_cents') or 0)],
         ['我教机构课的工资', aud((data.get('dashboard') or {}).get('helen_institution_wage_cents') or 0)],
         ['本月我的总收入', aud(data['helen_net_cents'])],
         [],
@@ -152,5 +152,5 @@ def finance_pdf(data):
             pdf.multi_cell(0, 8, f"{row['lesson_date']}  {row['student_name']}  {row.get('receiver_name') or ''}  {aud(row['cash_delta'])}")
     pdf.set_font('Droid', size=9)
     pdf.ln(4)
-    pdf.multi_cell(0, 6, '机构利润 = 机构收入 − 机构成本。机构成本含机构课的老师工资和共同成本。老师课酬是全部上课工资，不是机构成本。HMS 工资和 HMS 分红加起来是 Helen 亲自上课的全部课酬，不是另发。')
+    pdf.multi_cell(0, 6, '机构利润 = 机构收入 − 机构成本。机构成本含机构课的老师工资和共同成本。老师课酬是全部上课工资，不是机构成本。Helen工作室 工资和 Helen工作室 分红加起来是 Helen 亲自上课的全部课酬，不是另发。')
     return bytes(pdf.output())
