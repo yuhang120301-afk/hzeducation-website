@@ -425,9 +425,28 @@ function scheduleOptions(kind,current){
  if(current&&kind!=='course'&&!options.includes(current))options.unshift(current);
  return `<option value="">${kind==='course'?'请选择课程':'不指定地点'}</option>`+options.map(name=>`<option data-user-content value="${escapeHTML(name)}" ${name===current?'selected':''}>${escapeHTML(name)}</option>`).join('');
 }
+function nameIsMaths(name){
+ const text=String(name||'').toLowerCase();
+ const compact=text.replace(/\s+/g,'');
+ if(compact.includes('generalmaths')||compact.includes('generalmathematics')) return true;
+ return ['数学','maths','math','methods','specialist','中数','高数','低数','新加坡','singapore'].some(marker=>text.includes(marker));
+}
 function renderScheduleSettings(){
- $('#surface').innerHTML=`<p class="form-context">科目和课程类型从列表里选。停用后不能再选，已经排好的课不受影响。</p><div class="feedback-grid"><section class="feedback-card"><div class="section-head"><h2>课程类型</h2><button class="btn primary" id="add-course-type">添加类型</button></div>${(state.course_types||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-type-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>科目</h2><button class="btn primary" id="add-subject">添加科目</button></div>${(state.subjects||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-subject-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>上课地点</h2><button class="btn primary" data-option-add="location">添加地点</button></div>${(state.schedule_options||[]).filter(o=>o.kind==='location').map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-option-edit="${o.id}">编辑</button><button class="btn" data-option-toggle="${o.id}">${o.active?'停用':'启用'}</button></div></div>`).join('')||'<p class="muted">尚未设置，请点击添加。</p>'}</section></div>`;
- const editCatalog=(path,item)=>modal(item?'编辑':'添加',`<label class="field">名称<input name="name" required maxlength="40" value="${escapeHTML(item?.name||'')}"></label><label><input type="checkbox" name="active" ${!item||item.active?'checked':''}> 使用中</label>`,'保存',async data=>{data.active=!!document.querySelector('[name=active]').checked;await api(path,{...data,id:item?.id});toast('已保存。');});
+ $('#surface').innerHTML=`<p class="form-context">科目和课程类型从列表里选。停用后不能再选，已经排好的课不受影响。</p><div class="feedback-grid"><section class="feedback-card"><div class="section-head"><h2>课程类型</h2><button class="btn primary" id="add-course-type">添加类型</button></div>${(state.course_types||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-type-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>科目</h2><button class="btn primary" id="add-subject">添加科目</button></div>${(state.subjects||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}${o.is_maths?' · 数学课':''}</small></div><div class="option-actions"><button class="btn" data-subject-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>上课地点</h2><button class="btn primary" data-option-add="location">添加地点</button></div>${(state.schedule_options||[]).filter(o=>o.kind==='location').map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-option-edit="${o.id}">编辑</button><button class="btn" data-option-toggle="${o.id}">${o.active?'停用':'启用'}</button></div></div>`).join('')||'<p class="muted">尚未设置，请点击添加。</p>'}</section></div>`;
+ const editCatalog=(path,item)=>{
+  const maths=path==='subjects';
+  const checked=item?!!item.is_maths:nameIsMaths('');
+  modal(item?'编辑':'添加',`<label class="field">名称<input name="name" required maxlength="40" value="${escapeHTML(item?.name||'')}"></label>${maths?`<label class="report-choice"><input type="checkbox" name="is_maths" ${checked?'checked':''}> 数学课</label>`:''}<label><input type="checkbox" name="active" ${!item||item.active?'checked':''}> 使用中</label>`,'保存',async data=>{data.active=!!document.querySelector('[name=active]').checked; if(maths) data.is_maths=!!document.querySelector('[name=is_maths]').checked; await api(path,{...data,id:item?.id}); toast('已保存。');});
+  if(maths){
+   const box=document.querySelector('#modal-form [name=is_maths]');
+   const name=document.querySelector('#modal-form [name=name]');
+   if(box&&name){
+    let touched=!!item;
+    box.addEventListener('change',()=>{touched=true;});
+    name.addEventListener('input',()=>{if(!touched) box.checked=nameIsMaths(name.value);});
+   }
+  }
+ };
  $('#add-course-type').onclick=()=>editCatalog('course-types');
  $('#add-subject').onclick=()=>editCatalog('subjects');
  document.querySelectorAll('[data-type-edit]').forEach(b=>b.onclick=()=>editCatalog('course-types',state.course_types.find(o=>o.id==b.dataset.typeEdit)));
