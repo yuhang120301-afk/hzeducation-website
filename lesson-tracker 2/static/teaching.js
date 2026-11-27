@@ -248,7 +248,7 @@ function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
  if(!['owner','admin'].includes(state.user?.role)){toast('只有老板或管理员可以排课或调整课程。');return;}
  if(!bookableStudents().length){toast('请先添加学生，再安排课程。');if(['owner','admin'].includes(state.user.role)&&!state.students.length)return studentModal();return;}
  const l=existing,request_id=crypto.randomUUID(),day=slot?slot.slice(0,10):state.today,initialStart=slot||day+'T16:00',initialEnd=slotEnd||shiftScheduleTime(initialStart,60);
- modal(l?'调整课程':'新增排课',`<div class="form-context">${escapeHTML(state.timezone)} · 排课不会提前扣课时。先选学生，再选这名学生的课程，科目和课型跟着课程。</div>${lessonColorLive()}<div class="two-cols"><label class="field">科目${catalogSelect(state.subjects,'subject_id',l?.subject_id,'请选择科目')}</label><label class="field">课程类型${catalogSelect(state.course_types,'course_type_id',l?.course_type_id,'请选择课程类型')}</label></div><label class="field">任课老师<select name="teacher_id" required>${state.teachers.filter(t=>t.active||t.id===l?.teacher_id).map(t=>`<option data-user-content ${t.active?'':'disabled data-inactive="1"'} value="${t.id}" ${(l?.teacher_id||teacherFilter||state.user.teacher_id)==t.id?'selected':''}>${escapeHTML(t.name)} · ${escapeHTML(t.subject)}</option>`).join('')}</select></label><div class="two-cols schedule-time-fields">${scheduleTimeField("starts_at","开始时间",l?.starts_at||initialStart)}${scheduleTimeField("ends_at","结束时间",l?.ends_at||initialEnd)}</div><p class="footnote">结束时间默认往后一小时，可手动调整。手动调整时长后，更改开始时间会保留该时长。</p><div class="two-cols"><label class="field">按课时学生：预计每人扣除课时<input name="amount" type="number" min="0.01" max="10000" step="0.01" value="${l?l.planned_units/100:1}" required></label><label class="field">上课地点（选填）<select name="location">${scheduleOptions("location",l?.location||"")}</select></label></div>${l?(l.status!=='scheduled'?'<p class="form-context">编辑时间和课程信息不会自动改动已扣余额；如需更正数量，请编辑单据或课后记录。</p>':repeatScopeFields(l)):'<div class="two-cols"><label class="field">重复安排<select name="repeat"><option value="none">不重复</option><option value="weekly">每周重复</option><option value="fortnightly">每两周重复</option></select></label><label class="field" id="repeat-end-field" hidden>结束方式<select name="repeat_end" disabled><option value="count">指定次数</option><option value="forever">永久重复</option></select></label><label class="field" id="repeat-count-field" hidden>总课次数（包含本次）<input name="repeat_count" type="number" min="2" max="52" step="1" value="10" disabled required></label></div><p id="repeat-help" class="form-context" hidden>按机构当地时间重复。可指定 2–52 次，或选择永久重复。永久课程会自动延续，也可随时调整或取消本次及后续课程。</p>'}<label class="field">搜索学生<input id="schedule-student-search" type="search" placeholder="输入姓名，中文或英文都可以" autocomplete="off"></label><div id="schedule-selected" class="schedule-selected" aria-live="polite"></div><fieldset class="student-picker" id="schedule-student-picker"><legend>选择学生及扣课科目 · 同一学生只选一个科目</legend><p id="schedule-search-empty" hidden>没有找到匹配的学生。</p>${bookableStudents((l?.students||[]).map(s=>s.id).concat(studentId?[studentId]:[])).map(s=>{const hint=typeof lessonStudentHint==='function'?lessonStudentHint(s):'';return `<label><input type="checkbox" name="student_ids" value="${s.id}" data-subject-id="${s.subject_id||''}" data-type-id="${s.course_type_id||''}" ${s.no_course?'disabled':''} ${(l?.students.some(x=>x.id===s.id)||studentId==s.id)?'checked':''}><span>${userHTML(s.name)}<small>${userHTML(s.no_course?'未选课':(s.subject_name||s.course))}${hint?` · ${hint}`:''}${s.no_course?'':` · 剩余 ${fmt(s.balance)} ${unitFor(s)}`}</small></span></label>`;}).join('')}</fieldset>`,'保存排课',async data=>{data.student_ids=[...document.querySelectorAll('[name=student_ids]:checked')].map(x=>Number(x.value));syncScheduleCourse();const subjectName=document.querySelector('[name=subject_id] option:checked')?.textContent||'';const typeName=document.querySelector('[name=course_type_id] option:checked')?.textContent||'';data.title=`${subjectName} · ${typeName}`;data.course_type_id=Number(data.course_type_id);data.subject_id=Number(data.subject_id);if(l?.series_id){const chosen=document.querySelector('#modal-form [name=scope]:checked');if(!chosen) throw new Error('请选择这次改动应用到仅本次，还是本次及以后。');data.scope=chosen.value;}if(![...document.querySelectorAll('#modal-form [name=student_ids]:checked')].length) throw new Error('每节课请选择 1–30 位学生。');const teacherLabel=(document.querySelector('#modal-form [name=teacher_id] option:checked')?.textContent||'').split('·')[0].trim();const result=await api('lessons',{...data,request_id,lesson_id:l?.id,version:l?.version,series_version:l?.series_version});weekStart=monday(data.starts_at.slice(0,10));view='schedule';toast(l?(data.scope==='future'?`本次及以后的课已保存${teacherLabel?'，任课老师：'+teacherLabel:''}。`:`课程已更新${teacherLabel?'，任课老师：'+teacherLabel:''}。`):data.repeat_end==='forever'?'永久重复排课已保存，将自动延续。':result.created_count?`已安排 ${result.created_count} 次课程，课时暂不扣除。`:'排课已保存，课时暂不扣除。');});
+ modal(l?'调整课程':'新增排课',`<div class="form-context">${escapeHTML(state.timezone)} · 排课不会提前扣课时。先选学生，再选这名学生的课程，科目和课型跟着课程。</div>${lessonColorLive()}<div class="two-cols"><label class="field">科目${catalogSelect(state.subjects,'subject_id',l?.subject_id,'请选择科目')}</label><label class="field">课程类型${catalogSelect(state.course_types,'course_type_id',l?.course_type_id,'请选择课程类型')}</label></div><label class="field">任课老师<select name="teacher_id" required></select></label><div class="two-cols schedule-time-fields">${scheduleTimeField("starts_at","开始时间",l?.starts_at||initialStart)}${scheduleTimeField("ends_at","结束时间",l?.ends_at||initialEnd)}</div><p class="footnote">结束时间默认往后一小时，可手动调整。手动调整时长后，更改开始时间会保留该时长。</p><div class="two-cols"><label class="field">按课时学生：预计每人扣除课时<input name="amount" type="number" min="0.01" max="10000" step="0.01" value="${l?l.planned_units/100:1}" required></label><label class="field">上课地点（选填）<select name="location">${scheduleOptions("location",l?.location||"")}</select></label></div>${l?(l.status!=='scheduled'?'<p class="form-context">编辑时间和课程信息不会自动改动已扣余额；如需更正数量，请编辑单据或课后记录。</p>':repeatScopeFields(l)):'<div class="two-cols"><label class="field">重复安排<select name="repeat"><option value="none">不重复</option><option value="weekly">每周重复</option><option value="fortnightly">每两周重复</option></select></label><label class="field" id="repeat-end-field" hidden>结束方式<select name="repeat_end" disabled><option value="count">指定次数</option><option value="forever">永久重复</option></select></label><label class="field" id="repeat-count-field" hidden>总课次数（包含本次）<input name="repeat_count" type="number" min="2" max="52" step="1" value="10" disabled required></label></div><p id="repeat-help" class="form-context" hidden>按机构当地时间重复。可指定 2–52 次，或选择永久重复。永久课程会自动延续，也可随时调整或取消本次及后续课程。</p>'}<label class="field">搜索学生<input id="schedule-student-search" type="search" placeholder="输入姓名，中文或英文都可以" autocomplete="off"></label><div id="schedule-selected" class="schedule-selected" aria-live="polite"></div><fieldset class="student-picker" id="schedule-student-picker"><legend>选择学生及扣课科目 · 同一学生只选一个科目</legend><p id="schedule-search-empty" hidden>没有找到匹配的学生。</p>${bookableStudents((l?.students||[]).map(s=>s.id).concat(studentId?[studentId]:[])).map(s=>{const hint=typeof lessonStudentHint==='function'?lessonStudentHint(s):'';return `<label><input type="checkbox" name="student_ids" value="${s.id}" data-subject-id="${s.subject_id||''}" data-type-id="${s.course_type_id||''}" ${s.no_course?'disabled':''} ${(l?.students.some(x=>x.id===s.id)||studentId==s.id)?'checked':''}><span>${userHTML(s.name)}<small>${userHTML(s.no_course?'未选课':(s.subject_name||s.course))}${hint?` · ${hint}`:''}${s.no_course?'':` · 剩余 ${fmt(s.balance)} ${unitFor(s)}`}</small></span></label>`;}).join('')}</fieldset>`,'保存排课',async data=>{data.student_ids=[...document.querySelectorAll('[name=student_ids]:checked')].map(x=>Number(x.value));syncScheduleCourse();const subjectName=document.querySelector('[name=subject_id] option:checked')?.textContent||'';const typeName=document.querySelector('[name=course_type_id] option:checked')?.textContent||'';data.title=`${subjectName} · ${typeName}`;data.course_type_id=Number(data.course_type_id);data.subject_id=Number(data.subject_id);if(l?.series_id){const chosen=document.querySelector('#modal-form [name=scope]:checked');if(!chosen) throw new Error('请选择这次改动应用到仅本次，还是本次及以后。');data.scope=chosen.value;}if(![...document.querySelectorAll('#modal-form [name=student_ids]:checked')].length) throw new Error('每节课请选择 1–30 位学生。');const teacherLabel=(document.querySelector('#modal-form [name=teacher_id] option:checked')?.textContent||'').split('·')[0].trim();const result=await api('lessons',{...data,request_id,lesson_id:l?.id,version:l?.version,series_version:l?.series_version});weekStart=monday(data.starts_at.slice(0,10));view='schedule';toast(l?(data.scope==='future'?`本次及以后的课已保存${teacherLabel?'，任课老师：'+teacherLabel:''}。`:`课程已更新${teacherLabel?'，任课老师：'+teacherLabel:''}。`):data.repeat_end==='forever'?'永久重复排课已保存，将自动延续。':result.created_count?`已安排 ${result.created_count} 次课程，课时暂不扣除。`:'排课已保存，课时暂不扣除。');});
  $('#modal').classList.add('wide');
  initScheduleStudentSearch();
  initScheduleTimes();
@@ -258,6 +258,7 @@ function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
  if(teacherSelect) teacherSelect.addEventListener('change', syncTeacherColor);
  syncTeacherColor();
  limitSingaporeChoices();
+ bindTeacherPicker(l?.teacher_id||'', !!l, false);
  if(!l){const repeat=$('[name=repeat]'),ending=$('[name=repeat_end]');const updateRepeat=()=>{const enabled=repeat.value!=='none',count=enabled&&ending.value==='count';$('#repeat-end-field').hidden=!enabled;ending.disabled=!enabled;$('#repeat-count-field').hidden=!count;$('[name=repeat_count]').disabled=!count;$('#repeat-help').hidden=!enabled;};repeat.onchange=updateRepeat;ending.onchange=updateRepeat;}
 }
 function syncScheduleCourse(){
@@ -268,6 +269,8 @@ function syncScheduleCourse(){
  const student=(state.students||[]).find(item=>String(item.id)===String(checked[0]?.value));
  if(typeof syncPrimaryClass==='function') syncPrimaryClass(student?.level_code||student?.level_calendar||'');
  if(typeof limitSingaporeChoices==='function') limitSingaporeChoices();
+ const teacherBox=document.querySelector('#modal [name=teacher_id]');
+ if(teacherBox&&teacherBox._syncTeachers) teacherBox._syncTeachers();
 }
 function askAbsenceCharge(){
  return new Promise(resolve=>{
@@ -384,37 +387,74 @@ function typeBadge(name){
 }
 function teacherTeaches(teacher, subject){
  if(!teacher) return false;
- if(teacher.account_role==='owner') return true;
- const names=[].concat(teacher.subjects||[]);
- String(teacher.subject||'').split(/[、,，]/).forEach(part=>{if(part.trim()) names.push(part.trim());});
- return names.some(name=>name===subject);
+ return teacherSubjectList(teacher).some(name=>name===subject);
 }
+/* teacherPicker:start */
+function teacherSubjectList(teacher){
+ const names=[];
+ const add=name=>{const text=String(name||'').trim(); if(text && !names.includes(text)) names.push(text);};
+ if(Array.isArray(teacher?.subjects) && teacher.subjects.length) teacher.subjects.forEach(add);
+ else String(teacher?.subject||'').split(/[、,，]/).forEach(add);
+ return names;
+}
+function teacherSubjectLabel(teacher){return teacherSubjectList(teacher).join('、');}
+function teacherTeachesSubject(teacher, subject){
+ const wanted=String(subject||'').trim();
+ return !!wanted && teacherSubjectList(teacher).some(name=>name===wanted);
+}
+function teacherOptionRows(subjectName, selectedId, blank){
+ const wanted=String(subjectName||'').trim();
+ const preferred=selectedId!=null && String(selectedId)!==''?String(selectedId):'';
+ const teachers=(state.teachers||[]).filter(teacher=>teacher.active||String(teacher.id)===preferred);
+ const matches=wanted?teachers.filter(teacher=>teacherTeachesSubject(teacher, wanted)):[];
+ const rest=wanted?teachers.filter(teacher=>!teacherTeachesSubject(teacher, wanted)):teachers;
+ const current=preferred || (matches.length===1?String(matches[0].id):'');
+ const option=teacher=>{
+  const inactive=!teacher.active;
+  return `<option data-user-content value="${teacher.id}" ${String(teacher.id)===current?'selected':''} ${inactive?'disabled data-inactive="1"':''}>${escapeHTML(teacher.name)} · ${escapeHTML(teacherSubjectLabel(teacher))}</option>`;
+ };
+ const head=blank?'<option value="">请选择</option>':'';
+ if(wanted && matches.length && rest.length) return head+`<optgroup label="教这科">${matches.map(option).join('')}</optgroup><optgroup label="其他老师">${rest.map(option).join('')}</optgroup>`;
+ return head+teachers.map(option).join('');
+}
+function fillTeacherSelect(select, subjectName, selectedId, preserve, blank){
+ if(!select) return;
+ const current=selectedId!=null && String(selectedId)!==''?String(selectedId):'';
+ const wanted=String(subjectName||'').trim();
+ const matches=wanted?(state.teachers||[]).filter(teacher=>(teacher.active||String(teacher.id)===current)&&teacherTeachesSubject(teacher, wanted)):[];
+ const chosen=!preserve && matches.length===1?String(matches[0].id):current;
+ select.innerHTML=teacherOptionRows(wanted, chosen, blank);
+ if(chosen) select.value=chosen;
+}
+function bindTeacherPicker(existingId, preserveFirst, blank){
+ const subjectBox=document.querySelector('#modal [name=subject_id]')||document.querySelector('#modal [name=subject]');
+ const teacherBox=document.querySelector('#modal [name=teacher_id]');
+ if(!teacherBox) return;
+ let preserve=!!preserveFirst;
+ const subjectName=()=>{
+  const option=subjectBox&&subjectBox.selectedOptions&&subjectBox.selectedOptions[0];
+  const text=option?option.textContent.trim():'';
+  if(!option||!option.value||text.startsWith('请选择')) return '';
+  return text;
+ };
+ const apply=()=>{
+  fillTeacherSelect(teacherBox, subjectName(), preserve?existingId:teacherBox.value, preserve, blank);
+  preserve=false;
+  if(typeof syncTeacherColor==='function') syncTeacherColor();
+ };
+ teacherBox._syncTeachers=apply;
+ if(subjectBox) subjectBox.addEventListener('change', apply);
+ apply();
+}
+/* teacherPicker:end */
 function limitSingaporeChoices(){
  const subjectBox=document.querySelector('#modal [name=subject_id]');
  const typeBox=document.querySelector('#modal [name=course_type_id]');
- const teacherBox=document.querySelector('#modal [name=teacher_id]');
  if(!subjectBox) return;
  const apply=()=>{
   const selected=subjectBox.selectedOptions&&subjectBox.selectedOptions[0]?subjectBox.selectedOptions[0].textContent.trim():'';
   const singapore=selected==='新加坡数学';
   if(typeBox) [...typeBox.options].forEach(option=>{option.hidden=singapore&&option.textContent.trim()==='一对二'; option.disabled=option.hidden; if(option.hidden&&option.selected) typeBox.value='';});
-  if(teacherBox) [...teacherBox.options].forEach(option=>{
-   const teacher=(state.teachers||[]).find(item=>String(item.id)===option.value);
-   const blocked=singapore&&!teacherTeaches(teacher,'新加坡数学');
-   option.hidden=blocked;
-   option.disabled=blocked||option.dataset.inactive==='1';
-   if(option.disabled&&option.selected){const next=[...teacherBox.options].find(item=>!item.disabled&&item.value); teacherBox.value=next?next.value:'';}
-  });
-  let note=document.querySelector('#singapore-teacher-note');
-  if(singapore){
-   if(!note && teacherBox){
-    note=document.createElement('p');
-    note.id='singapore-teacher-note';
-    note.className='footnote';
-    note.textContent='勾选了新加坡数学的老师可以排这科。还没勾选的老师不会出现在这里。';
-    teacherBox.closest('label')?.insertAdjacentElement('afterend', note);
-   }
-  }else if(note) note.remove();
  };
  subjectBox.addEventListener('change', apply);
  apply();

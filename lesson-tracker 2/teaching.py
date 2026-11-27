@@ -213,6 +213,13 @@ def canonical_subject(name, known=()):
         return ''
     if text in known:
         return text
+    if '、' in text or '，' in text:
+        parts = []
+        for part in text.replace('，', '、').split('、'):
+            label = canonical_subject(part, known)
+            if label and label not in parts:
+                parts.append(label)
+        return '、'.join(parts)
     named = combo_subject(text) or vce_subject(text) or singapore_subject(text)
     if named:
         return named
@@ -686,8 +693,14 @@ def state_for(c,user):
             stored = []
         if not isinstance(stored, list):
             stored = []
-        t['subjects']=[canonical_subject(name, known) for name in (stored or [t['subject']])]
-        t['subject']=canonical_subject(t.get('subject') or '', known)
+        labels = []
+        source = stored if stored else [part.strip() for part in str(t.get('subject') or '').replace('，', '、').split('、')]
+        for name in source:
+            label = canonical_subject(str(name).strip(), known)
+            if label and label not in labels:
+                labels.append(label)
+        t['subjects'] = labels
+        t['subject'] = '、'.join(labels)
         if role!='owner' and role!='admin':
             t.pop('duty', None)
     if role=='parent':
