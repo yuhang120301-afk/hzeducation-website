@@ -452,8 +452,9 @@ def build_state(c, user):
         entries=[e for e in entries if e['kind'] in ('credit','refund') and not e['reversed_by'] and not e.get('voided_payment')]
         for e in entries:
             for key in ('request_id','reversal_of','version'):e.pop(key,None)
+    known = teaching.subject_names(c)
     for person in students+archived_students+voided_students+withdrawn_students+left_students:
-        person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '')
+        person['subject_name']=teaching.canonical_subject(person.get('subject_name') or '', known)
     pricing.apply_rate_visibility(c, user, students+archived_students+voided_students+withdrawn_students+left_students)
     import timeline
     try:

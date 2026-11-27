@@ -755,7 +755,11 @@ function entryModal(kind,id){
    if(chosen) chosen.textContent=`增加 ${item.paid_lessons} 节付费${item.gift_lessons?` + ${item.gift_lessons} 节赠送`:''}，学费 ${moneyAud(item.total_cents)}。确认充值即可。`;
    update();
   });
- }catch(error){host.textContent=error.message;}
+ }catch(error){
+  const message=String(error&&error.message||'');
+  if(message.includes('价格只对老板开放')){host.innerHTML='<p>可以自己填节数。</p>'; return;}
+  host.textContent=message;
+ }
 }
 $('#entry-student').onchange=()=>{update(); loadPresets();};
  const payStatus=document.querySelector('[name=payment_status]');
@@ -893,7 +897,11 @@ async function showOffer(query, host){
   const offer=await api('prices/presets?'+query);
   if(!offer.packages?.length){host.innerHTML=escapeHTML(offer.reason||'还没有匹配的课时包。'); return;}
   host.innerHTML=`<b>${escapeHTML(offer.level)} · ${escapeHTML(offer.course_type)}</b> 已锁定 $${((offer.hourly_cents||0)/100).toFixed(2)} / 小时${offer.source==='custom'?'（这位学生有单独旧价）':''}<br>${offer.packages.map(item=>`${escapeHTML(item.label)} ${moneyAud(item.total_cents)}${item.gift_lessons?` + 赠 ${item.gift_lessons} 节`:''}`).join('<br>')}<br><span class="muted">${escapeHTML(offer.packages[0].validity||'')}</span>`;
- }catch(error){host.textContent=error.message;}
+ }catch(error){
+  const message=String(error&&error.message||'');
+  if(message.includes('价格只对老板开放')){host.innerHTML='<p>可以自己填节数。</p>'; return;}
+  host.textContent=message;
+ }
 }
 function profileModal(id){
  const s=state.students.find(item=>String(item.id)===String(id));

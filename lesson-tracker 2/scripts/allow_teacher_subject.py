@@ -54,12 +54,13 @@ def main():
     if not args.db or not os.path.exists(args.db):
         raise SystemExit('请设置 LESSON_DB，或传入 --db。')
     import teaching
-    subject = teaching.canonical_subject(args.subject.strip())
-    if not subject:
+    typed = args.subject.strip()
+    if not typed:
         raise SystemExit('请填写科目。')
     wanted = ' '.join(args.teacher.strip().casefold().split())
     c = connect(args.db)
     try:
+        subject = teaching.canonical_subject(typed, teaching.subject_names(c))
         if 'subjects' not in {row['name'] for row in c.execute('PRAGMA table_info(teachers)')}:
             c.execute("ALTER TABLE teachers ADD COLUMN subjects TEXT NOT NULL DEFAULT '[]'")
         rows = c.execute('''SELECT t.id, t.subject, t.subjects, u.name
