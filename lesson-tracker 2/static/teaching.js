@@ -214,6 +214,7 @@ var offeredSubjects=['数学','英语','VCE 中数','VCE 低数','VCE 高数','�
 function canonicalTeacherSubject(name){
  const text=String(name||'').trim();
  if(!text) return '';
+ if((state.subjects||[]).some(item=>item.name===text)) return text;
  const key=text.toLocaleLowerCase();
  const vce=[['mathematical methods','VCE 中数'],['specialist mathematics','VCE 高数'],['general mathematics','VCE 低数'],['maths methods','VCE 中数'],['math methods','VCE 中数'],['vce 中数','VCE 中数'],['vce 低数','VCE 低数'],['vce 高数','VCE 高数']];
  for(const [alias,label] of vce){if(key===alias || key.startsWith(alias+' ') || key.startsWith(alias+'·') || key.startsWith(alias+' ·')) return label;}

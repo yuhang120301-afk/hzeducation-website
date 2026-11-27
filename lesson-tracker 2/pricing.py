@@ -459,8 +459,11 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
 
     新加坡数学 does not use this table. New students are $150/hour, old students $120/hour,
     and an enrolment can replace that with its own hourly rate, including $0.
+    Boss and admin both use the top-up form, so both can see these packages.
     """
-    require_owner(user)
+    if user['role'] not in ('owner', 'admin'):
+        return {'level': '', 'course_type': '', 'product': '', 'hourly_cents': None,
+            'packages': [], 'validity': '', 'source': '', 'reason': '可以自己填节数。'}
     import teaching
     on = dt.date.fromisoformat(str(day)) if day else now_local().date()
     student = None

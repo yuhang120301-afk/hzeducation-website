@@ -194,16 +194,25 @@ def name_is_maths(name):
         '数学', 'maths', 'math', 'methods', 'specialist', '中数', '高数', '低数', '新加坡', 'singapore'))
 
 
-def canonical_subject(name):
+def subject_names(c):
+    """Exact names the boss saved. Those names are not rewritten into 数学 or 科学."""
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subjects'").fetchone():
+        return frozenset()
+    return frozenset(row['name'] for row in c.execute('SELECT name FROM subjects') if row['name'])
+
+
+def canonical_subject(name, known=()):
     """Science and 科学 display as the same Chinese subject. Stored labels are not rewritten.
 
     VCE 中数 / VCE 低数 / VCE 高数, and Math Methods, are not folded into 数学.
     新加坡数学 is not folded into 数学 either.
-    The unused 中数 and 高数 labels stay as themselves.
+    A subject the boss added, such as Science 7-10, keeps the name she typed.
     """
     text = str(name or '').strip()
     if not text:
         return ''
+    if text in known:
+        return text
     named = combo_subject(text) or vce_subject(text) or singapore_subject(text)
     if named:
         return named
@@ -641,6 +650,7 @@ def state_for(c,user):
         profiles.schema(c)
         where,params=(' WHERE EXISTS (SELECT 1 FROM lesson_students ls JOIN students s ON ls.student_id=s.id WHERE ls.lesson_id=l.id AND '+profiles.linked_clause('s')+')', profiles.linked_params(user['id']))
     lessons=[dict(x) for x in c.execute('SELECT l.*, ct.name course_type_name, sb.name subject_name, (SELECT version FROM lesson_series WHERE id=l.series_id) series_version,(SELECT endless FROM lesson_series WHERE id=l.series_id) repeats_forever,(SELECT course_type_id FROM lesson_series WHERE id=l.series_id) series_course_type_id, u.name teacher_name FROM lessons l JOIN teachers t ON l.teacher_id=t.id JOIN users u ON t.user_id=u.id LEFT JOIN course_types ct ON ct.id=l.course_type_id LEFT JOIN subjects sb ON sb.id=l.subject_id'+where+' ORDER BY l.starts_at,l.id',params)]
+    known = subject_names(c)
     for lesson in lessons:
         member_where=' AND '+profiles.linked_clause('s') if role=='parent' else ''
         member_params=(lesson['id'],*profiles.linked_params(user['id'])) if role=='parent' else (lesson['id'],)
@@ -660,7 +670,7 @@ def state_for(c,user):
         lesson['absent_charge'] = 1 if lesson['absent'] and int(lesson.get('absent_charge') or 0) else 0
         # An absence is not a lesson record, even if a draft was saved earlier.
         lesson['recorded'] = False if lesson['absent'] else lesson_recorded(lesson)
-        lesson['subject_name'] = canonical_subject(lesson.get('subject_name') or '')
+        lesson['subject_name'] = canonical_subject(lesson.get('subject_name') or '', known)
         lesson['teacher_name'] = display_person(lesson.get('teacher_name'))
     teachers=[]
     if role in ('owner','admin','teacher'):
@@ -676,8 +686,8 @@ def state_for(c,user):
             stored = []
         if not isinstance(stored, list):
             stored = []
-        t['subjects']=[canonical_subject(name) for name in (stored or [t['subject']])]
-        t['subject']=canonical_subject(t.get('subject') or '')
+        t['subjects']=[canonical_subject(name, known) for name in (stored or [t['subject']])]
+        t['subject']=canonical_subject(t.get('subject') or '', known)
         if role!='owner' and role!='admin':
             t.pop('duty', None)
     if role=='parent':
@@ -1152,7 +1162,8 @@ def teacher_subject_names(c, teacher_id):
         stored = []
     if isinstance(stored, list):
         names.extend(str(item).strip() for item in stored if str(item).strip())
-    return [canonical_subject(name) for name in names]
+    known = subject_names(c)
+    return [canonical_subject(name, known) for name in names]
 
 
 def may_teach_singapore(c, teacher_id):
