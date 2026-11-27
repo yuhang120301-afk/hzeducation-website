@@ -620,7 +620,7 @@ class PayCalculationTests(unittest.TestCase):
         page = Path(__file__).resolve().parent.joinpath('static')
         self.assertIn('data-maths-subject', (page / 'pay.js').read_text())
         self.assertIn('name="is_maths"', (page / 'teaching.js').read_text())
-        self.assertIn('20261127hms', (page / 'index.html').read_text())
+        self.assertIn('20261127studio', (page / 'index.html').read_text())
 
     def test_original_tick_is_maths_only(self):
         import json
@@ -764,6 +764,11 @@ class PayCalculationTests(unittest.TestCase):
         page = Path(__file__).resolve().parent / 'static'
         script = (page / 'pay.js').read_text()
         teaching = (page / 'teaching.js').read_text()
+        self.assertIn('Helen工作室', script)
+        self.assertIn('Helen工作室 分红', script)
+        self.assertNotIn('HMS 工资', script)
+        self.assertNotIn('HMS 分红', script)
+        self.assertIn('其中 Helen工作室 工资（不另付）', (Path(__file__).resolve().parent / 'exports.py').read_text())
         self.assertIn('工资 ${pct}%（不另付）', script)
         self.assertIn('已计入机构成本', script)
         self.assertNotIn('上课工资不在这里扣', teaching)
