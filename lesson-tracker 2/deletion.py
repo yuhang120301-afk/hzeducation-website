@@ -18,14 +18,16 @@ def referenced(c, target, target_id, ignored=()):
     return False
 
 
-def remove(c, user, data):
+def remove(c, user, data, db_path=None):
     if user['role'] != 'owner':
         raise AccessError('只有老板可以删除档案。')
     kind = data.get('kind')
-    ident = int(data.get('id', 0))
     if kind == 'student':
         return withdraw_student(c, user, data)
-    elif kind in ('teacher', 'admin'):
+    if kind == 'erase':
+        return erase_profile(c, user, data, db_path)
+    ident = int(data.get('id', 0))
+    if kind in ('teacher', 'admin'):
         if kind == 'teacher':
             target = c.execute('SELECT u.* FROM users u JOIN teachers t ON t.user_id=u.id WHERE t.id=?', (ident,)).fetchone()
         else:
@@ -46,6 +48,196 @@ def remove(c, user, data):
     else:
         raise ValueError('档案类型无效。')
     return {'ok': True}
+
+
+def _optional_int(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def _table_names(c):
+    return {row['name'] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def _erase_sets(c):
+    """Profiles that cannot be erased, grouped by the reason that blocks them."""
+    tables = _table_names(c)
+    history = set()
+
+    def collect(sql):
+        for row in c.execute(sql):
+            if row[0]:
+                history.add(row[0])
+
+    if 'students' in tables and 'lesson_students' in tables:
+        collect('SELECT s.profile_id FROM lesson_students ls JOIN students s ON s.id=ls.student_id')
+    if 'students' in tables and 'lesson_reports' in tables:
+        collect('SELECT s.profile_id FROM lesson_reports r JOIN students s ON s.id=r.student_id')
+    if 'students' in tables and 'ledger' in tables:
+        collect('SELECT s.profile_id FROM ledger l JOIN students s ON s.id=l.student_id')
+    if 'students' in tables and 'vouchers' in tables:
+        collect('SELECT s.profile_id FROM vouchers v JOIN students s ON s.id=v.student_id')
+    if 'students' in tables and 'credit_batches' in tables:
+        collect('SELECT s.profile_id FROM credit_batches b JOIN students s ON s.id=b.student_id')
+    if 'students' in tables:
+        collect('SELECT profile_id FROM students WHERE COALESCE(balance,0)!=0')
+    if 'students' in tables and 'lesson_series' in tables:
+        owned = {row['id']: row['profile_id'] for row in c.execute('SELECT id, profile_id FROM students')}
+        for rule in c.execute('SELECT template FROM lesson_series'):
+            try:
+                raw = json.loads(rule['template'] or '{}').get('student_ids') or []
+            except json.JSONDecodeError:
+                continue
+            for item in raw:
+                profile_id = owned.get(_optional_int(item))
+                if profile_id:
+                    history.add(profile_id)
+    duplicates = set()
+    import profiles
+    names = {}
+    if 'student_profiles' in tables:
+        for row in c.execute('SELECT id, name FROM student_profiles'):
+            key = profiles.normalize_person_name(row['name'])
+            if key:
+                names.setdefault(key, []).append(row['id'])
+    for ids in names.values():
+        if len(ids) > 1:
+            duplicates.update(ids)
+    parents = set()
+    if 'users' in tables and 'profile_parents' in tables:
+        for row in c.execute('''SELECT pp.profile_id, u.phone FROM profile_parents pp
+            JOIN users u ON u.id=pp.user_id'''):
+            if row['profile_id'] and not str(row['phone'] or '').startswith('pending-'):
+                parents.add(row['profile_id'])
+    if 'users' in tables and 'students' in tables:
+        for row in c.execute('''SELECT s.profile_id, u.phone FROM students s
+            JOIN users u ON u.id=s.parent_id'''):
+            if row['profile_id'] and not str(row['phone'] or '').startswith('pending-'):
+                parents.add(row['profile_id'])
+    return history, duplicates, parents
+
+
+def erase_reason(profile_id, history, duplicates, parents):
+    if profile_id in history:
+        return '有上课、账目或单据，不能删除。请用退学。'
+    if profile_id in duplicates:
+        return '这是同名的另一份档案，请合并，不要删除。'
+    if profile_id in parents:
+        return '有可以登录的家长，不能删除档案。'
+    return ''
+
+
+def annotate_erase(c, rows):
+    history, duplicates, parents = _erase_sets(c)
+    for row in rows:
+        profile_id = row.get('profile_id') or row.get('id')
+        try:
+            profile_id = int(profile_id)
+        except (TypeError, ValueError):
+            row['erase_reason'] = ''
+            continue
+        row['erase_reason'] = erase_reason(profile_id, history, duplicates, parents)
+
+
+def _backup_database(c, db_path, profile_id):
+    from pathlib import Path
+    import backup
+    if not db_path:
+        raise ValueError('无法备份，已取消删除。')
+    import secrets
+    stamp = now_local().strftime('%Y%m%d%H%M%S')
+    folder = Path(db_path).resolve().parent
+    dest = folder / f'backup-delete-profile-{stamp}-{profile_id}-{secrets.token_hex(3)}.sqlite3'
+    if dest.exists():
+        raise ValueError('无法备份，已取消删除。')
+    try:
+        backup.write_snapshot(db_path, dest)
+    except Exception as first:
+        raw = __import__('sqlite3').connect(str(dest))
+        try:
+            c.backup(raw)
+            if raw.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                raise RuntimeError('备份校验失败。')
+        except Exception as second:
+            raw.close()
+            if dest.exists():
+                dest.unlink()
+            raise ValueError('无法备份，已取消删除。') from second
+        raw.close()
+        dest.chmod(0o600)
+    if not dest.is_file() or dest.stat().st_size <= 0:
+        raise ValueError('无法备份，已取消删除。')
+    return dest
+
+
+def _delete_where(c, tables, table, column, value):
+    if table not in tables:
+        return
+    columns = {row['name'] for row in c.execute('PRAGMA table_info(' + table + ')')}
+    if column not in columns:
+        return
+    c.execute(f'DELETE FROM {table} WHERE {column}=?', (value,))
+
+
+def erase_profile(c, user, data, db_path):
+    """Remove one empty profile. A profile with history, a real parent, or a duplicate name stays."""
+    if user['role'] != 'owner':
+        raise AccessError('只有老板可以删除档案。')
+    import profiles
+    profiles.ensure_enrolment_columns(c)
+    profile_id = _optional_int(data.get('profile_id') or data.get('id'))
+    profile = c.execute('SELECT * FROM student_profiles WHERE id=?', (profile_id,)).fetchone() if profile_id else None
+    if not profile:
+        raise ValueError('学生档案不存在，请刷新页面。')
+    history, duplicates, parents = _erase_sets(c)
+    reason = erase_reason(profile_id, history, duplicates, parents)
+    if reason:
+        raise ValueError(reason)
+    _backup_database(c, db_path, profile_id)
+    import auditlog
+    auditlog.begin(c)
+    tables = _table_names(c)
+    course_ids = [row['id'] for row in c.execute('SELECT id FROM students WHERE profile_id=?', (profile_id,))] if 'students' in tables else []
+    linked = []
+    if 'users' in tables and 'profile_parents' in tables:
+        linked += [row['user_id'] for row in c.execute('SELECT user_id FROM profile_parents WHERE profile_id=?', (profile_id,))]
+    if 'users' in tables and 'students' in tables:
+        linked += [row['parent_id'] for row in c.execute('SELECT parent_id FROM students WHERE profile_id=?', (profile_id,))]
+    for sid in course_ids:
+        for table, column in (
+            ('lesson_students', 'student_id'), ('lesson_reports', 'student_id'),
+            ('credit_batches', 'student_id'), ('arrears', 'student_id'),
+            ('profile_audit', 'student_id'),
+        ):
+            _delete_where(c, tables, table, column, sid)
+        _delete_where(c, tables, 'ledger', 'student_id', sid)
+    _delete_where(c, tables, 'students', 'profile_id', profile_id)
+    _delete_where(c, tables, 'profile_parents', 'profile_id', profile_id)
+    _delete_where(c, tables, 'student_origin_events', 'profile_id', profile_id)
+    _delete_where(c, tables, 'student_subject_prices', 'profile_id', profile_id)
+    _delete_where(c, tables, 'profile_events', 'profile_id', profile_id)
+    c.execute('DELETE FROM student_profiles WHERE id=?', (profile_id,))
+    for uid in {item for item in linked if item}:
+        user_row = c.execute('SELECT phone FROM users WHERE id=?', (uid,)).fetchone()
+        if not user_row or not str(user_row['phone'] or '').startswith('pending-'):
+            continue
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='teachers'").fetchone() and c.execute('SELECT 1 FROM teachers WHERE user_id=?', (uid,)).fetchone():
+            continue
+        still = False
+        if 'profile_parents' in tables and c.execute('SELECT 1 FROM profile_parents WHERE user_id=?', (uid,)).fetchone():
+            still = True
+        if 'students' in tables and c.execute('SELECT 1 FROM students WHERE parent_id=?', (uid,)).fetchone():
+            still = True
+        if still:
+            continue
+        _delete_where(c, tables, 'sessions', 'user_id', uid)
+        c.execute('DELETE FROM users WHERE id=?', (uid,))
+    auditlog.hint(c, f"删除档案 {profile['name']}")
+    auditlog.finish(c, user)
+    return {'ok': True, 'deleted': profile_id}
 
 
 def _settle_keep(c, course, reason):
@@ -95,14 +287,24 @@ def withdraw_student(c, user, data):
     schema(c)
     import profiles
     profiles.ensure_enrolment_columns(c)
-    student = c.execute('SELECT * FROM students WHERE id=?', (int(data.get('id') or 0),)).fetchone()
+    profile_id = _optional_int(data.get('profile_id'))
+    student = None
+    if profile_id:
+        student = c.execute('SELECT * FROM students WHERE profile_id=? ORDER BY archived, id LIMIT 1', (profile_id,)).fetchone()
     if not student:
+        sid = _optional_int(data.get('id'))
+        if sid:
+            student = c.execute('SELECT * FROM students WHERE id=?', (sid,)).fetchone()
+            if student:
+                profile_id = student['profile_id']
+    profile = c.execute('SELECT * FROM student_profiles WHERE id=?', (profile_id,)).fetchone() if profile_id else None
+    if not profile:
         raise ValueError('学生档案不存在，请刷新页面。')
-    if profiles.profile_withdrawn(c, student['profile_id']):
+    if profiles.profile_withdrawn(c, profile_id):
         raise ValueError('学生已经退学，请在退学学员里查看。')
     import auditlog
     auditlog.begin(c)
-    courses = list(c.execute('SELECT * FROM students WHERE profile_id=? AND voided=0', (student['profile_id'],)))
+    courses = list(c.execute('SELECT * FROM students WHERE profile_id=? AND voided=0', (profile_id,)))
     supplied = data.get('courses')
     choices = {}
     if isinstance(supplied, list):
@@ -130,13 +332,18 @@ def withdraw_student(c, user, data):
         _drop_future(c, course['id'], '退学', user)
         if not course['archived']:
             vouchers.issue_stop(c, user, dict(course), False)
-    c.execute('UPDATE students SET archived=1 WHERE profile_id=? AND voided=0', (student['profile_id'],))
+    c.execute('UPDATE students SET archived=1 WHERE profile_id=? AND voided=0', (profile_id,))
     c.execute("UPDATE student_profiles SET status='withdrawn', withdrawn_on=? WHERE id=?",
-        (now_local().date().isoformat(), student['profile_id']))
-    c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'], user['id'], 'archived'))
+        (now_local().date().isoformat(), profile_id))
     import timeline
-    timeline.record(c, user, student['id'], 'withdraw', f"退学 {student['name']}")
-    auditlog.hint(c, f"退学 {student['name']}")
+    timeline.schema(c)
+    if student:
+        c.execute('INSERT INTO profile_audit(student_id,actor_id,action) VALUES(?,?,?)', (student['id'], user['id'], 'archived'))
+        timeline.record(c, user, student['id'], 'withdraw', f"退学 {profile['name']}")
+    else:
+        c.execute('INSERT INTO profile_events(profile_id,student_id,actor_id,action,summary) VALUES(?,NULL,?,?,?)',
+            (profile_id, user['id'], 'withdraw', f"退学 {profile['name']}"[:200]))
+    auditlog.hint(c, f"退学 {profile['name']}")
     auditlog.finish(c, user)
     return {'ok': True}
 
@@ -401,3 +608,97 @@ def remove_course(c, user, data):
     auditlog.finish(c, user)
     result['reason'] = 'mistake'
     return result
+
+
+def _person_groups(rows):
+    groups = {}
+    for row in rows or []:
+        key = row.get('profile_id') or row.get('id')
+        groups.setdefault(key, []).append(row)
+    return list(groups.values())
+
+
+def _live_course(account):
+    return account and not account.get('no_course') and not account.get('archived') and not account.get('voided')
+
+
+def _needs_renewal(account):
+    if isinstance(account.get('needs_renewal'), bool):
+        return account['needs_renewal']
+    paid = account.get('paid_balance')
+    if paid is None:
+        paid = account.get('balance') or 0
+    return paid < 300
+
+
+def roster_counts(state):
+    """Same numbers the boss home page shows. One person per profile."""
+    enrolled = 0
+    for group in _person_groups(state.get('students')):
+        person = group[0]
+        if (person.get('study_status') or 'studying') == 'graduated':
+            continue
+        if str(person.get('left_on') or '').strip() or any(item.get('withdrawn') for item in group):
+            continue
+        if any(_live_course(item) for item in group):
+            enrolled += 1
+    seen = set()
+    for bucket in ('students', 'withdrawn_students', 'left_students'):
+        for row in state.get(bucket) or []:
+            seen.add(row.get('profile_id') or row.get('id'))
+    people = 0
+    courses = 0
+    for group in _person_groups(state.get('students')):
+        hits = [item for item in group if _live_course(item) and (item.get('study_status') or 'studying') != 'graduated' and _needs_renewal(item)]
+        if hits:
+            people += 1
+            courses += len(hits)
+    return {'enrolled': enrolled, 'everyone': len(seen), 'renewal_people': people, 'renewal_courses': courses}
+
+
+def report_roster_once(c):
+    """Log the home-page counts and who could be erased. Does not delete anyone."""
+    import sys
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_meta'").fetchone() is None:
+        return
+    if c.execute("SELECT 1 FROM app_meta WHERE key='roster_home_report_v1'").fetchone():
+        return
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='student_profiles'").fetchone() is None:
+        return
+    if not c.execute('SELECT COUNT(*) n FROM student_profiles').fetchone()['n']:
+        return
+    try:
+        owner = c.execute('''SELECT u.id, u.name, u.phone FROM users u
+            JOIN organization_owners o ON o.user_id=u.id
+            WHERE u.active=1 ORDER BY u.id LIMIT 1''').fetchone()
+    except Exception:
+        return
+    if not owner:
+        return
+    import server
+    user = {'id': owner['id'], 'name': owner['name'], 'phone': owner['phone'], 'role': 'owner', 'teacher_id': None, 'csrf': ''}
+    try:
+        state = server.build_state(c, user)
+    except Exception:
+        print('学员名单统计没有完成。', file=sys.stderr, flush=True)
+        return
+    counts = roster_counts(state)
+    classified = {}
+    for bucket in ('students', 'withdrawn_students', 'left_students', 'archived_students', 'voided_students'):
+        for row in state.get(bucket) or []:
+            profile_id = row.get('profile_id') or row.get('id')
+            if profile_id in classified:
+                continue
+            classified[profile_id] = (row.get('name') or '', row.get('erase_reason') or '')
+    openable = [name for name, reason in classified.values() if name and not reason]
+    blocked = {}
+    for name, reason in classified.values():
+        if name and reason:
+            blocked.setdefault(reason, []).append(name)
+    print(f"在读学员 {counts['enrolled']}", file=sys.stderr, flush=True)
+    print(f"全部学员 {counts['everyone']}", file=sys.stderr, flush=True)
+    print(f"需要续费 {counts['renewal_people']} 位，{counts['renewal_courses']} 门课", file=sys.stderr, flush=True)
+    print('可删除档案：' + ('、'.join(openable) if openable else '没有'), file=sys.stderr, flush=True)
+    for reason, names in blocked.items():
+        print(f"不能删除（{reason}）：{'、'.join(names)}", file=sys.stderr, flush=True)
+    c.execute("INSERT OR IGNORE INTO app_meta(key, value) VALUES('roster_home_report_v1','1')")

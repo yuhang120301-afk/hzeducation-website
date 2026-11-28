@@ -233,6 +233,10 @@ def _create_base_tables(c):
             merge_named_profiles.run(c, DB_PATH)
         except Exception:
             logging.exception('Atticus maths correction failed')
+        try:
+            deletion.report_roster_once(c)
+        except Exception:
+            logging.exception('roster report failed')
 
 def seed_portal_cast(c):
     """Demo teachers and students from the approved mockups. Additive and skipped once recorded."""
@@ -439,6 +443,7 @@ def build_state(c, user):
         left_students+=profiles.profiles_without_courses(c, covered, user, include_left=True)
     if user['role']=='owner':
         deletion.annotate_blockers(c, [person for person in students if not person.get('no_course')])
+        deletion.annotate_erase(c, students+archived_students+voided_students+withdrawn_students+left_students)
     if user['role']!='owner':
         for person in students+archived_students+voided_students+withdrawn_students+left_students:
             person.pop('helen_original', None)
@@ -833,7 +838,7 @@ class Handler(BaseHTTPRequestHandler):
                     elif self.path.endswith('/restore'):
                         result=deletion.restore(c,user,data)
                     else:
-                        result=deletion.remove(c,user,data)
+                        result=deletion.remove(c,user,data,DB_PATH)
                     c.commit()
                     return self.response(200,result)
                 if self.path == '/api/backup':
