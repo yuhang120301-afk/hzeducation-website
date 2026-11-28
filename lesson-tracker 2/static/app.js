@@ -957,10 +957,11 @@ function guardianEditor(item){
  return `<fieldset class="student-picker" data-parent-editor="${id}"><legend>编辑家长账号${item.primary?' · 主账号':''}</legend><label class="field">家长姓名<input data-parent-name="${id}" maxlength="40" value="${escapeHTML(item.name||'')}" required></label><label class="field">登录手机号<input data-parent-phone="${id}" type="tel" maxlength="24" value="${escapeHTML(item.phone||'')}" required></label><label class="field">联系手机号（选填）<input data-parent-contact="${id}" type="tel" maxlength="24" value="${escapeHTML(item.contact_phone||'')}"></label><label class="field">重置密码（选填）<input data-parent-password="${id}" type="password" maxlength="128" autocomplete="new-password"><small>留空则保留原密码。修改登录手机号或重置密码后，家长需重新登录。</small></label><button class="btn" type="button" data-save-parent="${id}">保存家长账号</button></fieldset>`;
 }
 function guardianModal(id){
- const s=state.students.find(item=>item.id==id);
- if(!s) return;
+ const s=personById(id);
+ if(!s){toast('请刷新后再试'); return;}
+ const child={profile_id:s.profile_id, student_id:Number.isFinite(Number(s.id))?Number(s.id):0};
  const links=s.parents&&s.parents.length?s.parents:[{id:s.parent_id,name:s.parent_name,phone:s.phone,contact_phone:s.contact_phone||'',primary:true}];
- modal('家长账号',`<div class="form-context">${userHTML(s.name)} 可以关联多位家长。选择已有账号时按人关联，不会改别人的姓名或电话。下面改的是这位家长自己的登录，不会改学生姓名，也不会改其他孩子挂在谁名下。</div>${links.map(guardianEditor).join('')}<div id="parent-links">${links.map(item=>`<p>${userHTML(item.name)} · ${escapeHTML(item.phone||'')}${item.primary?' · 主账号':''} <button type="button" class="btn" data-unlink-parent="${item.id}">取消关联</button></p>`).join('')}</div><label class="field">搜索已有家长<input id="parent-search" type="search" placeholder="姓名或手机号"></label><div id="parent-hits"></div><p class="footnote">没有搜到时，在下面新建一个账号。</p><label class="field">新家长姓名<input name="parent_name" maxlength="40"></label><label class="field">新登录手机号<input name="phone" type="tel" maxlength="24"></label><label class="field">初始密码<input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password"><small>留空则用登录手机号作为初始密码。</small></label>`,'新建并关联',async data=>{if(!String(data.parent_name||'').trim()&&!String(data.phone||'').trim()) return; await api('students/parents/link',{...data,student_id:s.id}); toast('已新建并关联这位家长。');});
+ modal('家长账号',`<div class="form-context">${userHTML(s.name)} 可以关联多位家长。选择已有账号时按人关联，不会改别人的姓名或电话。下面改的是这位家长自己的登录，不会改学生姓名，也不会改其他孩子挂在谁名下。</div>${links.map(guardianEditor).join('')}<div id="parent-links">${links.map(item=>`<p>${userHTML(item.name)} · ${escapeHTML(item.phone||'')}${item.primary?' · 主账号':''} <button type="button" class="btn" data-unlink-parent="${item.id}">取消关联</button></p>`).join('')}</div><label class="field">搜索已有家长<input id="parent-search" type="search" placeholder="姓名或手机号"></label><div id="parent-hits"></div><p class="footnote">没有搜到时，在下面新建一个账号。</p><label class="field">新家长姓名<input name="parent_name" maxlength="40"></label><label class="field">新登录手机号<input name="phone" type="tel" maxlength="24"></label><label class="field">初始密码<input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password"><small>留空则用登录手机号作为初始密码。</small></label>`,'新建并关联',async data=>{if(!String(data.parent_name||'').trim()&&!String(data.phone||'').trim()) return; await api('students/parents/link',{...data,...child}); toast('已新建并关联这位家长。');});
  document.querySelectorAll('[data-save-parent]').forEach(button=>button.onclick=async()=>{
   const parentId=button.dataset.saveParent;
   const read=name=>document.querySelector(`[data-parent-${name}="${parentId}"]`)?.value||'';
@@ -968,16 +969,16 @@ function guardianModal(id){
   if(error) error.textContent='';
   button.disabled=true;
   try{
-   await api('students/guardian',{student_id:s.id,parent_user_id:Number(parentId),parent_name:read('name'),phone:read('phone'),contact_phone:read('contact'),password:read('password')});
+   await api('students/guardian',{...child,parent_user_id:Number(parentId),parent_name:read('name'),phone:read('phone'),contact_phone:read('contact'),password:read('password')});
    toast('家长账号已更新。');
    $('#modal').close();
    await refresh();
   }catch(err){if(error) error.textContent=err.message; else toast(err.message); button.disabled=false;}
  });
- document.querySelectorAll('[data-unlink-parent]').forEach(button=>button.onclick=async()=>{try{await api('students/parents/unlink',{student_id:s.id,parent_user_id:Number(button.dataset.unlinkParent)}); toast('已取消这位家长的关联。'); $('#modal').close(); await refresh();}catch(error){toast(error.message);}});
+ document.querySelectorAll('[data-unlink-parent]').forEach(button=>button.onclick=async()=>{try{await api('students/parents/unlink',{...child,parent_user_id:Number(button.dataset.unlinkParent)}); toast('已取消这位家长的关联。登录账号还在。'); $('#modal').close(); await refresh();}catch(error){toast(error.message);}});
  const box=$('#parent-search');
  let timer;
- box.oninput=()=>{clearTimeout(timer); timer=setTimeout(async()=>{const host=$('#parent-hits'); if(!host) return; const q=box.value.trim(); if(!q){host.innerHTML=''; return;} try{const data=await api('parents/search?q='+encodeURIComponent(q)); host.innerHTML=(data.parents||[]).map(item=>`<p><button type="button" class="btn" data-link-parent="${item.id}">${escapeHTML(item.name)} · ${escapeHTML(item.phone||'')}</button></p>`).join('')||'<p class="footnote">没有匹配的家长。</p>'; host.querySelectorAll('[data-link-parent]').forEach(button=>button.onclick=async()=>{try{await api('students/parents/link',{student_id:s.id,parent_user_id:Number(button.dataset.linkParent)}); toast('已关联这位家长。'); $('#modal').close(); await refresh();}catch(error){toast(error.message);}});}catch(error){host.textContent=error.message;}},200);};
+ box.oninput=()=>{clearTimeout(timer); timer=setTimeout(async()=>{const host=$('#parent-hits'); if(!host) return; const q=box.value.trim(); if(!q){host.innerHTML=''; return;} try{const data=await api('parents/search?q='+encodeURIComponent(q)); host.innerHTML=(data.parents||[]).map(item=>`<p><button type="button" class="btn" data-link-parent="${item.id}">${escapeHTML(item.name)} · ${escapeHTML(item.phone||'')}</button></p>`).join('')||'<p class="footnote">没有匹配的家长。</p>'; host.querySelectorAll('[data-link-parent]').forEach(button=>button.onclick=async()=>{try{await api('students/parents/link',{...child,parent_user_id:Number(button.dataset.linkParent)}); toast('已关联这位家长。'); $('#modal').close(); await refresh();}catch(error){toast(error.message);}});}catch(error){host.textContent=error.message;}},200);};
 }
 
 function regularHours(s){return s.paid_balance??s.balance;}
