@@ -105,10 +105,11 @@ class AdminPermissionTests(unittest.TestCase):
     def test_login_hint_uses_the_polished_wording(self):
         page = Path(__file__).with_name('static') / 'app.js'
         text = page.read_text()
-        self.assertIn('placeholder="手机号，例如 0412 345 678"', text)
+        self.assertIn('placeholder="例如 0412 345 678"', text)
+        self.assertNotIn('placeholder="手机号，例如 0412 345 678"', text)
         self.assertIn('请用您登记的手机号登录（04 开头）', text)
         self.assertNotIn('例如 +61 412 345 678', text.split('login-form')[1].split('</form>')[0])
-        self.assertIn('?v=20261128perms', (Path(__file__).with_name('static') / 'index.html').read_text())
+        self.assertIn('?v=20261128hint', (Path(__file__).with_name('static') / 'index.html').read_text())
 
 
 if __name__ == '__main__':

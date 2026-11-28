@@ -182,7 +182,7 @@
  '查看课程安排、学习内容与今日作业，':'See lesson plans, learning notes and homework,','让每一次进步都有记录。':'with a record of every step forward.',
  '剩余课时 · 界面示例':'Remaining credits · example','上课记录':'Lesson record','接下来的课':'Upcoming lessons','还没有接下来的课。':'No upcoming lessons.','即将要上的课':'Upcoming lessons','还没有即将要上的课。':'No upcoming lessons.','课时记录':'Lesson record','这节课的课时和课后记录。':'Credits and the lesson report for this class.','找不到这节课。':'This lesson could not be found.','还没有课后记录。':'No lesson report yet.','换课':'Switch course','已换课':'Switched','确认换课':'Confirm switch','返回':'Back','撤销上一步':'Undo last step','删除这门课':'Remove this course','课程安排 · 今日作业 · 课后反馈':'Schedule · Homework · Feedback',
  '登录学习中心':'Sign in to the Learning Centre','使用老师为你开通的手机号和密码登录。':'Use the phone number and password provided by your school.',
- '手机号':'Phone number','密码':'Password','登录':'Sign in','例如 +61 412 345 678':'e.g. +61 412 345 678','手机号，例如 0412 345 678':'Mobile number, e.g. 0412 345 678','请用您登记的手机号登录（04 开头）':'Sign in with the mobile number on your account (starts with 04).','请输入密码':'Enter your password',
+ '手机号':'Phone number','密码':'Password','登录':'Sign in','例如 +61 412 345 678':'e.g. +61 412 345 678','例如 0412 345 678':'e.g. 0412 345 678','请用您登记的手机号登录（04 开头）':'Sign in with the mobile number on your account (starts with 04).','请输入密码':'Enter your password',
  '首次登录或忘记密码，请联系老师。':'Contact your school for a new account or password help.','手机号格式请与老师开通账号时保持一致。':'Use the same phone-number format as your registered account.',
  '当前是本机演示版，仅含虚构学生，可体验完整流程。':'Local demo with fictional students. Explore all roles below.',
  'Helen校长端':'Helen’s portal','老板':'Owner','管理员':'Administrator','任课老师':'Teacher','家长端':'Parent','家长':'Parent','老师中心':'Teacher portal','家长中心':'Parent portal','机构管理':'School management',
