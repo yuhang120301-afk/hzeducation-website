@@ -5,6 +5,13 @@ const datePlus=(day,n)=>{const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUT
 const monday=day=>{const n=new Date(day+'T12:00:00Z').getUTCDay();return datePlus(day,-((n+6)%7));};
 const lessonById=id=>state.lessons.find(l=>l.id==id);
 const isStaff=()=>state.user.role!=='parent';
+function can(key){
+ if(!state.user) return false;
+ if(state.user.role==='owner') return true;
+ if(state.user.role!=='admin') return false;
+ const flags=state.user.permissions||{};
+ return flags[key]!==false;
+}
 const formatDate=day=>day.slice(5).replace('-',' / ');
 const lessonStatus=l=>lessonIsAbsent(l)?'请假':l.status==='cancelled'?statusName.cancelled:(typeof lessonDone==='function'&&lessonDone(l)?'已完成':(typeof lessonDraft==='function'&&lessonDraft(l)?'草稿':l.status==='scheduled'&&l.ends_at<state.now?'待写课后记录':statusName[l.status]));
 function navigationItems(){
@@ -15,7 +22,10 @@ function navigationItems(){
  ];
  if(role==='teacher') return [['',[['schedule','我的课程','clock'],['feedback','课后记录','book'],['overview','我的学生','users'],['pay','我的工资','book']]]];
  if(role==='parent') return [['',[['schedule','孩子的课表','clock'],['feedback','课后记录','book'],['overview','剩余课时','grid'],['records','付款记录','book']]]];
- const items=[['schedule','排课日历','clock'],['feedback','课后记录','book'],['overview','学生与课时','grid'],['records','余额明细','book'],['teachers','老师管理','users'],['settings','课程与地点设置','grid']];
+ const items=[['feedback','课后记录','book'],['overview','学生与课时','grid'],['records','余额明细','book']];
+ if(can('schedule')) items.unshift(['schedule','排课日历','clock']);
+ if(can('teachers')) items.push(['teachers','老师管理','users']);
+ items.push(['settings','课程与地点设置','grid']);
  return [['',items]];
 }
 function flatNavigation(){
@@ -35,8 +45,8 @@ function flatNavigation(){
 function headerActions(){
  const role=state.user.role;
  if(!['owner','admin'].includes(role)) return '';
- const schedule=`<button class="btn primary" id="add-schedule">${icon('plus')}新增排课</button>`;
- const student=`<button class="btn" id="add-student">${icon('plus')}添加学生</button>`;
+ const schedule=can('schedule')?`<button class="btn primary" id="add-schedule">${icon('plus')}新增排课</button>`:'';
+ const student=can('students')?`<button class="btn" id="add-student">${icon('plus')}添加学生</button>`:'';
  if(view==='teachers') return `<div class="head-actions"><button class="btn primary" id="add-teacher">${icon('plus')}添加老师</button></div>`;
  if(view==='administrators') return `<div class="head-actions"><button class="btn primary" id="add-admin">${icon('plus')}添加管理员</button></div>`;
  if(view==='today' && role==='owner') return `<div class="head-actions"><span class="today-who">Helen校长端</span></div>`;
@@ -253,7 +263,7 @@ function teacherModal(existing=null){
  });
 }
 function scheduleModal(existing=null,studentId='',slot='',slotEnd=''){
- if(!['owner','admin'].includes(state.user?.role)){toast('只有老板或管理员可以排课或调整课程。');return;}
+ if(!['owner','admin'].includes(state.user?.role)||!can('schedule')){toast('只有老板或管理员可以排课或调整课程。');return;}
  if(!bookableStudents().length){toast('请先添加学生，再安排课程。');if(['owner','admin'].includes(state.user.role)&&!state.students.length)return studentModal();return;}
  const l=existing,request_id=crypto.randomUUID(),day=slot?slot.slice(0,10):state.today,initialStart=slot||day+'T16:00',initialEnd=slotEnd||shiftScheduleTime(initialStart,60);
  modal(l?'调整课程':'新增排课',`<div class="form-context">${escapeHTML(state.timezone)} · 排课不会提前扣课时。先选学生，再选这名学生的课程，科目和课型跟着课程。</div>${lessonColorLive()}<div class="two-cols"><label class="field">科目${catalogSelect(state.subjects,'subject_id',l?.subject_id,'请选择科目')}</label><label class="field">课程类型${catalogSelect(state.course_types,'course_type_id',l?.course_type_id,'请选择课程类型')}</label></div><label class="field">任课老师<select name="teacher_id" required></select></label><div class="two-cols schedule-time-fields">${scheduleTimeField("starts_at","开始时间",l?.starts_at||initialStart)}${scheduleTimeField("ends_at","结束时间",l?.ends_at||initialEnd)}</div><p class="footnote">结束时间默认往后一小时，可手动调整。手动调整时长后，更改开始时间会保留该时长。</p><div class="two-cols"><label class="field">按课时学生：预计每人扣除课时<input name="amount" type="number" min="0.01" max="10000" step="0.01" value="${l?l.planned_units/100:1}" required></label><label class="field">上课地点（选填）<select name="location">${scheduleOptions("location",l?.location||"")}</select></label></div>${l?(l.status!=='scheduled'?'<p class="form-context">编辑时间和课程信息不会自动改动已扣余额；如需更正数量，请编辑单据或课后记录。</p>':repeatScopeFields(l)):'<div class="two-cols"><label class="field">重复安排<select name="repeat"><option value="none">不重复</option><option value="weekly">每周重复</option><option value="fortnightly">每两周重复</option></select></label><label class="field" id="repeat-end-field" hidden>结束方式<select name="repeat_end" disabled><option value="count">指定次数</option><option value="forever">永久重复</option></select></label><label class="field" id="repeat-count-field" hidden>总课次数（包含本次）<input name="repeat_count" type="number" min="2" max="52" step="1" value="10" disabled required></label></div><p id="repeat-help" class="form-context" hidden>按机构当地时间重复。可指定 2–52 次，或选择永久重复。永久课程会自动延续，也可随时调整或取消本次及后续课程。</p>'}<label class="field">搜索学生<input id="schedule-student-search" type="search" placeholder="输入姓名，中文或英文都可以" autocomplete="off"></label><div id="schedule-selected" class="schedule-selected" aria-live="polite"></div><fieldset class="student-picker" id="schedule-student-picker"><legend>选择学生及扣课科目 · 同一学生只选一个科目</legend><p id="schedule-search-empty" hidden>没有找到匹配的学生。</p>${bookableStudents((l?.students||[]).map(s=>s.id).concat(studentId?[studentId]:[])).map(s=>{const hint=typeof lessonStudentHint==='function'?lessonStudentHint(s):'';return `<label><input type="checkbox" name="student_ids" value="${s.id}" data-subject-id="${s.subject_id||''}" data-type-id="${s.course_type_id||''}" ${s.no_course?'disabled':''} ${(l?.students.some(x=>x.id===s.id)||studentId==s.id)?'checked':''}><span>${userHTML(s.name)}<small>${userHTML(s.no_course?'未选课':(s.subject_name||s.course))}${hint?` · ${hint}`:''}${s.no_course?'':` · 剩余 ${fmt(s.balance)} ${unitFor(s)}`}</small></span></label>`;}).join('')}</fieldset>`,'保存排课',async data=>{data.student_ids=[...document.querySelectorAll('[name=student_ids]:checked')].map(x=>Number(x.value));syncScheduleCourse();const subjectName=document.querySelector('[name=subject_id] option:checked')?.textContent||'';const typeName=document.querySelector('[name=course_type_id] option:checked')?.textContent||'';data.title=`${subjectName} · ${typeName}`;data.course_type_id=Number(data.course_type_id);data.subject_id=Number(data.subject_id);if(l?.series_id){const chosen=document.querySelector('#modal-form [name=scope]:checked');if(!chosen) throw new Error('请选择这次改动应用到仅本次，还是本次及以后。');data.scope=chosen.value;}if(![...document.querySelectorAll('#modal-form [name=student_ids]:checked')].length) throw new Error('每节课请选择 1–30 位学生。');const teacherLabel=(document.querySelector('#modal-form [name=teacher_id] option:checked')?.textContent||'').split('·')[0].trim();const result=await api('lessons',{...data,request_id,lesson_id:l?.id,version:l?.version,series_version:l?.series_version});weekStart=monday(data.starts_at.slice(0,10));view='schedule';toast(l?(data.scope==='future'?`本次及以后的课已保存${teacherLabel?'，任课老师：'+teacherLabel:''}。`:`课程已更新${teacherLabel?'，任课老师：'+teacherLabel:''}。`):data.repeat_end==='forever'?'永久重复排课已保存，将自动延续。':result.created_count?`已安排 ${result.created_count} 次课程，课时暂不扣除。`:'排课已保存，课时暂不扣除。');});
@@ -483,7 +493,7 @@ function nameIsMaths(name){
  return ['数学','maths','math','methods','specialist','中数','高数','低数','新加坡','singapore'].some(marker=>text.includes(marker));
 }
 function renderScheduleSettings(){
- $('#surface').innerHTML=`<p class="form-context">科目和课程类型从列表里选。停用后不能再选，已经排好的课不受影响。</p><div class="feedback-grid"><section class="feedback-card"><div class="section-head"><h2>课程类型</h2><button class="btn primary" id="add-course-type">添加类型</button></div>${(state.course_types||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-type-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>科目</h2><button class="btn primary" id="add-subject">添加科目</button></div>${(state.subjects||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}${o.is_maths?' · 数学课':''}</small></div><div class="option-actions"><button class="btn" data-subject-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>上课地点</h2><button class="btn primary" data-option-add="location">添加地点</button></div>${(state.schedule_options||[]).filter(o=>o.kind==='location').map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-option-edit="${o.id}">编辑</button><button class="btn" data-option-toggle="${o.id}">${o.active?'停用':'启用'}</button></div></div>`).join('')||'<p class="muted">尚未设置，请点击添加。</p>'}</section></div>`;
+ $('#surface').innerHTML=`<p class="form-context">科目和课程类型从列表里选。停用后不能再选，已经排好的课不受影响。</p><div class="feedback-grid"><section class="feedback-card"><div class="section-head"><h2>课程类型</h2><button class="btn primary" id="add-course-type">添加类型</button></div>${(state.course_types||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-type-edit="${o.id}">编辑</button></div></div>`).join('')}</section><section class="feedback-card"><div class="section-head"><h2>科目</h2><button class="btn primary" id="add-subject">添加科目</button></div>${(state.subjects||[]).map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}${o.is_maths?' · 数学课':''}</small></div><div class="option-actions"><button class="btn" data-subject-edit="${o.id}">编辑</button></div></div>`).join('')}</section>${can('places')?`<section class="feedback-card"><div class="section-head"><h2>上课地点</h2><button class="btn primary" data-option-add="location">添加地点</button></div>${(state.schedule_options||[]).filter(o=>o.kind==='location').map(o=>`<div class="option-row"><div>${userHTML(o.name)}<small>${o.active?'使用中':'已停用'}</small></div><div class="option-actions"><button class="btn" data-option-edit="${o.id}">编辑</button><button class="btn" data-option-toggle="${o.id}">${o.active?'停用':'启用'}</button></div></div>`).join('')||'<p class="muted">尚未设置，请点击添加。</p>'}</section>`:''}</div>`;
  const editCatalog=(path,item)=>{
   const maths=path==='subjects';
   const checked=item?!!item.is_maths:nameIsMaths('');

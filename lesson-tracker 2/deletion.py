@@ -350,8 +350,8 @@ def withdraw_student(c, user, data):
 
 def settle_course(c, user, data):
     """One 退课/停课 action. The balance needs 退款, 保留余额 or 作废."""
-    if user['role'] != 'owner':
-        raise AccessError('只有老板可以退课或停课。')
+    if user['role'] not in ('owner', 'admin'):
+        raise AccessError('只有老板或管理员可以退课或停课。')
     schema(c)
     course = c.execute('SELECT * FROM students WHERE id=? AND archived=0 AND voided=0', (int(data.get('student_id') or 0),)).fetchone()
     if not course:

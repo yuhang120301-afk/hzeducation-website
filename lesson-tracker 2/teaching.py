@@ -515,8 +515,8 @@ def catalog_lists(c):
 
 
 def save_catalog_item(c, user, table, data, text_value):
-    if user['role'] != 'owner':
-        raise AccessError('只有老板可以修改课程类型和科目。')
+    if user['role'] not in ('owner', 'admin'):
+        raise AccessError('只有老板或管理员可以修改课程类型和科目。')
     if table not in ('course_types', 'subjects'):
         raise ValueError('列表无效。')
     name = text_value(data.get('name'), '名称', 40)
@@ -578,6 +578,10 @@ def allowed_lesson(c,user,lesson_id):
     lesson=c.execute('SELECT l.*,t.user_id teacher_user_id FROM lessons l JOIN teachers t ON l.teacher_id=t.id WHERE l.id=?',(int(lesson_id),)).fetchone()
     if not lesson or (user['role'] not in ('owner','admin') and lesson['teacher_user_id']!=user['id']):
         raise AccessError('无法访问这节课程。')
+    if user['role']=='admin':
+        import permissions
+        if not permissions.has(c, user, 'reports') and lesson['teacher_user_id']!=user['id']:
+            raise AccessError('课堂报告权限已关闭，只能写自己的课。')
     return lesson
 
 def check_version(lesson,data):
@@ -712,6 +716,8 @@ def state_for(c,user):
 def create_teacher(c,user,data,phone_value,password_hash,text_value):
     if user['role'] not in ('owner','admin'):
         raise AccessError('只有管理员可以添加老师。')
+    import permissions
+    permissions.allow(c, user, 'teachers')
     phone=phone_value(data.get('phone'))
     name=text_value(data.get('name'),'老师姓名',40)
     subjects=subject_values(data,text_value)
@@ -729,7 +735,11 @@ def create_teacher(c,user,data,phone_value,password_hash,text_value):
 
 def require_scheduler(c,user,data):
     """Scheduling, rescheduling, skipping and hour changes are boss and admin only."""
-    if user['role'] in ('owner','admin'):
+    if user['role'] == 'owner':
+        return
+    if user['role'] == 'admin':
+        import permissions
+        permissions.allow(c, user, 'schedule')
         return
     raise AccessError('只有老板或管理员可以排课或调整课程。')
 
@@ -1134,6 +1144,9 @@ def save_option(c,user,data,text_value):
     if user['role'] not in ('owner','admin'):
         raise AccessError('只有老板或管理员可以设置课程与地点。')
     kind=data.get('kind')
+    if kind=='location':
+        import permissions
+        permissions.allow(c, user, 'places')
     if kind not in ('course','location'):
         raise ValueError('选项类型无效。')
     name=text_value(data.get('name'),'选项名称',80 if kind=='course' else 150)
@@ -1197,6 +1210,8 @@ def subject_values(data,text_value):
 def managed_teacher(c,user,data):
     if user['role'] not in ('owner','admin'):
         raise AccessError('只有老板或管理员可以管理老师。')
+    import permissions
+    permissions.allow(c, user, 'teachers')
     t=c.execute("SELECT t.*,u.name,u.phone,u.role,u.active,EXISTS(SELECT 1 FROM organization_owners o WHERE o.user_id=u.id) is_owner FROM teachers t JOIN users u ON u.id=t.user_id WHERE t.id=?",(int(data.get('teacher_id',0)),)).fetchone()
     if not t: raise ValueError('老师不存在，请刷新页面。')
     if (t['is_owner'] or t['role']=='admin') and user['role']!='owner':

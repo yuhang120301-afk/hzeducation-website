@@ -10,8 +10,18 @@ function refundModal(id){
  const update=()=>{const b=batches.find(x=>x.id==$('#refund-batch').value);$('#refund-amount').max=b.paid_left/100;$('#refund-amount').value=b.paid_left/100;$('#refund-breakdown').innerHTML=`可退${unitFor(s)}：<strong>${fmt(b.paid_left)}</strong><br>本次将作废赠送${unitFor(s)}：<strong>${fmt(b.gift_left)}</strong>`;};
  $('#refund-batch').onchange=update;update();$('#modal').classList.add('wide');
 }
+const ADMIN_SWITCHES=[['schedule','日历排课（全部老师）'],['students','学生资料编辑 / 加课程'],['parents','家长账号管理 / 重置密码'],['topup','充值（含挂账）及查看课时包金额'],['reverse','账目撤销'],['reports','课堂报告（全部老师）'],['teachers','老师管理（添加 / 重置密码 / 停用）'],['places','地点']];
+function adminSwitches(admin){
+ const flags=admin.permissions||{};
+ return `<div class="perm-row">${ADMIN_SWITCHES.map(([key,label])=>`<label class="perm-switch"><input type="checkbox" data-perm-admin="${admin.id}" data-perm-key="${key}" ${flags[key]===false?'':'checked'}> ${label}</label>`).join('')}</div>`;
+}
 function renderAdministrators(){
- $('#surface').innerHTML=`<section class="teacher-grid">${state.administrators.length?state.administrators.map(a=>`<article class="teacher-card"><div class="child-top"><span class="student-icon">${userHTML(a.name.slice(0,1))}</span><div><h2>${userHTML(a.name)}</h2><p>管理员 · ${a.active?'使用中':'已停用'}</p></div></div><p class="teacher-phone">${userHTML(a.phone)}</p><p class="admin-permissions">可管理学生、老师、排课、充值及退课退款。不能添加管理员或查看老板对账页。</p>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-admin="${a.id}">删除档案</button>`:''}<button class="btn" data-admin-edit="${a.id}">编辑</button> <button class="btn" data-admin-status="${a.id}">${a.active?'停用账号':'恢复账号'}</button></article>`).join(''):'<div class="panel empty">还没有管理员，点击「添加管理员」开通账号。</div>'}</section><p class="footnote">停用账号会立即退出其登录状态，历史记录和已排课程保留。</p>`;
+ $('#surface').innerHTML=`<section class="teacher-grid">${state.administrators.length?state.administrators.map(a=>`<article class="teacher-card"><div class="child-top"><span class="student-icon">${userHTML(a.name.slice(0,1))}</span><div><h2>${userHTML(a.name)}</h2><p>管理员 · ${a.active?'使用中':'已停用'}</p></div></div><p class="teacher-phone">${userHTML(a.phone)}</p>${state.user.role==='owner'?adminSwitches(a):''}<p class="admin-permissions">工资、财务、分红、成本、对账、价格表、单价、日志、备份和其他管理员仍只有老板能看。</p>${state.user.role==='owner'?`<button class="btn refund-action" data-delete-admin="${a.id}">删除档案</button>`:''}<button class="btn" data-admin-edit="${a.id}">编辑</button> <button class="btn" data-admin-status="${a.id}">${a.active?'停用账号':'恢复账号'}</button></article>`).join(''):'<div class="panel empty">还没有管理员，点击「添加管理员」开通账号。</div>'}</section><p class="footnote">停用账号会立即退出其登录状态，历史记录和已排课程保留。关掉一项后，这位管理员马上不能做那件事。</p>`;
+ document.querySelectorAll('[data-perm-key]').forEach(box=>box.onchange=async()=>{
+  const previous=box.checked;
+  try{await api('administrators/permission',{admin_id:Number(box.dataset.permAdmin),key:box.dataset.permKey,on:box.checked}); toast(box.checked?'已打开。':'已关闭。');}
+  catch(error){box.checked=!previous; toast(error.message);}
+ });
  document.querySelectorAll('[data-delete-admin]').forEach(b=>b.onclick=()=>deleteProfileModal('admin',state.administrators.find(a=>a.id==b.dataset.deleteAdmin)));
  document.querySelectorAll('[data-admin-edit]').forEach(b=>b.onclick=()=>editAdministratorModal(b.dataset.adminEdit));
  document.querySelectorAll('[data-admin-status]').forEach(b=>b.onclick=()=>{

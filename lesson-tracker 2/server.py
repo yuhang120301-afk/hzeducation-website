@@ -206,6 +206,8 @@ def _create_base_tables(c):
                         c.execute('INSERT INTO lesson_students VALUES(?,?)',(lid,student['id']))
             c.execute("INSERT INTO app_meta VALUES('teaching_demo_v1','1')")
         accounting.schema(c, demo_seed_allowed())
+        import permissions
+        permissions.schema(c)
         profiles.schema(c)
         deletion.schema(c)
         credit_batches.schema(c)
@@ -390,6 +392,13 @@ def build_state(c, user):
     if user['role'] not in ('owner','admin'):
         for s in students: s.pop('notes',None)
     credit_batches.enrich(c,students)
+    import permissions
+    if user['role']=='admin' and not permissions.has(c, user, 'topup'):
+        for person in students:
+            person.pop('owed_cents', None)
+            for batch in person.get('credit_batches') or []:
+                for key in ('total_cents', 'unit_fees', 'receivable_cents', 'paid_cents'):
+                    batch.pop(key, None)
     for person in students:
         paid = person.get('paid_balance')
         person['needs_renewal'] = (paid if paid is not None else person.get('balance') or 0) < 300
@@ -489,7 +498,8 @@ def build_state(c, user):
     except Exception:
         logging.exception('administrator list failed')
         admins = []
-    return {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id']},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'left_students':left_students,'profile_events':events,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**schedule,'administrators':admins}
+    import permissions as _permissions
+    return {'user':{'id':user['id'],'name':teaching.display_person(user['name']),'role':user['role'],'phone':user['phone'],'teacher_id':user['teacher_id'],'permissions':_permissions.for_user(c, user)},'csrf':user['csrf'],'students':students,'archived_students':archived_students,'voided_students':voided_students,'withdrawn_students':withdrawn_students,'left_students':left_students,'profile_events':events,'entries':entries,'demo':DEMO,'organization':ORG_NAME,**schedule,'administrators':admins}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -623,6 +633,8 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as c:
                 user=self.current(c)
                 if not user:return self.response(401,{'error':'请先登录。'})
+                if user['role']!='owner':
+                    return self.response(403,{'error':'只有老板可以查看挂账。'})
                 try:
                     import receivables
                     return self.response(200, {'rows': receivables.outstanding(c), 'owed_cents': receivables.total_owed(c)})
@@ -863,11 +875,14 @@ class Handler(BaseHTTPRequestHandler):
                     result=payroll.handle_post(c,user,self.path,data)
                     c.commit()
                     return self.response(200,result)
-                if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/accounting/cash','/api/accounting/handover'):
+                if self.path in ('/api/administrators','/api/administrators/edit','/api/administrators/status','/api/administrators/permission','/api/accounting/cash','/api/accounting/handover'):
                     c.execute('BEGIN IMMEDIATE')
                     if self.path=='/api/administrators':result=accounting.add_administrator(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/administrators/edit':result=accounting.edit_administrator(c,user,data,phone_value,password_hash,text_value)
                     elif self.path=='/api/administrators/status':result=accounting.set_active(c,user,data)
+                    elif self.path=='/api/administrators/permission':
+                        import permissions
+                        result=permissions.set_flag(c,user,data)
                     elif self.path=='/api/accounting/handover':result=accounting.mark_handover(c,user,data)
                     else:result=accounting.supplement_cash(c,user,data)
                     c.commit()
@@ -1019,6 +1034,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def add_student(self,c,user,data):
         import payroll
+        import permissions
+        permissions.allow(c, user, 'students')
         payroll.reject_original_flag(user, data)
         name = text_value(data.get('name'),'学生姓名',40)
         if data.get('subject_id'):
@@ -1079,6 +1096,12 @@ class Handler(BaseHTTPRequestHandler):
         if not re.fullmatch(r'[A-Za-z0-9-]{16,80}',request_id):
             raise ValueError('操作编号无效，请刷新后重试。')
         c.execute('BEGIN IMMEDIATE')
+        import permissions
+        if self.path == '/api/reverse':
+            permissions.allow(c, user, 'reverse')
+        elif self.path == '/api/refunds':
+            if user['role'] != 'owner':
+                raise teaching.AccessError('只有老板可以退课退款。')
         if c.execute('SELECT 1 FROM ledger WHERE request_id=?',(request_id,)).fetchone():
             return self.response(200,{'ok':True,'duplicate':True})
         reversal_of = None
@@ -1103,6 +1126,8 @@ class Handler(BaseHTTPRequestHandler):
             kind = 'refund' if self.path=='/api/refunds' else data.get('kind')
             if kind not in ('lesson','credit','refund') or (kind=='refund' and self.path!='/api/refunds'):
                 raise ValueError('记录类型无效。')
+            if kind=='credit':
+                permissions.allow(c, user, 'topup')
             if kind=='credit' and data.get('product'):
                 data=pricing.normalize_purchase(c,user,data)
             backdated = kind=='credit' and data.get('backdated') in (True, 1, '1', 'true', 'on', 'yes')
