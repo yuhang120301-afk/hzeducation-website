@@ -175,7 +175,7 @@ class EraseProfileTests(unittest.TestCase):
         self.assertIn('在读学员', home)
         self.assertIn('全部学员', home)
         self.assertIn('data-roster="renewal"', home)
-        self.assertIn('?v=20261128perms', (page / 'index.html').read_text())
+        self.assertIn('?v=20261128hint', (page / 'index.html').read_text())
 
 
 if __name__ == '__main__':
