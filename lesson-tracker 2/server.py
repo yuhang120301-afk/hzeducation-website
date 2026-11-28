@@ -229,6 +229,8 @@ def _create_base_tables(c):
             import atticus_maths
             atticus_maths.run(c, DB_PATH)
             atticus_maths.run_prices(c, DB_PATH)
+            import merge_named_profiles
+            merge_named_profiles.run(c, DB_PATH)
         except Exception:
             logging.exception('Atticus maths correction failed')
 
