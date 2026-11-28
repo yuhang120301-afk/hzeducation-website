@@ -28,8 +28,8 @@ const names = api.courseTeachers(zachary);
 if (names.join('|') !== 'Helen|Vincent') die('teachers ' + names.join('|'));
 const split = api.cardPaint(names);
 if (split.className !== 'is-split') die('class ' + split.className);
-if (!split.style.includes('linear-gradient(to right, #E4F0E9 0% 50%, #93C5FD 50% 100%)')) die('gradient ' + split.style);
-if (!split.style.includes('#1F2A27') && split.style.includes('#E4F0E9') && split.style.includes('#93C5FD')) {
+if (!split.style.includes('linear-gradient(to right, #E4F0E9 0% 50%, #BFDBFE 50% 100%)')) die('gradient ' + split.style);
+if (!split.style.includes('#1F2A27') && split.style.includes('#E4F0E9') && split.style.includes('#BFDBFE')) {
   /* fills are the light teacher colours, so dark text stays readable */
 }
 const one = api.cardPaint(['Helen']);

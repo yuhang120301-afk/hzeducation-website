@@ -392,6 +392,18 @@ def origin_since_by_profile(c):
     return {profile: row['effective_from'] for profile, row in current.items() if row['helen_original']}
 
 
+def current_origin_flag(c, profile_id, fallback=0):
+    """The tick stored for this person, including when they have no course yet."""
+    migrate_origin_history(c)
+    if not profile_id:
+        return int(fallback or 0)
+    latest = c.execute('''SELECT helen_original FROM student_origin_events
+        WHERE profile_id=? ORDER BY effective_from DESC, id DESC LIMIT 1''', (profile_id,)).fetchone()
+    if latest is not None:
+        return int(latest['helen_original'])
+    return int(fallback or 0)
+
+
 def record_origin(c, user, profile_id, flag, day):
     """Append one status change. A repeat of the current status does not move the date."""
     migrate_origin_history(c)
@@ -1013,8 +1025,10 @@ def set_original(c, user, data):
         raise ValueError('请选择学生。')
     ids = sorted({int(x) for x in raw})
     marks = ','.join('?' for _ in ids)
-    found = c.execute(f'SELECT COUNT(DISTINCT profile_id) FROM students WHERE profile_id IN ({marks})', ids).fetchone()[0]
-    if found != len(ids):
+    found = {row['id'] for row in c.execute(f'SELECT id FROM student_profiles WHERE id IN ({marks})', ids)}
+    found.update(row['profile_id'] for row in c.execute(
+        f'SELECT DISTINCT profile_id FROM students WHERE profile_id IN ({marks})', ids) if row['profile_id'])
+    if found != set(ids):
         raise ValueError('有学生不存在，请刷新后重试。')
     day = now_local().date().isoformat()
     for profile_id in ids:

@@ -620,7 +620,7 @@ class PayCalculationTests(unittest.TestCase):
         page = Path(__file__).resolve().parent.joinpath('static')
         self.assertIn('data-maths-subject', (page / 'pay.js').read_text())
         self.assertIn('name="is_maths"', (page / 'teaching.js').read_text())
-        self.assertIn('20261128vblue', (page / 'index.html').read_text())
+        self.assertIn('20261128roster', (page / 'index.html').read_text())
 
     def test_original_tick_is_maths_only(self):
         import json
@@ -820,6 +820,38 @@ class PayCalculationTests(unittest.TestCase):
         self.assertEqual(payroll.signed_mul_div(12195, 3000, 10000), 3659)
         self.assertEqual(12195 - 3659, 8536)
         self.assertEqual(74000 + 8536 + 4857, 87393)
+
+
+    def test_origin_list_keeps_stopped_people_and_a_tick_without_a_course(self):
+        import dividend
+        import profiles
+        boss = self.user('名单老板', 'admin')
+        self.c.execute('INSERT INTO organization_owners(user_id) VALUES(?)', (boss,))
+        live = self.student('在读学生')
+        profile = self.c.execute('SELECT profile_id, parent_id FROM students WHERE id=?', (live,)).fetchone()
+        self.c.execute('''INSERT INTO students(name,course,parent_id,profile_id,balance,helen_original)
+            VALUES('在读学生','英语',?,?,0,0)''', (profile['parent_id'], profile['profile_id']))
+        stopped = self.student('停课学生')
+        self.c.execute('UPDATE students SET archived=1 WHERE id=?', (stopped,))
+        bare = self.c.execute("INSERT INTO student_profiles(name) VALUES('未开课学生')").lastrowid
+        parent = self.user('未开课家长')
+        self.c.execute('INSERT INTO profile_parents(profile_id, user_id) VALUES(?,?)', (bare, parent))
+        roster = {row['name']: row for row in dividend.origin_roster(self.c)}
+        self.assertEqual(roster['在读学生']['group'], 'live')
+        self.assertEqual(roster['在读学生']['courses'], ['数学', '英语'])
+        self.assertEqual(roster['停课学生']['group'], 'stopped')
+        self.assertEqual(roster['停课学生']['courses'], ['数学'])
+        self.assertEqual(roster['未开课学生']['group'], 'stopped')
+        self.assertEqual(roster['未开课学生']['courses'], [])
+        payroll.set_original(self.c, {'id': boss, 'role': 'owner'}, {'profile_ids': [bare], 'helen_original': True})
+        subject = self.c.execute("SELECT id FROM subjects WHERE name='数学'").fetchone()['id']
+        kind = self.c.execute("SELECT id FROM course_types WHERE name='一对一'").fetchone()['id']
+        added = profiles.add_course(self.c, {'id': boss, 'role': 'owner'}, {
+            'profile_id': bare, 'subject_id': subject, 'course_type_id': kind}, lambda value, label, limit: value)
+        self.assertEqual(self.c.execute('SELECT helen_original FROM students WHERE id=?', (added['student_id'],)).fetchone()[0], 1)
+        again = {row['name']: row for row in dividend.origin_roster(self.c)}
+        self.assertEqual(again['未开课学生']['group'], 'live')
+        self.assertEqual(again['未开课学生']['helen_original'], 1)
 
 
 def teaching_access():
