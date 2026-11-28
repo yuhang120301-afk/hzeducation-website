@@ -464,6 +464,11 @@ def presets(c, user, student_id=None, level=None, course_type_id=None, day=None,
     if user['role'] not in ('owner', 'admin'):
         return {'level': '', 'course_type': '', 'product': '', 'hourly_cents': None,
             'packages': [], 'validity': '', 'source': '', 'reason': '可以自己填节数。'}
+    if user['role'] == 'admin':
+        import permissions
+        if not permissions.has(c, user, 'topup'):
+            return {'level': '', 'course_type': '', 'product': '', 'hourly_cents': None,
+                'packages': [], 'validity': '', 'source': '', 'reason': '充值权限已关闭。'}
     import teaching
     on = dt.date.fromisoformat(str(day)) if day else now_local().date()
     student = None
@@ -1026,7 +1031,13 @@ def singapore_quote(c, student, product, lesson_minutes, paid_lessons, day):
 
 
 def quote(c, user, student_id, product, lesson_minutes, paid_lessons, day, terms=None):
-    require_owner(user)
+    if user['role'] == 'owner':
+        pass
+    elif user['role'] == 'admin':
+        import permissions
+        permissions.allow(c, user, 'topup')
+    else:
+        raise AccessError('价格只对老板开放。')
     if product not in PRODUCTS:
         raise ValueError('请选择课程类型。')
     student = c.execute('SELECT * FROM students WHERE id=?', (int(student_id),)).fetchone()

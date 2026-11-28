@@ -226,6 +226,8 @@ def update(c,user,data,text_value):
     import payroll
     payroll.reject_original_flag(user, data)
     require_admin(user)
+    import permissions
+    permissions.allow(c, user, 'students')
     if not data.get('student_id') and data.get('profile_id'):
         ensure_identity(c)
         profile_id=int(data.get('profile_id') or 0)
@@ -271,6 +273,8 @@ def _login_phone(raw, phone_value, label):
 def guardian(c,user,data,text_value,phone_value,password_hash):
     """Edit one linked parent login. Does not rename students or move parent links."""
     require_admin(user)
+    import permissions
+    permissions.allow(c, user, 'parents')
     schema(c)
     profile, s = person_for_parent(c, data)
     target=data.get('parent_user_id') or (s['parent_id'] if s else 0)
@@ -331,6 +335,8 @@ def parents_for(c, profile_id, primary_id):
 def search_parents(c, user, query):
     if user['role'] not in ('owner', 'admin'):
         raise AccessError('只有老板或管理员可以查找家长。')
+    import permissions
+    permissions.allow(c, user, 'parents')
     text = str(query or '').strip()
     if len(text) < 1:
         return {'parents': []}
@@ -387,6 +393,8 @@ def link_parent(c, user, data, phone_value, password_hash, text_value):
     """Attach one existing parent, or create one account, without renaming anyone else."""
     if user['role'] not in ('owner', 'admin'):
         raise AccessError('只有老板或管理员可以关联家长。')
+    import permissions
+    permissions.allow(c, user, 'parents')
     schema(c)
     profile, student_row = person_for_parent(c, data)
     chosen = data.get('parent_user_id')
@@ -422,6 +430,8 @@ def unlink_parent(c, user, data):
     """Drop this parent's link to this child. The login stays for any other child."""
     if user['role'] not in ('owner', 'admin'):
         raise AccessError('只有老板或管理员可以取消家长关联。')
+    import permissions
+    permissions.allow(c, user, 'parents')
     schema(c)
     profile, student_row = person_for_parent(c, data)
     parent = _parent_account(c, data.get('parent_user_id') or 0)
@@ -470,6 +480,8 @@ def add_course(c,user,data,text_value):
     import payroll
     payroll.reject_original_flag(user, data)
     require_admin(user)
+    import permissions
+    permissions.allow(c, user, 'students')
     s=_course_person(c, data)
     subject_id = int(data.get('subject_id') or 0)
     if subject_id:

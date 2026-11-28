@@ -43,7 +43,14 @@ def require_owner(user):
 
 def administrators(c,user):
     require_owner(user)
-    return [dict(r) for r in c.execute("SELECT u.id,u.name,u.phone,u.active FROM users u LEFT JOIN organization_owners o ON o.user_id=u.id WHERE u.role='admin' AND o.user_id IS NULL ORDER BY u.id")]
+    import permissions
+    permissions.schema(c)
+    rows = []
+    for row in c.execute("SELECT u.id,u.name,u.phone,u.active,u.admin_permissions FROM users u LEFT JOIN organization_owners o ON o.user_id=u.id WHERE u.role='admin' AND o.user_id IS NULL ORDER BY u.id"):
+        item = dict(row)
+        item['permissions'] = permissions.read(item.pop('admin_permissions'))
+        rows.append(item)
+    return rows
 
 def add_administrator(c,user,data,phone_value,password_hash,text_value):
     require_owner(user)
