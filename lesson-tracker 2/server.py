@@ -233,6 +233,8 @@ def _create_base_tables(c):
             merge_named_profiles.run(c, DB_PATH)
             import delete_test_student
             delete_test_student.run(c, DB_PATH)
+            import merge_confirmed_pairs
+            merge_confirmed_pairs.run(c, DB_PATH)
         except Exception:
             logging.exception('Atticus maths correction failed')
         try:
