@@ -445,7 +445,7 @@ def add_course(c,user,data,text_value):
         subject_id = subject['id']
     if c.execute('SELECT 1 FROM students WHERE profile_id=? AND course=? AND archived=0 AND IFNULL(voided,0)=0',(s['profile_id'],course)).fetchone():
         raise ValueError('这位学生已有关联课程，无需重复添加。')
-    created=s['helen_original'] if 'helen_original' in s.keys() else 0
+    created = payroll.current_origin_flag(c, s['profile_id'], s['helen_original'] if 'helen_original' in s.keys() else 0)
     type_id = int(data.get('course_type_id') or 0) or s['course_type_id']
     import pricing
     kind = c.execute('SELECT name FROM course_types WHERE id=?', (type_id,)).fetchone() if type_id else None

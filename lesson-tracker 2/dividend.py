@@ -53,6 +53,39 @@ def _months(c, lessons, start, end, rules):
     return rows
 
 
+def origin_roster(c):
+    """One tick per person. Live courses stay above people who have stopped or have no course."""
+    payroll.migrate_origin_history(c)
+    since = payroll.origin_since_by_profile(c)
+    flags = {}
+    for row in c.execute('''SELECT profile_id, helen_original FROM student_origin_events
+            ORDER BY profile_id, effective_from, id'''):
+        flags[row['profile_id']] = int(row['helen_original'])
+    courses = {}
+    for row in c.execute('''SELECT profile_id, name, course, helen_original, archived, IFNULL(voided,0) voided
+            FROM students WHERE profile_id IS NOT NULL ORDER BY archived, course, id'''):
+        courses.setdefault(row['profile_id'], []).append(row)
+    people = []
+    for profile in c.execute('SELECT id, name FROM student_profiles ORDER BY id'):
+        rows = courses.get(profile['id'], [])
+        name = (profile['name'] or '').strip() or next((row['name'] for row in rows if (row['name'] or '').strip()), '')
+        if not name:
+            continue
+        live = [row['course'] for row in rows if not row['archived'] and not row['voided'] and (row['course'] or '').strip()]
+        stopped = [row['course'] for row in rows if (row['archived'] or row['voided']) and (row['course'] or '').strip()]
+        ticked = bool(flags[profile['id']]) if profile['id'] in flags else any(row['helen_original'] for row in rows)
+        people.append({
+            'profile_id': profile['id'],
+            'name': name,
+            'courses': live or stopped,
+            'group': 'live' if live else 'stopped',
+            'helen_original': int(ticked),
+            'origin_since': since.get(profile['id']) if ticked else None,
+        })
+    people.sort(key=lambda item: (item['name'], item['profile_id']))
+    return people
+
+
 def report(c, user, period, day, start, end):
     payroll.require_owner(user)
     if period == 'custom':
@@ -87,14 +120,7 @@ def report(c, user, period, day, start, end):
             row['revenue_cents'] += line['revenue_cents'] or 0
         row['share_cents'] += line['share_cents']
         row['lessons'] += 1
-    since = payroll.origin_since_by_profile(c)
-    roster = []
-    for row in c.execute('''SELECT id, profile_id, name, course, helen_original, archived
-        FROM students ORDER BY name, course, id'''):
-        item = dict(row)
-        item['is_new'] = payroll.student_is_new(row['helen_original'])
-        item['origin_since'] = since.get(row['profile_id'])
-        roster.append(item)
+    roster = origin_roster(c)
     return {
         'period': period, 'start': start.isoformat(), 'end': end.isoformat(),
         'partner_name': partner['teacher_name'] or 'Vincent', 'percent_bp': percent,
